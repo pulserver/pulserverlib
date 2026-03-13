@@ -1,0 +1,6 @@
+coverage
+sphinx-book-theme
+sphinx-copybutton
+sphinx-gallery
+matplotlib
+mrsd
