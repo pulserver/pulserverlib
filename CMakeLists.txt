@@ -93,7 +93,7 @@ file(GLOB PULSEQLIB_C_SOURCES "${CMAKE_SOURCE_DIR}/csrc/*.c")
 
 add_pybind_module(_pulseqlib_wrapper ""
     SOURCES
-        "${CMAKE_SOURCE_DIR}/python/pulserver/core/_extension/_pulseqlib_wrapper.cpp"
+        "${CMAKE_SOURCE_DIR}/python/pge/core/_extension/_pulseqlib_wrapper.cpp"
         ${PULSEQLIB_C_SOURCES}
     INCLUDES
         ${CMAKE_SOURCE_DIR}/csrc
@@ -101,9 +101,9 @@ add_pybind_module(_pulseqlib_wrapper ""
 )
 
 # Install built extensions to the source tree for editable mode
-file (GLOB PULSEQLIB_WRAPPERS "${CMAKE_CURRENT_BINARY_DIR}/python/pulserver/core/_extension/_pulseqlib_wrapper*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+file (GLOB PULSEQLIB_WRAPPERS "${CMAKE_CURRENT_BINARY_DIR}/python/pge/core/_extension/_pulseqlib_wrapper*${CMAKE_SHARED_LIBRARY_SUFFIX}")
 install(
-    FILES  ${PULSEQLIB_WRAPPERS} DESTINATION ${CMAKE_SOURCE_DIR}/python/pulserver/core/_extension
+    FILES  ${PULSEQLIB_WRAPPERS} DESTINATION ${CMAKE_SOURCE_DIR}/python/pge/core/_extension
 )
 
 option(PULSERVER_BUILD_CPP_TESTS "Build lightweight C++ unit tests" OFF)

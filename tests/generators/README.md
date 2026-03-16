@@ -171,3 +171,56 @@ cmake -S . -B build && cmake --build build
 - [ ] Case struct entry added to `test_sequences.c`
 - [ ] 5 MU_TEST wrappers + suite registrations added
 - [ ] All tests pass (`run_tests` exits 0)
+
+## MATLAB Truth Validation Utilities
+
+Use the helper functions below to validate generated ground-truth artifacts
+before debugging C-library behavior.
+
+### Parse all artifacts for one case
+
+```matlab
+truth = testutils.truth_parse_case('gre_2d_1sl_1avg');
+```
+
+This parses all 5 exported truth artifacts:
+
+- `_meta.txt`
+- `_tr_waveform.bin`
+- `_segment_def.bin`
+- `_freqmod_def.bin`
+- `_scan_table.bin`
+
+### Print terminal report
+
+```matlab
+report = testutils.truth_report_case('gre_2d_1sl_1avg');
+```
+
+The report includes:
+
+- metadata summary (ADCs, TR duration, segments)
+- canonical TR waveform stats
+- frequency-modulation definitions
+- scan-table coverage (RF/ADC/freq-mod/trigger/digital rows)
+- cross-file consistency warnings
+
+### Plotters for visual inspection
+
+```matlab
+testutils.truth_plot_tr_waveforms('gre_2d_1sl_1avg');
+testutils.truth_plot_segments('gre_2d_1sl_1avg');
+testutils.truth_plot_freqmod_defs('gre_2d_1sl_1avg');
+```
+
+- `truth_plot_tr_waveforms`: canonical TR waveform visualization.
+- `truth_plot_segments`: segment-level block waveforms on pseudo-time.
+- `truth_plot_freqmod_defs`: gradient frequency-modulation definitions.
+
+### One-shot workflow
+
+```matlab
+testutils.truth_plot_case('gre_2d_1sl_1avg', 'show_report', true);
+```
+
+This runs parse + report + plots in one entrypoint.

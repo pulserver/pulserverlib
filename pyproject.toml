@@ -9,8 +9,8 @@ requires = [
 ]
 
 [project]
-name = "pulserver"
-description = "A PyPulseq-based client/server MR sequence design toolbox."
+name = "pge"
+description = "A C library for parsing and automatic segmentation of Pulseq sequences."
 readme = "README.rst"
 requires-python = ">=3.10"
 dynamic = ["version"]
@@ -67,9 +67,9 @@ doc = [
 ]
 
 [project.urls] 
-"Homepage" = "https://github.com/INFN-MRI/pulserver"
-"Bug Reports" = "https://github.com/INFN-MRI/pulserver/issues"
-"Source" = "https://github.com/INFN-MRI/pulserver"
+"Homepage" = "https://github.com/pulserver/pulserverlib"
+"Bug Reports" = "https://github.com/pulserver/pulserverlib/issues"
+"Source" = "https://github.com/pulserver/pulserverlib"
 
 [tool.scikit-build]
 wheel.expand-macos-universal-tags = true
@@ -78,7 +78,7 @@ wheel.expand-macos-universal-tags = true
 where=["python"]
 
 [tool.setuptools_scm]
-write_to = "python/pulserver/_version.py"
+write_to = "python/pge/_version.py"
 version_scheme = "python-simplified-semver"
 local_scheme="no-local-version"
 fallback_version="v99-dev"

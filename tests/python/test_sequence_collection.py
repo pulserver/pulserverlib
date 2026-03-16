@@ -4,7 +4,7 @@ import numpy as np
 import pypulseq as pp
 import pytest
 
-from pulserver import SequenceCollection
+from pge import SequenceCollection
 
 
 class TestConstruction:
