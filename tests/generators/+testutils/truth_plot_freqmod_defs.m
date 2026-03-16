@@ -29,7 +29,7 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
 
     adc_dwell_ms = double(truth.meta.adc_dwell_ns) * 1e-6;
     n_adc        = double(truth.meta.adc_samples);
-    adc_dur_ms   = n_adc * adc_dwell_ms;
+    adc_dur_ms   = max(n_adc .* adc_dwell_ms);  % max across ADC definitions
 
     % --- Build segment timing context (ms) ----------------------------
     s_idx = p.Results.segment_idx;

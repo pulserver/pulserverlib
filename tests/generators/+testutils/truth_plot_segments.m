@@ -24,7 +24,7 @@ function figs = truth_plot_segments(base_or_truth, varargin)
 
     adc_dwell_ms = double(truth.meta.adc_dwell_ns) * 1e-6;  % ns→ms
     n_adc        = double(truth.meta.adc_samples);
-    adc_dur_ms   = n_adc * adc_dwell_ms;
+    adc_dur_ms   = max(n_adc .* adc_dwell_ms);  % max across ADC definitions
 
     if isempty(p.Results.segment_idx)
         seg_ids = 1:truth.segment_def.num_segments;
