@@ -16,7 +16,7 @@ function [gxCells, gyCells, adc, k] = makeTestSpiral(sys, interleaves, nSamples,
 
     % Oversample factor for gradient
     oversample = 4;
-    nGradSamples = nSamples * oversample;
+    nGradSamples = nSamples * oversample + 1;  % +1 so traj2grad returns exactly nSamples*oversample
 
     deltak = 1 / fov;
     nTurns = nSamples / (2 * pi);
