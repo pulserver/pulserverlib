@@ -324,6 +324,7 @@ typedef struct seg_block_def {
     /* RF */
     float rf_delay;
     float rf_amp;
+    float rf_raster_us;   /* rfRasterTime in us (new field) */
     int   rf_n;
     float rf_rho[SEG_DEF_MAX_WAVE];
 
@@ -397,6 +398,7 @@ static TSEG_MAYBE_UNUSED int parse_seg_def(const char* path, seg_def_file* out)
             /* RF */
             RDF(blk->rf_delay);
             RDF(blk->rf_amp);
+            RDF(blk->rf_raster_us);   /* new: rfRasterTime in us */
             RD4(n);
             blk->rf_n = n;
             if (n > SEG_DEF_MAX_WAVE) { fclose(f); return 0; }
@@ -410,6 +412,12 @@ static TSEG_MAYBE_UNUSED int parse_seg_def(const char* path, seg_def_file* out)
                 blk->grad_n[ax] = n;
                 if (n > SEG_DEF_MAX_WAVE) { fclose(f); return 0; }
                 RDFN(blk->grad_wave[ax], n);
+                /* grad_time_s: visualisation-only, skip bytes without storing */
+                if (n > 0) {
+                    if (fseek(f, (long)n * (long)sizeof(float), SEEK_CUR) != 0) {
+                        fclose(f); return 0;
+                    }
+                }
             }
 
             /* ADC */

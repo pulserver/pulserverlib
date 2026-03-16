@@ -1037,6 +1037,7 @@ classdef TruthBuilder < handle
                     % RF
                     fwrite(fid, single(bd.rf_delay), 'float32');
                     fwrite(fid, single(bd.rf_amp), 'float32');
+                    fwrite(fid, single(obj.sys.rfRasterTime * 1e6), 'float32');  % rf_raster_us
                     if bd.has_rf && ~isempty(bd.rf_rho)
                         fwrite(fid, int32(length(bd.rf_rho)), 'int32');
                         fwrite(fid, single(bd.rf_rho), 'float32');
@@ -1056,6 +1057,14 @@ classdef TruthBuilder < handle
                         if ~isempty(wave)
                             fwrite(fid, int32(length(wave)), 'int32');
                             fwrite(fid, single(wave), 'float32');
+                            % grad_time_s: local knot/sample times in s (0-based).
+                            % For traps: cumsum([0, riseTime, flatTime, fallTime]).
+                            % For arb:   grad.tt (uniform at gradRasterTime if _time==[]).
+                            t_s = bd.([axn '_time']);
+                            if isempty(t_s)
+                                t_s = (0:length(wave)-1).' * obj.sys.gradRasterTime;
+                            end
+                            fwrite(fid, single(t_s(:)), 'float32');
                         else
                             fwrite(fid, int32(0), 'int32');
                         end
