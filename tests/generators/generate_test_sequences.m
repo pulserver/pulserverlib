@@ -9,15 +9,15 @@
 clear; clc;
 import mr.*
 
-% write_gre(true, 1, 1);
-% write_gre(true, 3, 1);
-% write_gre(true, 1, 3);
-% write_gre(true, 3, 3);
-% 
-% write_mprage(true, 1, 1);
-% write_mprage(true, 3, 1);
-% write_mprage(true, 1, 3);
-% write_mprage(true, 3, 3);
+write_gre(true, 1, 1);
+write_gre(true, 3, 1);
+write_gre(true, 1, 3);
+write_gre(true, 3, 3);
+
+write_mprage(true, 1, 1);
+write_mprage(true, 3, 1);
+write_mprage(true, 1, 3);
+write_mprage(true, 3, 3);
 
 write_mprage_nav(true, 1, 1);
 write_mprage_nav(true, 3, 1);
@@ -28,6 +28,11 @@ write_mprage_noncart(true, 1, 1, false);
 write_mprage_noncart(true, 3, 1, false);
 write_mprage_noncart(true, 1, 3, false);
 write_mprage_noncart(true, 3, 3, false);
+
+write_mprage_noncart(true, 1, 1, true);
+write_mprage_noncart(true, 3, 1, true);
+write_mprage_noncart(true, 1, 3, true);
+write_mprage_noncart(true, 3, 3, true);
 
 
 function seq = write_bssfp(write, num_slices, num_averages)
@@ -596,7 +601,7 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
     % Basic geometry intentionally small for fast iteration.
     fov = 0.22;
     Nx = 64;
-    num_shots = 8;
+    num_shots = 2;
     slab_thickness = 15e-3;
 
     alpha = 10 * pi / 180;
@@ -625,7 +630,7 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
         gy_base = gy_cells{1};
         gx_rew = mr.makeExtendedTrapezoidArea('x', gx_base.last, 0.0, -gx_base.area, sys);
         gy_rew = mr.makeExtendedTrapezoidArea('y', gy_base.last, 0.0, -gy_base.area, sys);
-        dphi = 2 * pi / (num_shots * Nz);  % interleave angular step
+        dphi = 2 * pi / (num_shots  * Nz);  % interleave angular step
     else
         % Explicit path: pre-compute all interleaves across all partitions.
         [gx_shots, gy_shots, adc] = testutils.makeTestSpiral(sys, num_shots * Nz, Nx, fov);
@@ -636,9 +641,8 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
             gx_rews{ii} = mr.makeExtendedTrapezoidArea('x', gx_shots{ii}.last, 0.0, -gx_shots{ii}.area, sys);
             gy_rews{ii} = mr.makeExtendedTrapezoidArea('y', gy_shots{ii}.last, 0.0, -gy_shots{ii}.area, sys);
         end
-        spoke_idx = 0;
     end
-
+    
     % Partition encoding (along z)
     gz_phase = mr.makeTrapezoid('z', 'Area', -Nz / fov / 2, 'system', sys);
 
@@ -657,6 +661,7 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
     rf_center = mr.calcRfCenter(rf);
     rf_phase = 0.0;
     rf_inc = 0.0;
+    spoke_idx = 0;
 
     % Main imaging loop: partitions -> shots
     for z = 1:Nz
@@ -669,10 +674,11 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
         seq.addBlock(rf180);
         seq.addBlock(gz_spoil);
         seq.addBlock(delayTI);
-
+        
         for i = 1:num_shots
             rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
             rf_phase = mod(rf_phase + rf_inc, 360.0);
+            spoke_idx = spoke_idx + 1;
 
             rf_curr = rf;
             rf_curr.phaseOffset = rf_phase / 180 * pi - 2 * pi * rf_curr.freqOffset * rf_center;
@@ -682,14 +688,13 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
 
             seq.addBlock(rf_curr);
             if use_rotext
-                rot_angle = (i - 1) * dphi;
+                rot_angle = (spoke_idx-1) * dphi;
                 seq.addBlock(adc_curr, gx_base, gy_base, ...
                     mr.scaleGrad(gz_phase, zscale), ...
                     mr.makeRotation('axis', 'z', 'angle', rot_angle));
                 seq.addBlock(gx_rew, gy_rew, ...
                     mr.makeRotation('axis', 'z', 'angle', rot_angle), gz_spoil);
             else
-                spoke_idx = spoke_idx + 1;
                 seq.addBlock(adc_curr, gx_shots{spoke_idx}, gy_shots{spoke_idx}, ...
                     mr.scaleGrad(gz_phase, zscale));
                 seq.addBlock(gx_rews{spoke_idx}, gy_rews{spoke_idx}, gz_spoil);

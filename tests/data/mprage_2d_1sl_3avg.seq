@@ -14,8 +14,8 @@ GradientRasterTime 2e-05
 NumSlices 1 
 PeakRF 54.8581773 
 RadiofrequencyRasterTime 2e-06 
-TR 0.07552 
-TotalDuration 0.07552 
+TR 0.0752 
+TotalDuration 0.0752 
 
 # Format of blocks:
 # NUM DUR RF  GX  GY  GZ  ADC  EXT
@@ -23,35 +23,35 @@ TotalDuration 0.07552
  1 1000   1   0   0   0  0  0
  2  50   0   0   0   1  0  0
  3   5   0   0   0   0  0  0
- 4 108   2   0   0   2  0  0
+ 4 106   2   0   0   2  0  0
  5  50   0   3   4   5  0  0
  6 129   0   6   0   0  1  0
  7  50   0   7   8   1  0  0
- 8 108   3   0   0   2  0  0
+ 8 106   3   0   0   2  0  0
  9  50   0   3   9   5  0  0
 10 129   0   6   0   0  2  0
 11  50   0   7  10   1  0  0
-12 108   4   0   0   2  0  0
+12 106   4   0   0   2  0  0
 13  50   0   3  11   5  0  0
 14 129   0   6   0   0  3  0
 15  50   0   7  12   1  0  0
-16 108   5   0   0   2  0  0
+16 106   5   0   0   2  0  0
 17  50   0   3  13   5  0  0
 18 129   0   6   0   0  4  0
 19  50   0   7  14   1  0  0
-20 108   6   0   0   2  0  0
+20 106   6   0   0   2  0  0
 21  50   0   3  15   5  0  0
 22 129   0   6   0   0  5  0
 23  50   0   7  16   1  0  0
-24 108   7   0   0   2  0  0
+24 106   7   0   0   2  0  0
 25  50   0   3  14   5  0  0
 26 129   0   6   0   0  6  0
 27  50   0   7  13   1  0  0
-28 108   8   0   0   2  0  0
+28 106   8   0   0   2  0  0
 29  50   0   3  12   5  0  0
 30 129   0   6   0   0  7  0
 31  50   0   7  11   1  0  0
-32 108   4   0   0   2  0  0
+32 106   4   0   0   2  0  0
 33  50   0   3  10   5  0  0
 34 129   0   6   0   0  3  0
 35  50   0   7   9   1  0  0
@@ -64,13 +64,13 @@ TotalDuration 0.07552
 #   excitation refocusing inversion saturation preparation other undefined
 [RF]
 1           25 1 2 3 10000 0 0 0 0 0 e
-2      54.8582 4 5 0 1000 80 0 0 0 1.46608 e
-3      54.8582 4 5 0 1000 80 0 0 0 4.39823 e
-4      54.8582 4 5 0 1000 80 0 0 0 2.51327 e
-5      54.8582 4 5 0 1000 80 0 0 0 2.0944 e
-6      54.8582 4 5 0 1000 80 0 0 0 3.14159 e
-7      54.8582 4 5 0 1000 80 0 0 0 5.65487 e
-8      54.8582 4 5 0 1000 80 0 0 0 3.35103 e
+2      54.8582 4 5 0 1000 60 0 0 0 1.46608 e
+3      54.8582 4 5 0 1000 60 0 0 0 4.39823 e
+4      54.8582 4 5 0 1000 60 0 0 0 2.51327 e
+5      54.8582 4 5 0 1000 60 0 0 0 2.0944 e
+6      54.8582 4 5 0 1000 60 0 0 0 3.14159 e
+7      54.8582 4 5 0 1000 60 0 0 0 5.65487 e
+8      54.8582 4 5 0 1000 60 0 0 0 3.35103 e
 
 # Format of arbitrary gradients:
 #   time_shape_id of 0 means default timing (stepping with grad_raster starting at 1/2 of grad_raster)
@@ -78,17 +78,17 @@ TotalDuration 0.07552
 # ..      Hz/m  Hz/m Hz/m        ..         ..          us
 [GRADIENTS]
 6       113636            0       113636 6 7 0
-7  1.17877e+06       113636            0 8 9 0
+7  1.18216e+06       113636            0 8 9 0
 
 # Format of trapezoid gradients:
 # id amplitude rise flat fall delay
 # ..      Hz/m   us   us   us    us
 [TRAP]
- 1       952381 160  680 160   0
- 2       400000  80 2000  80   0
- 3      -152699  40  920  40   0
+ 1       909091 120  760 120   0
+ 2       400000  60 2000  60   0
+ 3      -149583  20  960  20   0
  4     -18552.9  20  960  20   0
- 5      -452174  80  840  80   0
+ 5      -438298  60  880  60   0
  8      18552.9  20  960  20   0
  9     -13914.7  20  960  20   0
 10      13914.7  20  960  20   0
@@ -1161,7 +1161,7 @@ num_samples 3
 
 shape_id 8
 num_samples 4
-0.0964028777
+0.0961262554
 1
 1
 0
@@ -1169,9 +1169,9 @@ num_samples 4
 shape_id 9
 num_samples 4
 0
-9
+7
 33
-43
+41
 
 
 [SIGNATURE]
@@ -1181,4 +1181,4 @@ num_samples 4
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash 720687366258ca21ddcd92051c6ad8a5
+Hash cf9d112089bc487fc0bcd5ef83e9928d
