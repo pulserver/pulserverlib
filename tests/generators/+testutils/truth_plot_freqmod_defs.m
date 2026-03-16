@@ -41,17 +41,23 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
 
     % --- Filter defs to those actually used by this segment -----------
     if isempty(p.Results.def_idx)
-        seg_def_ids = [];
+        need_rf  = false;
+        need_adc = false;
         for b = 1:n_blocks
-            fid = double(seg.blocks(b).freq_mod_def_id);
-            if fid >= 0
-                seg_def_ids(end+1) = fid + 1; %#ok<AGROW>  % 0-based -> 1-based
+            blk = seg.blocks(b);
+            if blk.has_freq_mod
+                if blk.has_rf,  need_rf  = true; end
+                if blk.has_adc, need_adc = true; end
             end
         end
-        ids = unique(seg_def_ids);
+        ids = [];
+        for d = 1:truth.freqmod_def.num_defs
+            if (need_rf  && truth.freqmod_def.defs(d).type == 0) || ...
+               (need_adc && truth.freqmod_def.defs(d).type == 1)
+                ids(end+1) = d; %#ok<AGROW>
+            end
+        end
         if isempty(ids)
-            warning('truth:empty', ...
-                'No freq_mod_def_id >= 0 found for segment %d despite has_freq_mod blocks', s_idx - 1);
             fig = [];
             return;
         end
@@ -82,18 +88,18 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     block_start_ms = [0, cumsum(block_end_ms + 0.002)];
     total_dur_ms   = block_start_ms(end);
 
-    % --- Match each def to its source block via freq_mod_def_id --------
+    % --- Match each def to its source block via has_freq_mod + type ----
     def_t0_ms = zeros(1, numel(ids));   % active-window start (ms)
     for i = 1:numel(ids)
         def = truth.freqmod_def.defs(ids(i));
         for b = 1:n_blocks
             blk = seg.blocks(b);
-            if double(blk.freq_mod_def_id) + 1 == ids(i)
-                if def.type == 0 && blk.has_rf
-                    def_t0_ms(i) = block_start_ms(b) + double(blk.rf_delay) * 1e3;
-                elseif def.type == 1 && blk.has_adc
-                    def_t0_ms(i) = block_start_ms(b) + double(blk.adc_delay) * 1e3;
-                end
+            if ~blk.has_freq_mod, continue; end
+            if def.type == 0 && blk.has_rf
+                def_t0_ms(i) = block_start_ms(b) + double(blk.rf_delay) * 1e3;
+                break;
+            elseif def.type == 1 && blk.has_adc
+                def_t0_ms(i) = block_start_ms(b) + double(blk.adc_delay) * 1e3;
                 break;
             end
         end
