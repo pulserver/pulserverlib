@@ -27,8 +27,9 @@ function [gxCells, gyCells, adc, k] = makeTestSpiral(sys, interleaves, nSamples,
         angle = 2 * pi * (i - 1) / interleaves;
         R = [cos(angle), -sin(angle); sin(angle), cos(angle)];
         grot = R * g;
-
-        gxCells{i} = mr.makeArbitraryGrad('x', grot(1, :), 'system', sys);
-        gyCells{i} = mr.makeArbitraryGrad('y', grot(2, :), 'system', sys);
+        gx = grot(1, :); gx = [gx(1), gx, gx(end)];
+        gy = grot(2, :); gy = [gy(1), gy, gy(end)];
+        gxCells{i} = mr.makeArbitraryGrad('x', gx, 'system', sys, 'first', gx(1), 'last', gx(end));
+        gyCells{i} = mr.makeArbitraryGrad('y', gy, 'system', sys, 'first', gy(1), 'last', gy(end));
     end
 end

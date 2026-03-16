@@ -9,15 +9,15 @@
 clear; clc;
 import mr.*
 
-write_gre(true, 1, 1);
-write_gre(true, 3, 1);
-write_gre(true, 1, 3);
-write_gre(true, 3, 3);
-
-write_mprage(true, 1, 1);
-write_mprage(true, 3, 1);
-write_mprage(true, 1, 3);
-write_mprage(true, 3, 3);
+% write_gre(true, 1, 1);
+% write_gre(true, 3, 1);
+% write_gre(true, 1, 3);
+% write_gre(true, 3, 3);
+% 
+% write_mprage(true, 1, 1);
+% write_mprage(true, 3, 1);
+% write_mprage(true, 1, 3);
+% write_mprage(true, 3, 3);
 
 write_mprage_nav(true, 1, 1);
 write_mprage_nav(true, 3, 1);
@@ -459,10 +459,19 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
     % Each nav has a slice-selective sinc pulse selecting the respective plane.
     Nx_nav = 16;
     nav_slice_thickness = 10e-3;
-    [gx_nav_cells, gy_nav_cells, adc_nav] = testutils.makeTestSpiral(sys, 1, Nx_nav, fov);
-    gx_nav = gx_nav_cells{1};
-    gy_nav = gy_nav_cells{1};
-    gz_nav = mr.makeArbitraryGrad('z', gy_nav.waveform, 'system', sys);
+    [gx_nav_cells, gy_nav_cells, adc_nav] = testutils.makeTestSpiral(sys, 1, Nx_nav, 10.0*fov);
+    
+    gx_nav_ax = gx_nav_cells{1}; gx_nav_rew_ax = mr.makeExtendedTrapezoidArea('x', gx_nav_ax.last, 0.0, -gx_nav_ax.area, sys);
+    gy_nav_ax = gy_nav_cells{1}; gy_nav_rew_ax = mr.makeExtendedTrapezoidArea('y', gy_nav_ax.last, 0.0, -gy_nav_ax.area, sys);
+    gz_nav_spoil_ax = mr.makeTrapezoid('z', 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3, 'system', sys);
+
+    gx_nav_cor = gx_nav_ax; gx_nav_cor.channel = 'x'; gx_nav_rew_cor = mr.makeExtendedTrapezoidArea('x', gx_nav_cor.last, 0.0, -gx_nav_cor.area, sys);
+    gz_nav_cor = gy_nav_ax; gz_nav_cor.channel = 'z'; gz_nav_rew_cor = mr.makeExtendedTrapezoidArea('z', gz_nav_cor.last, 0.0, -gz_nav_cor.area, sys);
+    gy_nav_spoil_cor = mr.makeTrapezoid('y', 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3, 'system', sys);
+    
+    gy_nav_sag = gx_nav_ax; gy_nav_sag.channel = 'y'; gy_nav_rew_sag = mr.makeExtendedTrapezoidArea('y', gy_nav_sag.last, 0.0, -gy_nav_sag.area, sys);
+    gz_nav_sag = gy_nav_ax; gz_nav_sag.channel = 'z'; gz_nav_rew_sag = mr.makeExtendedTrapezoidArea('z', gz_nav_sag.last, 0.0, -gz_nav_sag.area, sys);
+    gx_nav_spoil_sag = mr.makeTrapezoid('x', 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3, 'system', sys);
 
     % Axial nav: slice-select on z
     [rf_nav_ax, gz_nav_ss] = mr.makeSincPulse(alpha, ...
@@ -472,9 +481,11 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
         'apodization', 0.5, ...
         'use', 'excitation', ...
         'system', sys);
+    
     % Coronal nav: slice-select on y
     gy_nav_ss = gz_nav_ss; gy_nav_ss.channel = 'y';
     rf_nav_cor = rf_nav_ax;
+    
     % Sagittal nav: slice-select on x
     gx_nav_ss = gz_nav_ss; gx_nav_ss.channel = 'x';
     rf_nav_sag = rf_nav_ax;
@@ -536,13 +547,20 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
         % Navigator: 3 orthogonal single-shot spirals
         % Axial (xy plane): slice-select on z
         seq.addBlock(rf_nav_ax, gz_nav_ss, lblNav);
-        seq.addBlock(gx_nav, gy_nav, adc_nav);
+        seq.addBlock(gx_nav_ax, gy_nav_ax, adc_nav);
+        seq.addBlock(gx_nav_rew_ax, gy_nav_rew_ax, gz_nav_spoil_ax);
+        
         % Coronal (xz plane): slice-select on y
         seq.addBlock(rf_nav_cor, gy_nav_ss, lblNav);
-        seq.addBlock(gx_nav, gz_nav, adc_nav);
+        seq.addBlock(gx_nav_cor, gz_nav_cor, adc_nav);
+        seq.addBlock(gx_nav_rew_cor, gy_nav_spoil_cor, gz_nav_rew_cor);
+        
         % Sagittal (yz plane): slice-select on x
         seq.addBlock(rf_nav_sag, gx_nav_ss, lblNav);
-        seq.addBlock(gy_nav, gz_nav, adc_nav);
+        seq.addBlock(gy_nav_sag, gz_nav_sag, adc_nav);
+        seq.addBlock(gx_nav_rew_ax, gy_nav_rew_ax);
+        seq.addBlock(gx_nav_spoil_sag, gy_nav_rew_sag, gz_nav_rew_sag);
+ 
         seq.addBlock(delayTR);
     end
 
