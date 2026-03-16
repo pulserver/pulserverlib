@@ -41,35 +41,24 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
 
     % --- Filter defs to those actually used by this segment -----------
     if isempty(p.Results.def_idx)
-        % Collect (num_samples, needed_type) pairs from segment blocks.
-        seg_keys = [];  % Nx2: [num_samples, type]
-        for b = 1:n_blocks
-            blk = seg.blocks(b);
-            if blk.has_freq_mod
-                ns = double(blk.freq_mod_num_samples);
-                if blk.has_rf
-                    seg_keys(end+1,:) = [ns, 0]; %#ok<AGROW>
+        % Use segment_order + segment_num_blocks to find which scan-table
+        % entries belong to this segment, then collect their freq_mod_id.
+        seg_order  = truth.meta.segment_order;   % 0-based segment IDs
+        seg_nblk   = truth.meta.segment_num_blocks;  % blocks per segment def
+        blk_fmod_ids = zeros(1, n_blocks);  % per-block freq_mod_id for this segment
+        st_pos = 1;  % current position in scan table
+        for k = 1:numel(seg_order)
+            sid  = seg_order(k);       % 0-based
+            nb   = seg_nblk(sid + 1);  % 1-based index
+            if sid == (s_idx - 1)      % this is our segment
+                for bb = 1:nb
+                    blk_fmod_ids(bb) = double(truth.scan_table.entries(st_pos + bb - 1).freq_mod_id);
                 end
-                if blk.has_adc
-                    seg_keys(end+1,:) = [ns, 1]; %#ok<AGROW>
-                end
+                break;  % first occurrence is enough (representative)
             end
+            st_pos = st_pos + nb;
         end
-        if isempty(seg_keys)
-            fig = [];
-            return;
-        end
-        seg_keys = unique(seg_keys, 'rows');
-        ids = [];
-        for d = 1:truth.freqmod_def.num_defs
-            def = truth.freqmod_def.defs(d);
-            for k = 1:size(seg_keys, 1)
-                if def.type == seg_keys(k, 2) && def.num_samples == seg_keys(k, 1)
-                    ids(end+1) = d; %#ok<AGROW>
-                    break;
-                end
-            end
-        end
+        ids = unique(blk_fmod_ids(blk_fmod_ids > 0));
         if isempty(ids)
             fig = [];
             return;
@@ -101,14 +90,13 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     block_start_ms = [0, cumsum(block_end_ms + 0.002)];
     total_dur_ms   = block_start_ms(end);
 
-    % --- Match each def to its source block via num_samples + type -----
+    % --- Match each def to its source block via blk_fmod_ids -----------
     def_t0_ms = zeros(1, numel(ids));   % active-window start (ms)
     for i = 1:numel(ids)
         def = truth.freqmod_def.defs(ids(i));
         for b = 1:n_blocks
+            if blk_fmod_ids(b) ~= ids(i), continue; end
             blk = seg.blocks(b);
-            if ~blk.has_freq_mod, continue; end
-            if double(blk.freq_mod_num_samples) ~= def.num_samples, continue; end
             if def.type == 0 && blk.has_rf
                 def_t0_ms(i) = block_start_ms(b) + double(blk.rf_delay) * 1e3;
                 break;

@@ -7,13 +7,14 @@ function meta = truth_parse_meta(path)
     end
     cleanup = onCleanup(@() fclose(fid));
 
-    lines = textscan(fid, '%s %f', 'Delimiter', {' ', '\t'}, 'MultipleDelimsAsOne', true);
-    if isempty(lines) || numel(lines) < 2
-        error('truth:format', 'Malformed meta file: %s', path);
+    % Read all lines for line-by-line parsing (needed for segment_order).
+    raw = {};
+    while ~feof(fid)
+        ln = fgetl(fid);
+        if ischar(ln) && ~isempty(strtrim(ln))
+            raw{end+1} = strtrim(ln); %#ok<AGROW>
+        end
     end
-
-    keys = lines{1};
-    vals = lines{2};
 
     meta = struct();
     meta.num_unique_adcs = 0;
@@ -24,10 +25,19 @@ function meta = truth_parse_meta(path)
     meta.num_segments = 0;
     meta.segment_num_blocks = [];
     meta.num_canonical_trs = 0;
+    meta.segment_order = [];
 
-    for i = 1:numel(keys)
-        key = keys{i};
-        val = vals(i);
+    for i = 1:numel(raw)
+        parts = strsplit(raw{i});
+        key = parts{1};
+
+        if strcmp(key, 'segment_order')
+            % Variable-length: segment_order 0 1 2 2 2 1
+            meta.segment_order = cellfun(@str2double, parts(2:end));
+            continue;
+        end
+
+        val = str2double(parts{2});
 
         if strcmp(key, 'num_unique_adcs')
             meta.num_unique_adcs = round(val);

@@ -1001,6 +1001,11 @@ classdef TruthBuilder < handle
                 fprintf(fid, 'segment_%d_num_blocks %d\n', s - 1, obj.segment_sizes(s));
             end
             fprintf(fid, 'num_canonical_trs %d\n', obj.num_canonical_trs);
+            fprintf(fid, 'segment_order');
+            for k = 1:length(obj.segment_order)
+                fprintf(fid, ' %d', obj.segment_order(k) - 1);  % 0-based
+            end
+            fprintf(fid, '\n');
 
             fclose(fid);
         end
