@@ -116,7 +116,7 @@ function figs = truth_plot_segments(base_or_truth, varargin)
         hold on;
         for b = 1:n_blocks
             blk = seg.blocks(b);
-            if blk.has_adc && n_adc > 0
+            if blk.has_adc && adc_dur_ms > 0
                 t0 = block_start_ms(b) + double(blk.adc_delay) * 1e3;
                 t1 = t0 + adc_dur_ms;
                 fill([t0, t1, t1, t0], [0, 0, 1, 1], cmap(b,:), ...
