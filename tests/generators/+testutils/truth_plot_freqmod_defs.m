@@ -75,9 +75,9 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
 
     rf_ctr  = 0;
     adc_ctr = 0;
-    def_t0_ms = zeros(1, numel(ids));   % active-window start (ms)
-    for i = 1:numel(ids)
-        def = truth.freqmod_def.defs(ids(i));
+    def_t0_ms = zeros(1, numel(def_ids));   % active-window start (ms)
+    for i = 1:numel(def_ids)
+        def = truth.freqmod_def.defs(def_ids(i));
         if def.type == 0
             rf_ctr = rf_ctr + 1;
             if rf_ctr <= numel(rf_fm_blks)
@@ -94,7 +94,7 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     end
 
     % --- Plot (3 rows x 2 cols: col1=freq mod, col2=phase) -------------
-    n_defs     = numel(ids);
+    n_defs     = numel(def_ids);
     cmap       = lines(n_defs);
     bot_margin = 0.09;
 
@@ -121,7 +121,7 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
 
     def_lbls = cell(1, n_defs);
     for i = 1:n_defs
-        d    = ids(i);
+        d    = def_ids(i);
         def  = truth.freqmod_def.defs(d);
         dt_s = double(def.raster_us) * 1e-6;
         kind = 'RF';

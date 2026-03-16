@@ -23,6 +23,8 @@ function truth = truth_plot_case(base, varargin)
         testutils.truth_plot_segments(truth);
     end
     if p.Results.plot_freqmod && truth.freqmod_def.num_defs > 0
-        testutils.truth_plot_freqmod_defs(truth);
+        for s = 1:truth.segment_def.num_segments
+            testutils.truth_plot_freqmod_defs(truth, 'segment_idx', s);
+        end
     end
 end
