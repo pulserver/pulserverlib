@@ -168,36 +168,6 @@ function truth = coerce_truth(base_or_truth)
         truth = testutils.truth_parse_case(base_or_truth);
     end
 end
-%TRUTH_PLOT_SEGMENTS Plot segment block waveforms on a shared real-time axis.
-%
-% All five channels (Gx/Gy/Gz/RF/ADC) share the same x-axis in us.
-% Block boundary positions are computed from the maximum event span per
-% block given the gradient raster (auto-detected from freq-mod defs or TR
-% waveforms). Gradients in mT/m, RF |B1| in uT, ADC as a binary mask.
-%
-% Note: block delays are stored in seconds (Pulseq convention) and are
-% converted to us here. Waveform samples are scaled by grad_raster_us.
-% Trap gradient keypoints (3-4 pts) are plotted at the same spacing as
-% arbitrary waveform samples (approximate timing within the block).
-%
-%   truth_plot_segments('gre_2d_1sl_1avg')
-%   truth_plot_segments(truth_struct, 'segment_idx', [1 2])
-%   truth_plot_segments(truth_struct, 'grad_raster_us', 10)
-
-    p = inputParser;
-    addParameter(p, 'segment_idx', [], @(x) isempty(x) || isnumeric(x));
-    addParameter(p, 'grad_raster_us', 0, @(x) isnumeric(x) && isscalar(x) && x >= 0);
-    parse(p, varargin{:});
-
-    truth = coerce_truth(base_or_truth);
-
-    GAMMA_HZ_PER_T = 42.577e6;
-    GAMMA_GRAD     = GAMMA_HZ_PER_T * 1e-3;   % Hz/m -> mT/m: divide by this
-    GAMMA_RF       = GAMMA_HZ_PER_T * 1e-6;   % Hz   -> uT:   divide by this
-
-    % Derive gradient raster (samples -> us).
-    grad_raster_us = p.Results.grad_raster_us;
-    if grad_raster_us <= 0
         if truth.freqmod_def.num_defs > 0
             grad_raster_us = double(truth.freqmod_def.defs(1).raster_us);
         elseif truth.tr_waveforms.num_trs > 0 && numel(truth.tr_waveforms.waveforms(1).time_us) >= 2
