@@ -35,9 +35,11 @@ typedef struct seg_meta {
     int num_segments;
     int segment_num_blocks[MAX_SEGMENTS];
     int num_canonical_trs;
+    /* Phase 5: Segment order (scan-table validation) */
+    int segment_order[MAX_SEGMENTS];
 } seg_meta;
 
-#define SEG_META_INIT {0, {0}, {0}, 0, 0, 0, {0}, 0}
+#define SEG_META_INIT {0, {0}, {0}, 0, 0, 0, {0}, 0, {0}}
 
 /* ------------------------------------------------------------------ */
 /*  parse_meta                                                        */
@@ -46,15 +48,20 @@ typedef struct seg_meta {
 static TSEG_MAYBE_UNUSED int parse_meta(const char* path, seg_meta* out)
 {
     FILE* f;
+    char line[512];
     char key[64];
-    int val, idx;
     char suffix[32];
+    int val, idx, i, n;
     seg_meta m = SEG_META_INIT;
 
     f = fopen(path, "r");
     if (!f) return 0;
 
-    while (fscanf(f, "%63s %d", key, &val) == 2) {
+    while (fgets(line, sizeof(line), f) != NULL) {
+        /* Parse key and first value */
+        if (sscanf(line, "%63s %d", key, &val) < 1)
+            continue;
+
         if (strcmp(key, "num_unique_adcs") == 0) {
             m.num_unique_adcs = val;
         } else if (sscanf(key, "adc_%d_%31s", &idx, suffix) == 2) {
@@ -77,6 +84,13 @@ static TSEG_MAYBE_UNUSED int parse_meta(const char* path, seg_meta* out)
             }
         } else if (strcmp(key, "num_canonical_trs") == 0) {
             m.num_canonical_trs = val;
+        } else if (strcmp(key, "segment_order") == 0) {
+            /* Parse multi-value segment_order line:
+             * "segment_order 0 1 2 2 2 1" */
+            char* pos = line + strlen("segment_order");
+            for (n = 0; n < MAX_SEGMENTS && sscanf(pos, " %d%n", &m.segment_order[n], &i) == 1; n++) {
+                pos += i;
+            }
         }
     }
 

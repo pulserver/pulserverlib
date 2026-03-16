@@ -20,6 +20,7 @@ function meta = truth_parse_meta(path)
     meta.num_unique_adcs = 0;
     meta.adc_samples = [];
     meta.adc_dwell_ns = [];
+    meta.adc_anchor = [];
     meta.max_b1_subseq = 0;
     meta.tr_duration_us = 0;
     meta.num_segments = 0;
@@ -50,12 +51,14 @@ function meta = truth_parse_meta(path)
         elseif strcmp(key, 'num_canonical_trs')
             meta.num_canonical_trs = round(val);
         else
-            tok = regexp(key, '^adc_(\d+)_(samples|dwell_ns)$', 'tokens', 'once');
+            tok = regexp(key, '^adc_(\d+)_(samples|dwell_ns|anchor)$', 'tokens', 'once');
             if ~isempty(tok)
                 idx = str2double(tok{1}) + 1;
                 suffix = tok{2};
                 if strcmp(suffix, 'samples')
                     meta.adc_samples(idx) = round(val);
+                elseif strcmp(suffix, 'anchor')
+                    meta.adc_anchor(idx) = val;
                 else
                     meta.adc_dwell_ns(idx) = round(val);
                 end
@@ -80,6 +83,16 @@ function meta = truth_parse_meta(path)
         error('truth:consistency', ...
             'Meta mismatch in %s: num_unique_adcs=%d but adc_dwell_ns has %d entries.', ...
             path, meta.num_unique_adcs, numel(meta.adc_dwell_ns));
+    end
+
+    if ~isempty(meta.adc_anchor) && meta.num_unique_adcs ~= numel(meta.adc_anchor)
+        error('truth:consistency', ...
+            'Meta mismatch in %s: num_unique_adcs=%d but adc_anchor has %d entries.', ...
+            path, meta.num_unique_adcs, numel(meta.adc_anchor));
+    end
+
+    if isempty(meta.adc_anchor)
+        meta.adc_anchor = 0.5 * ones(1, meta.num_unique_adcs);
     end
 
     if meta.num_segments ~= numel(meta.segment_num_blocks)

@@ -970,7 +970,9 @@ static void run_scan_table_case(const seq_case* tc)
     pulseqlib_collection* coll = NULL;
     pulseqlib_collection_info cinfo = PULSEQLIB_COLLECTION_INFO_INIT;
     scan_table_file ref = SCAN_TABLE_FILE_INIT;
+    seg_meta meta = SEG_META_INIT;
     char scan_path[512];
+    char meta_path[512];
     int rc, ok, pos;
     int is_mprage;
     int pure_seg_id = -1;
@@ -985,10 +987,14 @@ static void run_scan_table_case(const seq_case* tc)
     int total_readout_count = 0;
     int seg_trigger_seen[MAX_SEGMENTS];
     int seg_fmod_seen[MAX_SEGMENTS];
+    int seg_order_idx = 0;  /* current position in segment_order pattern */
+    int seg_order_instances[MAX_SEGMENTS];  /* block counts per instance */
+    int seg_order_blocks = 0;  /* blocks seen in current instance */
 
     memset(pure_inst_durations, 0, sizeof(pure_inst_durations));
     memset(seg_trigger_seen, 0, sizeof(seg_trigger_seen));
     memset(seg_fmod_seen, 0, sizeof(seg_fmod_seen));
+    memset(seg_order_instances, 0, sizeof(seg_order_instances));
     is_mprage = (strncmp(tc->name, "mprage_", 7) == 0 &&
                  strncmp(tc->name, "mprage_nav_", 11) != 0) ? 1 : 0;
 
@@ -1003,6 +1009,13 @@ static void run_scan_table_case(const seq_case* tc)
     ok = parse_scan_table(scan_path, &ref);
     mu_assert(ok, "failed to parse scan_table.bin");
     mu_assert(ref.num_entries > 0, "scan_table has no entries");
+
+    /* Parse meta to get segment_order for validation */
+    build_case_path(meta_path, sizeof(meta_path), tc, "_meta.txt");
+    ok = parse_meta(meta_path, &meta);
+    mu_assert(ok, "failed to parse case _meta.txt");
+    mu_assert(meta.num_segments > 0, "meta has no segment_order");
+    mu_assert_int_eq(meta.num_segments, cinfo.num_segments);
 
     /* Walk the scan table via cursor and compare each block instance */
     pulseqlib_cursor_reset(coll);
@@ -1040,6 +1053,19 @@ static void run_scan_table_case(const seq_case* tc)
                     mu_assert(prev_seg_end,
                               "prev segment should have ended with segment_end=1");
 
+                /* Validate segment order matches meta.segment_order array */
+                if (seg_order_idx < meta.num_segments) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg),
+                             "segment order mismatch at index %d: got segment_id=%d, expected %d",
+                             seg_order_idx, ci.segment_id,
+                             meta.segment_order[seg_order_idx]);
+                    mu_assert(ci.segment_id == meta.segment_order[seg_order_idx], msg);
+                    seg_order_instances[ci.segment_id]++;
+                    seg_order_blocks = 0;
+                    seg_order_idx++;
+                }
+
                 /* Cross-check cursor is_nav / has_trigger with segment_info */
                 {
                     pulseqlib_segment_info si = PULSEQLIB_SEGMENT_INFO_INIT;
@@ -1055,6 +1081,8 @@ static void run_scan_table_case(const seq_case* tc)
                 /* Continuation within same segment: segment_start must be 0 */
                 mu_assert(!ci.segment_start,
                           "segment_start should be 0 within same segment");
+                if (seg_order_idx > 0)
+                    seg_order_blocks++;
             }
             prev_seg_end = ci.segment_end;
         }
@@ -1182,6 +1210,16 @@ static void run_scan_table_case(const seq_case* tc)
 
     /* Final segment_end: the very last block should have segment_end=1 */
     mu_assert(prev_seg_end, "last block should have segment_end=1");
+
+    /* Segment order completion check: for first average, we should 
+     * have seen the complete meta.segment_order pattern */
+    {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "segment order incomplete: saw %d segments, expected %d",
+                 seg_order_idx, meta.num_segments);
+        mu_assert(seg_order_idx == meta.num_segments, msg);
+    }
 
     /* ---- Total readouts cross-check (example_check.c step 6) ----- */
     mu_assert_int_eq(total_readout_count, cinfo.total_readouts);

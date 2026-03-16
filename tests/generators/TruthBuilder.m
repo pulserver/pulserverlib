@@ -16,8 +16,13 @@ classdef TruthBuilder < handle
 %       tb.setSegments([4]);               % unique segment sizes
 %       tb.setSegmentOrder([1]);           % segment instances per TR
 %       tb.setNumAverages(3);
+%       tb.anchorPoints.adc = [0.5 0.0];   % optional, per ADC definition
 %       tb.setBaseRotation(eye(3));        % optional, default eye(3)
 %       tb.export(out_dir, 'gre_2d_1sl_1avg');
+
+    properties
+        anchorPoints = struct('adc', [])
+    end
 
     % ----- public properties (read-only after export) -----
     properties (SetAccess = private)
@@ -115,6 +120,7 @@ classdef TruthBuilder < handle
         function export(obj, out_dir, base_name)
         % EXPORT  Compute all derived quantities and write binary files.
             obj.validate();
+            obj.prepared = false;
             obj.prepare();
 
             if ~exist(out_dir, 'dir')
@@ -161,6 +167,7 @@ classdef TruthBuilder < handle
             if obj.prepared, return; end
 
             obj.discoverUniqueAdcs();
+            obj.validateAnchorPoints();
             obj.computePeakRFAndCanonicalScales();
             obj.buildCanonicalTRs();
             obj.buildFreqModDefs();
@@ -189,6 +196,27 @@ classdef TruthBuilder < handle
                 end
             end
             obj.unique_adcs = adcs;
+        end
+
+        function validateAnchorPoints(obj)
+            if ~isstruct(obj.anchorPoints)
+                error('anchorPoints must be a struct');
+            end
+            if ~isfield(obj.anchorPoints, 'adc') || isempty(obj.anchorPoints.adc)
+                return;
+            end
+
+            adc = obj.anchorPoints.adc(:)';
+            if any(~isfinite(adc)) || any(adc < 0) || any(adc > 1)
+                error('anchorPoints.adc values must be in [0, 1]');
+            end
+
+            num_adc_defs = size(obj.unique_adcs, 1);
+            if length(adc) ~= num_adc_defs
+                error('anchorPoints.adc must have one value per unique ADC definition');
+            end
+
+            obj.anchorPoints.adc = adc;
         end
 
         % ---- TR group discovery ----
@@ -918,7 +946,8 @@ classdef TruthBuilder < handle
             end
             if bd.has_adc
                 adc_dur_s = block.adc.numSamples * block.adc.dwell;
-                bd.adc_kzero_us = (block_start + block.adc.delay + 0.5 * adc_dur_s) * 1e6;
+                adc_anchor = obj.getADCAnchorFraction(bd.adc_id);
+                bd.adc_kzero_us = (block_start + block.adc.delay + adc_anchor * adc_dur_s) * 1e6;
                 bd.adc_start_us = (block_start + block.adc.delay) * 1e6;
                 bd.adc_end_us   = (block_start + block.adc.delay + adc_dur_s) * 1e6;
             else
@@ -968,6 +997,22 @@ classdef TruthBuilder < handle
             end
         end
 
+        function anchor = getADCAnchorFraction(obj, adc_id)
+            if adc_id < 0
+                anchor = 0.5;
+                return;
+            end
+
+            anchor = 0.5;
+            if ~isempty(obj.anchorPoints.adc)
+                idx = adc_id + 1;
+                if idx > length(obj.anchorPoints.adc)
+                    error('Missing anchorPoints.adc entry for ADC definition %d', adc_id);
+                end
+                anchor = obj.anchorPoints.adc(idx);
+            end
+        end
+
         % ---- helper: check if any gradient in block is nonzero in window ----
         function result = anyGradNonzeroInWindow(~, block, wstart, wend)
             result = false;
@@ -993,6 +1038,7 @@ classdef TruthBuilder < handle
             for a = 1:num_adcs
                 fprintf(fid, 'adc_%d_samples %d\n', a - 1, obj.unique_adcs(a, 1));
                 fprintf(fid, 'adc_%d_dwell_ns %d\n', a - 1, round(obj.unique_adcs(a, 2) * 1e9));
+                fprintf(fid, 'adc_%d_anchor %.9g\n', a - 1, obj.getADCAnchorFraction(a - 1));
             end
             fprintf(fid, 'max_b1_subseq %d\n', 0);
             fprintf(fid, 'tr_duration_us %d\n', round(obj.TR * 1e6));
