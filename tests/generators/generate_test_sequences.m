@@ -620,10 +620,10 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
     if use_rotext
         % Rotext path: generate only first interleave; rotation events
         % will rotate it to the other interleave angles.
-        [gx_cells, gy_cells, adc] = testutils.makeTestSpiral(sys, 1, Nx, fov);
+        [gx_cells, gy_cells, adc] = testutils.makeTestSpiral(sys, num_shots * Nz, Nx, fov);
         gx_base = gx_cells{1};
         gy_base = gy_cells{1};
-        dphi = 2 * pi / num_shots;  % interleave angular step
+        dphi = 2 * pi / (num_shots * Nz);  % interleave angular step
     else
         % Explicit path: pre-compute all interleaves across all partitions.
         [gx_shots, gy_shots, adc] = testutils.makeTestSpiral(sys, num_shots * Nz, Nx, fov);
