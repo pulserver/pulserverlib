@@ -554,7 +554,7 @@ classdef TruthBuilder < handle
             types = [];
             def_durations = [];   % blockDuration of each def (for matching)
             def_kinds     = [];   % 0=RF, 1=ADC
-            def_waveforms = [];   % Nx300 resampled waveforms for comparison
+            def_waveforms_cell = {};  % per-def gradient waveform samples for dedup
 
             for blk = 1:num_total_blocks
                 block = obj.seq.getBlock(blk);
