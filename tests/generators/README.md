@@ -174,8 +174,10 @@ cmake -S . -B build && cmake --build build
 
 ## MATLAB Truth Validation Utilities
 
-Use the helper functions below to validate generated ground-truth artifacts
-before debugging C-library behavior.
+The `+testutils` package in `tests/generators/` provides functions to parse,
+report, and plot the ground-truth artifacts exported by `TruthBuilder`.  All
+functions accept either a base-name string (e.g. `'gre_2d_1sl_1avg'`) or a
+pre-parsed truth struct, so you can parse once and reuse.
 
 ### Parse all artifacts for one case
 
@@ -183,44 +185,94 @@ before debugging C-library behavior.
 truth = testutils.truth_parse_case('gre_2d_1sl_1avg');
 ```
 
-This parses all 5 exported truth artifacts:
+Parses the 5 binary/text truth artifacts (`_meta.txt`, `_tr_waveform.bin`,
+`_segment_def.bin`, `_freqmod_def.bin`, `_scan_table.bin`) into a single
+struct.  Also runs cross-file consistency checks (stored in
+`truth.validation`).
 
-- `_meta.txt`
-- `_tr_waveform.bin`
-- `_segment_def.bin`
-- `_freqmod_def.bin`
-- `_scan_table.bin`
-
-### Print terminal report
+### Print a terminal report
 
 ```matlab
 report = testutils.truth_report_case('gre_2d_1sl_1avg');
 ```
 
-The report includes:
+Prints a summary to the command window:
 
-- metadata summary (ADCs, TR duration, segments)
-- canonical TR waveform stats
-- frequency-modulation definitions
-- scan-table coverage (RF/ADC/freq-mod/trigger/digital rows)
-- cross-file consistency warnings
+- Metadata: ADC definitions, TR duration, segment count.
+- Canonical TR waveform stats (samples, duration, peak gradients).
+- Frequency-modulation definitions (type, samples, raster, ref integral).
+- Scan-table coverage (RF / ADC / freq-mod / trigger / digitalout row counts).
+- Cross-file consistency warnings.
 
-### Plotters for visual inspection
+### Plot canonical TR waveforms
 
 ```matlab
 testutils.truth_plot_tr_waveforms('gre_2d_1sl_1avg');
-testutils.truth_plot_segments('gre_2d_1sl_1avg');
-testutils.truth_plot_freqmod_defs('gre_2d_1sl_1avg');
+testutils.truth_plot_tr_waveforms(truth, 'overlay', false);
+testutils.truth_plot_tr_waveforms(truth, 'show_slew', true);
 ```
 
-- `truth_plot_tr_waveforms`: canonical TR waveform visualization.
-- `truth_plot_segments`: segment-level block waveforms on pseudo-time.
-- `truth_plot_freqmod_defs`: gradient frequency-modulation definitions.
+Three subplots (Gx / Gy / Gz) showing all canonical TR waveforms overlaid.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `'overlay'` | `true` | Overlay all TRs on the same axes with a legend. |
+| `'show_slew'` | `false` | Plot slew rate (gradient derivative) instead of amplitude. |
+
+### Plot segment block waveforms
+
+```matlab
+testutils.truth_plot_segments('gre_2d_1sl_1avg');
+testutils.truth_plot_segments(truth, 'segment_idx', [1 2]);
+```
+
+Five subplots (Gx / Gy / Gz / RF |B1| / ADC) on a shared time axis in ms.
+Each block is colour-coded with a global legend at the bottom.
+
+- Gradient time axes use the per-channel `grad_time_s` knot arrays (correct
+  rise/flat/fall for trapezoids, uniform raster for arbitrary waveforms).
+- RF time axis uses the per-block `rf_raster_us` field.
+- Units: gradients in mT/m, RF in µT, ADC as a binary mask.
+- Block start offsets are computed from actual event endpoints with a small
+  visual gap between blocks.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `'segment_idx'` | all | 1-based segment indices to plot (one figure per segment). |
+
+### Plot frequency-modulation definitions
+
+```matlab
+testutils.truth_plot_freqmod_defs('gre_2d_1sl_1avg');
+testutils.truth_plot_freqmod_defs(truth, 'def_idx', [1 2]);
+testutils.truth_plot_freqmod_defs(truth, 'segment_idx', 2);
+```
+
+3×2 grid (rows = Gx / Gy / Gz; col 1 = freq mod in Hz/m, col 2 = cumulative
+phase in rad/m).  Each definition is shown as a zero-padded boxcar on the full
+segment timeline: zero before the active window (RF or ADC delay), the stored
+waveform during the window, and zero after.  A circle marker on the phase
+column indicates the stored `ref_integral` value at `ref_time_us` as a sanity
+check of the running integral.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `'def_idx'` | all | Which frequency-modulation definitions to plot (1-based). |
+| `'segment_idx'` | `1` | Which segment provides the timing context. |
 
 ### One-shot workflow
 
 ```matlab
+testutils.truth_plot_case('gre_2d_1sl_1avg');
 testutils.truth_plot_case('gre_2d_1sl_1avg', 'show_report', true);
+testutils.truth_plot_case('gre_2d_1sl_1avg', 'plot_freqmod', false);
 ```
 
-This runs parse + report + plots in one entrypoint.
+Convenience entrypoint that parses once, then runs report + all three plotters.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `'show_report'` | `true` | Print the terminal report. |
+| `'plot_tr'` | `true` | Plot canonical TR waveforms. |
+| `'plot_segments'` | `true` | Plot segment block waveforms. |
+| `'plot_freqmod'` | `true` | Plot frequency-modulation definitions (skipped if none exist). |

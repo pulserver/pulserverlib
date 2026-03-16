@@ -93,7 +93,7 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
         end
     end
 
-    % --- Plot ---------------------------------------------------------
+    % --- Plot (3 rows x 2 cols: col1=freq mod, col2=phase) -------------
     n_defs     = numel(ids);
     cmap       = lines(n_defs);
     bot_margin = 0.09;
@@ -104,15 +104,17 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     ph_ax  = gobjects(1, 3);
 
     for ax = 1:3
-        fm_ax(ax) = subplot(6, 1, ax);
+        fm_ax(ax) = subplot(3, 2, 2*(ax-1) + 1);
         hold(fm_ax(ax), 'on');
         ylabel(fm_ax(ax), sprintf('%s (Hz/m)', labels{ax}));
         grid(fm_ax(ax), 'on');
+        if ax == 1, title(fm_ax(ax), 'Freq Mod'); end
 
-        ph_ax(ax) = subplot(6, 1, 3 + ax);
+        ph_ax(ax) = subplot(3, 2, 2*(ax-1) + 2);
         hold(ph_ax(ax), 'on');
         ylabel(ph_ax(ax), sprintf('\\phi_{%s} (rad/m)', labels{ax}));
         grid(ph_ax(ax), 'on');
+        if ax == 1, title(ph_ax(ax), 'Phase'); end
     end
     xlabel(fm_ax(3), 'Time (ms)');
     xlabel(ph_ax(3), 'Time (ms)');
@@ -126,17 +128,19 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
         if def.type == 1, kind = 'ADC'; end
         def_lbls{i} = sprintf('Def %d (%s)', d, kind);
 
-        t0_ms   = def_t0_ms(i);
+        t0_ms    = def_t0_ms(i);
+        dur_ms   = double(def.duration_us) * 1e-3;
         t_win_ms = (0:double(def.num_samples)-1).' * double(def.raster_us) * 1e-3;
 
         for ax = 1:3
             fm = double(def.waveform(:, ax));
             ph = cumsum(fm * 2 * pi * dt_s);
 
-            % Zero-padded envelope spanning the full segment timeline.
-            t_plot  = [0;    t0_ms;  t0_ms + t_win_ms;  total_dur_ms];
-            fm_plot = [0;    0;      fm;                 0           ];
-            ph_plot = [0;    0;      ph;                 ph(end)     ];
+            % Zero-padded envelope: 0 -> step up at t0 -> waveform ->
+            % step down at t0+duration -> 0 until end of segment.
+            t_plot  = [0;  t0_ms;  t0_ms + t_win_ms;  t0_ms + dur_ms;  total_dur_ms];
+            fm_plot = [0;  0;      fm;                 0;               0            ];
+            ph_plot = [0;  0;      ph;                 ph(end);         ph(end)      ];
 
             plot(fm_ax(ax), t_plot, fm_plot, 'Color', cmap(i,:), 'LineWidth', 1.2);
             plot(ph_ax(ax), t_plot, ph_plot, 'Color', cmap(i,:), 'LineWidth', 1.2);
@@ -170,7 +174,7 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     legend(lgd_ax, dummy_h, def_lbls, ...
         'Orientation', 'horizontal', 'Location', 'north', 'Box', 'off');
 
-    sgtitle(sprintf('Frequency Modulation Definitions (%s)  seg %d', ...
+    sgtitle(fig, sprintf('Frequency Modulation Definitions (%s)  seg %d', ...
         truth.base_name, s_idx), 'Interpreter', 'none');
 end
 
