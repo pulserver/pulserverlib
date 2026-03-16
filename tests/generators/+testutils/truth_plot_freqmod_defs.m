@@ -22,7 +22,7 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     end
 
     if isempty(p.Results.def_idx)
-        ids = 1:truth.freqmod_def.num_defs;
+        ids = 1:truth.freqmod_def.num_defs;  % will be filtered to segment below
     else
         ids = p.Results.def_idx(:).';
     end
@@ -38,6 +38,21 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     end
     seg      = truth.segment_def.segments(s_idx);
     n_blocks = seg.num_blocks;
+
+    % --- Filter defs to those actually used by this segment -----------
+    if isempty(p.Results.def_idx)
+        seg_def_ids = [];
+        for b = 1:n_blocks
+            fid = double(seg.blocks(b).freq_mod_def_id);
+            if fid >= 0
+                seg_def_ids(end+1) = fid + 1; %#ok<AGROW>  % 0-based -> 1-based
+            end
+        end
+        ids = unique(seg_def_ids);
+        if isempty(ids)
+            error('truth:empty', 'No frequency modulation definitions for segment %d', s_idx - 1);
+        end
+    end
 
     block_end_ms = zeros(1, n_blocks);
     for b = 1:n_blocks
@@ -64,32 +79,19 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     block_start_ms = [0, cumsum(block_end_ms + 0.002)];
     total_dur_ms   = block_start_ms(end);
 
-    % --- Match each def to its source block (RF or ADC type) ----------
-    rf_fm_blks  = [];
-    adc_fm_blks = [];
-    for b = 1:n_blocks
-        blk = seg.blocks(b);
-        if ~blk.has_freq_mod, continue; end
-        if blk.has_rf,  rf_fm_blks(end+1)  = b; end %#ok<AGROW>
-        if blk.has_adc, adc_fm_blks(end+1) = b; end %#ok<AGROW>
-    end
-
-    rf_ctr  = 0;
-    adc_ctr = 0;
+    % --- Match each def to its source block via freq_mod_def_id --------
     def_t0_ms = zeros(1, numel(ids));   % active-window start (ms)
     for i = 1:numel(ids)
         def = truth.freqmod_def.defs(ids(i));
-        if def.type == 0
-            rf_ctr = rf_ctr + 1;
-            if rf_ctr <= numel(rf_fm_blks)
-                b = rf_fm_blks(rf_ctr);
-                def_t0_ms(i) = block_start_ms(b) + double(seg.blocks(b).rf_delay) * 1e3;
-            end
-        else
-            adc_ctr = adc_ctr + 1;
-            if adc_ctr <= numel(adc_fm_blks)
-                b = adc_fm_blks(adc_ctr);
-                def_t0_ms(i) = block_start_ms(b) + double(seg.blocks(b).adc_delay) * 1e3;
+        for b = 1:n_blocks
+            blk = seg.blocks(b);
+            if double(blk.freq_mod_def_id) + 1 == ids(i)
+                if def.type == 0 && blk.has_rf
+                    def_t0_ms(i) = block_start_ms(b) + double(blk.rf_delay) * 1e3;
+                elseif def.type == 1 && blk.has_adc
+                    def_t0_ms(i) = block_start_ms(b) + double(blk.adc_delay) * 1e3;
+                end
+                break;
             end
         end
     end

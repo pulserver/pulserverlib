@@ -306,7 +306,7 @@ static TSEG_MAYBE_UNUSED int parse_block_meta(const char* path, block_meta* out)
  *         int32   grad_n;  float32 grad_wave[grad_n];  float32 grad_time_s[grad_n]
  *       float32 adc_delay;  int32 adc_def_id
  *       float32 digital_out_delay, digital_out_duration
- *       int32   freq_mod_num_samples
+ *       int32   freq_mod_num_samples;  int32 freq_mod_def_id
  */
 
 #define SEG_DEF_MAX_BLOCKS   8
@@ -346,6 +346,7 @@ typedef struct seg_block_def {
 
     /* Freq-mod */
     int freq_mod_num_samples;
+    int freq_mod_def_id;  /* 0-based freq-mod definition index (-1 if none) */
 
     /* Anchors (us, relative to segment start; -1 if absent) */
     float rf_isocenter_us;
@@ -429,6 +430,7 @@ static TSEG_MAYBE_UNUSED int parse_seg_def(const char* path, seg_def_file* out)
 
             /* Freq-mod */
             RD4(blk->freq_mod_num_samples);
+            RD4(blk->freq_mod_def_id);
 
             /* Anchors */
             RDF(blk->rf_isocenter_us);

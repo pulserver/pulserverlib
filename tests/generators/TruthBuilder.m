@@ -869,12 +869,22 @@ classdef TruthBuilder < handle
             % Frequency modulation
             bd.has_freq_mod = false;
             bd.num_freq_mod_samples = 0;
+            bd.freq_mod_def_id = -1;  % 0-based; -1 = none
             if bd.has_rf && has_grad
                 rf_ws = block.rf.delay;
                 rf_we = block.rf.delay + block.rf.t(end);
                 if obj.anyGradNonzeroInWindow(block, rf_ws, rf_we)
                     bd.has_freq_mod = true;
                     bd.num_freq_mod_samples = round(block.blockDuration / obj.sys.rfRasterTime);
+                    dur = block.blockDuration;
+                    gsig = TruthBuilder.blockGradSigInWindow(block, rf_ws, rf_we);
+                    for ki = 1:length(obj.fmod_durations)
+                        if obj.fmod_kinds(ki) == 0 && abs(obj.fmod_durations(ki) - dur) < 1e-9 ...
+                                && max(abs(obj.fmod_gradsigs(ki,:) - gsig)) < 1
+                            bd.freq_mod_def_id = ki - 1;  % 0-based
+                            break;
+                        end
+                    end
                 end
             end
             if bd.has_adc && has_grad
@@ -883,6 +893,15 @@ classdef TruthBuilder < handle
                 if obj.anyGradNonzeroInWindow(block, adc_ws, adc_we)
                     bd.has_freq_mod = true;
                     bd.num_freq_mod_samples = round(block.blockDuration / obj.sys.adcRasterTime);
+                    dur = block.blockDuration;
+                    gsig = TruthBuilder.blockGradSigInWindow(block, adc_ws, adc_we);
+                    for ki = 1:length(obj.fmod_durations)
+                        if obj.fmod_kinds(ki) == 1 && abs(obj.fmod_durations(ki) - dur) < 1e-9 ...
+                                && max(abs(obj.fmod_gradsigs(ki,:) - gsig)) < 1
+                            bd.freq_mod_def_id = ki - 1;  % 0-based
+                            break;
+                        end
+                    end
                 end
             end
 
@@ -1089,6 +1108,7 @@ classdef TruthBuilder < handle
 
                     % Freq-mod
                     fwrite(fid, int32(bd.num_freq_mod_samples), 'int32');
+                    fwrite(fid, int32(bd.freq_mod_def_id), 'int32');  % 0-based def index
 
                     % Anchors
                     fwrite(fid, single(bd.rf_isocenter_us), 'float32');
