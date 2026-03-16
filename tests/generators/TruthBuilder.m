@@ -606,7 +606,10 @@ classdef TruthBuilder < handle
                             adc_dur = block.adc.numSamples * block.adc.dwell;
                             adc_active_start = block.adc.delay;
                             adc_active_end   = adc_active_start + adc_dur;
-                            adc_ref_time     = 0.5 * adc_dur;
+                            key = [block.adc.numSamples, block.adc.dwell];
+                            match = find(obj.unique_adcs(:,1) == key(1) & ...
+                                         abs(obj.unique_adcs(:,2) - key(2)) < 1e-15, 1);
+                            adc_ref_time     = obj.getADCAnchorFraction(match - 1) * adc_dur;
                             defs{end+1} = TruthBuilder.buildFreqModDefinition( ...
                                 block, adc_active_start, adc_active_end, adc_ref_time, ...
                                 obj.sys.gradRasterTime, obj.sys.adcRasterTime); %#ok<AGROW>
