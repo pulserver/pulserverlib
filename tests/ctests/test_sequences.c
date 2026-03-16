@@ -449,6 +449,23 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                                   "grad waveform shape mismatch");
                     }
 
+                    /* Timing array check: compare grad_time_s (MATLAB, seconds) to pulseqlib_get_grad_time_us (library, us) */
+                    if (ref_blk->grad_n[ax] > 0 && ref_blk->grad_time_s[ax] != NULL) {
+                        float* lib_time_us = pulseqlib_get_grad_time_us(coll, s, b, ax);
+                        mu_assert(lib_time_us != NULL, "pulseqlib_get_grad_time_us returned NULL");
+                        for (i = 0; i < ref_blk->grad_n[ax]; ++i) {
+                            float ref_us = ref_blk->grad_time_s[ax][i] * 1e6f;
+                            float lib_us = lib_time_us[i];
+                            if (fabsf(ref_us - lib_us) > 0.5f) {
+                                fprintf(stderr, "[geninstr][%s] seg%d blk%d ax%d time@%d: ref=%.6f us  lib=%.6f us\n",
+                                        tc->name, s, b, ax, i, ref_us, lib_us);
+                            }
+                            mu_assert(fabsf(ref_us - lib_us) <= 0.5f,
+                                      "grad time array mismatch (>0.5 us)");
+                        }
+                        free(lib_time_us);
+                    }
+
                     /* Amplitude checks via new getters */
                     {
                         float init_amp = pulseqlib_get_grad_initial_amplitude_hz_per_m(
