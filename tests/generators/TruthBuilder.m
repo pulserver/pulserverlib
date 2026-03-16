@@ -536,7 +536,7 @@ classdef TruthBuilder < handle
                     rf_end   = block.rf.delay + block.rf.t(end);
                     if obj.anyGradNonzeroInWindow(block, rf_start, rf_end)
                         dur = block.blockDuration;
-                        gsig = TruthBuilder.blockGradSig(block);
+                        gsig = TruthBuilder.blockGradSigInWindow(block, rf_start, rf_end);
                         already = false;
                         for k = 1:length(def_durations)
                             if def_kinds(k) == 0 && abs(def_durations(k) - dur) < 1e-9 ...
@@ -565,7 +565,7 @@ classdef TruthBuilder < handle
                     adc_end   = block.adc.delay + block.adc.numSamples * block.adc.dwell;
                     if obj.anyGradNonzeroInWindow(block, adc_start, adc_end)
                         dur = block.blockDuration;
-                        gsig = TruthBuilder.blockGradSig(block);
+                        gsig = TruthBuilder.blockGradSigInWindow(block, adc_start, adc_end);
                         already = false;
                         for k = 1:length(def_durations)
                             if def_kinds(k) == 1 && abs(def_durations(k) - dur) < 1e-9 ...
@@ -652,7 +652,7 @@ classdef TruthBuilder < handle
                             rf_end   = block.rf.delay + block.rf.t(end);
                             if obj.anyGradNonzeroInWindow(block, rf_start, rf_end)
                                 dur = block.blockDuration;
-                                gsig = TruthBuilder.blockGradSig(block);
+                                gsig = TruthBuilder.blockGradSigInWindow(block, rf_start, rf_end);
                                 for ki = 1:length(obj.fmod_durations)
                                     if obj.fmod_kinds(ki) == 0 && abs(obj.fmod_durations(ki) - dur) < 1e-9 ...
                                             && max(abs(obj.fmod_gradsigs(ki,:) - gsig)) < 1
@@ -683,7 +683,7 @@ classdef TruthBuilder < handle
                             adc_end   = block.adc.delay + block.adc.numSamples * block.adc.dwell;
                             if obj.anyGradNonzeroInWindow(block, adc_start, adc_end)
                                 dur = block.blockDuration;
-                                gsig = TruthBuilder.blockGradSig(block);
+                                gsig = TruthBuilder.blockGradSigInWindow(block, adc_start, adc_end);
                                 for ki = 1:length(obj.fmod_durations)
                                     if obj.fmod_kinds(ki) == 1 && abs(obj.fmod_durations(ki) - dur) < 1e-9 ...
                                             && max(abs(obj.fmod_gradsigs(ki,:) - gsig)) < 1
@@ -1198,6 +1198,21 @@ classdef TruthBuilder < handle
                 ax = axes{ch};
                 if isfield(block, ax) && ~isempty(block.(ax))
                     sig(ch) = abs(TruthBuilder.gradPeakAmp(block.(ax)));
+                end
+            end
+        end
+
+        function sig = blockGradSigInWindow(block, wstart, wend)
+        % BLOCKGRADSIGWINDOW  Peak |gradient| per axis within [wstart, wend].
+            sig = [0, 0, 0];
+            axes = {'gx', 'gy', 'gz'};
+            for ch = 1:3
+                ax = axes{ch};
+                if isfield(block, ax) && ~isempty(block.(ax))
+                    [t, w] = TruthBuilder.gradToKnots(block.(ax));
+                    pts = [wstart; t(t > wstart & t < wend); wend];
+                    vals = interp1(t, w, pts, 'linear', 0);
+                    sig(ch) = max(abs(vals));
                 end
             end
         end

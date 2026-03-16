@@ -146,10 +146,11 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
             plot(fm_ax(ax), t_plot, fm_plot, 'Color', cmap(i,:), 'LineWidth', 1.2);
             plot(ph_ax(ax), t_plot, ph_plot, 'Color', cmap(i,:), 'LineWidth', 1.2);
 
-            % ref_integral (Hz·s/m) × 2π = rad/m; marker at ref_time.
-            ref_ph = double(def.ref_integral(ax)) * 2 * pi;
-            plot(ph_ax(ax), t0_ms + double(def.ref_time_us) * 1e-3, ref_ph, 'o', ...
-                'Color', cmap(i,:), 'MarkerSize', 6, 'LineWidth', 1.5, ...
+            % Diamond at the interpolated cumulative phase at ref_time.
+            ref_t_ms = double(def.ref_time_us) * 1e-3;
+            ref_ph_interp = interp1(t_win_ms, ph, ref_t_ms, 'linear', ph(end));
+            plot(ph_ax(ax), t0_ms + ref_t_ms, ref_ph_interp, 'd', ...
+                'Color', cmap(i,:), 'MarkerSize', 7, 'MarkerFaceColor', cmap(i,:), ...
                 'HandleVisibility', 'off');
         end
     end
