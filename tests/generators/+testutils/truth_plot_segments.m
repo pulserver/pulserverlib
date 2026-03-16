@@ -82,6 +82,6 @@ function truth = coerce_truth(base_or_truth)
     if isstruct(base_or_truth)
         truth = base_or_truth;
     else
-        truth = truth_parse_case(base_or_truth);
+        truth = testutils.truth_parse_case(base_or_truth);
     end
 end

@@ -11,18 +11,18 @@ function truth = truth_plot_case(base, varargin)
     addParameter(p, 'plot_freqmod', true, @islogical);
     parse(p, varargin{:});
 
-    truth = truth_parse_case(base);
+    truth = testutils.truth_parse_case(base);
 
     if p.Results.show_report
-        truth_report_case(base);
+        testutils.truth_report_case(base);
     end
     if p.Results.plot_tr
-        truth_plot_tr_waveforms(truth);
+        testutils.truth_plot_tr_waveforms(truth);
     end
     if p.Results.plot_segments
-        truth_plot_segments(truth);
+        testutils.truth_plot_segments(truth);
     end
     if p.Results.plot_freqmod && truth.freqmod_def.num_defs > 0
-        truth_plot_freqmod_defs(truth);
+        testutils.truth_plot_freqmod_defs(truth);
     end
 end

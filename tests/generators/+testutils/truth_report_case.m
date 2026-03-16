@@ -1,7 +1,7 @@
 function report = truth_report_case(base)
 %TRUTH_REPORT_CASE Parse and print a terminal report for one truth case.
 
-    truth = truth_parse_case(base);
+    truth = testutils.truth_parse_case(base);
 
     report = struct();
     report.base_name = truth.base_name;

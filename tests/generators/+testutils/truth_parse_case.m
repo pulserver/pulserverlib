@@ -30,11 +30,11 @@ function truth = truth_parse_case(base)
         end
     end
 
-    truth.meta = truth_parse_meta(truth.paths.meta);
-    truth.tr_waveforms = truth_parse_tr_waveform_bin(truth.paths.tr_waveform);
-    truth.segment_def = truth_parse_segment_def_bin(truth.paths.segment_def);
-    truth.freqmod_def = truth_parse_freqmod_def_bin(truth.paths.freqmod_def);
-    truth.scan_table = truth_parse_scan_table_bin(truth.paths.scan_table);
+    truth.meta = testutils.truth_parse_meta(truth.paths.meta);
+    truth.tr_waveforms = testutils.truth_parse_tr_waveform_bin(truth.paths.tr_waveform);
+    truth.segment_def = testutils.truth_parse_segment_def_bin(truth.paths.segment_def);
+    truth.freqmod_def = testutils.truth_parse_freqmod_def_bin(truth.paths.freqmod_def);
+    truth.scan_table = testutils.truth_parse_scan_table_bin(truth.paths.scan_table);
 
     truth.validation = local_validate(truth);
 end
