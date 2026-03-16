@@ -18,12 +18,11 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     end
 
     fig = figure('Name', sprintf('Freqmod defs: %s', truth.base_name), 'Color', 'w');
-    tl = tiledlayout(3, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 
     labels = {'Gx', 'Gy', 'Gz'};
     hold_state = gobjects(1, 3);
     for ax = 1:3
-        hold_state(ax) = nexttile;
+        hold_state(ax) = subplot(3, 1, ax);
         hold(hold_state(ax), 'on');
         ylabel(hold_state(ax), labels{ax});
         grid(hold_state(ax), 'on');
@@ -50,7 +49,7 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     end
 
     legend(hold_state(1), lgd, 'Location', 'eastoutside');
-    title(tl, sprintf('Frequency Modulation Definitions (%s)', truth.base_name), 'Interpreter', 'none');
+    sgtitle(sprintf('Frequency Modulation Definitions (%s)', truth.base_name), 'Interpreter', 'none');
 end
 
 function truth = coerce_truth(base_or_truth)

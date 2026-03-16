@@ -27,13 +27,12 @@ function figs = truth_plot_segments(base_or_truth, varargin)
 
         seg = truth.segment_def.segments(s);
         fig = figure('Name', sprintf('Segment %d: %s', s - 1, truth.base_name), 'Color', 'w');
-        tl = tiledlayout(4, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 
         chan_names = {'Gx', 'Gy', 'Gz', 'RF'};
         chan_idx = [1, 2, 3];
 
         for ax = 1:3
-            nexttile;
+            subplot(4, 1, ax);
             hold on;
             cursor = 0;
             for b = 1:seg.num_blocks
@@ -54,7 +53,7 @@ function figs = truth_plot_segments(base_or_truth, varargin)
             end
         end
 
-        nexttile;
+        subplot(4, 1, 4);
         hold on;
         cursor = 0;
         for b = 1:seg.num_blocks
@@ -72,7 +71,7 @@ function figs = truth_plot_segments(base_or_truth, varargin)
         xlabel('Pseudo-time (samples)');
         grid on;
 
-        title(tl, sprintf('Segment %d (%s)  rf->adc gap %.3fus, adc->adc gap %.3fus', ...
+        sgtitle(sprintf('Segment %d (%s)  rf->adc gap %.3fus, adc->adc gap %.3fus', ...
             s - 1, truth.base_name, seg.rf_adc_gap_us, seg.adc_adc_gap_us), 'Interpreter', 'none');
         figs(ii) = fig;
     end

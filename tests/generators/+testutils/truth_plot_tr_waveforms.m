@@ -12,13 +12,12 @@ function fig = truth_plot_tr_waveforms(base_or_truth, varargin)
     truth = coerce_truth(base_or_truth);
 
     fig = figure('Name', sprintf('Canonical TR waveforms: %s', truth.base_name), 'Color', 'w');
-    tl = tiledlayout(3, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 
     labels = {'Gx', 'Gy', 'Gz'};
     fields = {'gx', 'gy', 'gz'};
 
     for ax = 1:3
-        nexttile;
+        subplot(3, 1, ax);
         hold on;
         for i = 1:truth.tr_waveforms.num_trs
             w = truth.tr_waveforms.waveforms(i);
@@ -46,7 +45,7 @@ function fig = truth_plot_tr_waveforms(base_or_truth, varargin)
         end
     end
 
-    title(tl, sprintf('Canonical TRs (%s)', truth.base_name), 'Interpreter', 'none');
+    sgtitle(sprintf('Canonical TRs (%s)', truth.base_name), 'Interpreter', 'none');
 end
 
 function truth = coerce_truth(base_or_truth)
