@@ -558,7 +558,6 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
         % Sagittal (yz plane): slice-select on x
         seq.addBlock(rf_nav_sag, gx_nav_ss, lblNav);
         seq.addBlock(gy_nav_sag, gz_nav_sag, adc_nav);
-        seq.addBlock(gx_nav_rew_ax, gy_nav_rew_ax);
         seq.addBlock(gx_nav_spoil_sag, gy_nav_rew_sag, gz_nav_rew_sag);
  
         seq.addBlock(delayTR);
@@ -579,8 +578,8 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
     out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
 
     tb = TruthBuilder(seq, sys);
-    tb.setBlocksPerTR(2 + 1 + 4 * Ny + 3 * 2 + 1);
-    tb.setSegments([2, 1, 4, 2, 2, 2]);
+    tb.setBlocksPerTR(2 + 1 + 4 * Ny + 3 * 3 + 1);
+    tb.setSegments([2, 1, 4, 3, 3, 3]);
     tb.setSegmentOrder([1, 2, 3 * ones(1, Ny), 4, 5, 6, 2]);
     tb.setNumAverages(num_averages);
     tb.export(out_dir, base);
@@ -714,7 +713,7 @@ end
 function sys = make_system()
     sys = mr.opts( ...
         'MaxGrad',   28,   'GradUnit', 'mT/m', ...
-        'MaxSlew',   150,  'SlewUnit', 'T/m/s', ...
+        'MaxSlew',   200,  'SlewUnit', 'T/m/s', ...
         'rfRasterTime',         2e-6, ...
         'gradRasterTime',      20e-6, ...
         'adcRasterTime',        2e-6, ...

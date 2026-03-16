@@ -11,7 +11,7 @@ function [gxCells, gyCells, adc, k] = makeTestSpiral(sys, interleaves, nSamples,
 %   duration and is an integer multiple of grad raster, adc raster, and
 %   dwell time.  Gradients are zero-padded at the start and hold g(end)
 %   at the end (a separate rewinder handles ramp-down).
-
+    warning('OFF', 'mr:restoreShape');
     dt = sys.gradRasterTime;
 
     % Oversample factor for gradient
