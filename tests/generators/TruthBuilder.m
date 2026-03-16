@@ -1081,6 +1081,7 @@ classdef TruthBuilder < handle
 
                     % ADC
                     fwrite(fid, single(bd.adc_delay), 'float32');
+                    fwrite(fid, int32(bd.adc_id), 'int32');  % 0-based ADC def index
 
                     % Digital output
                     fwrite(fid, single(bd.digital_out_delay), 'float32');

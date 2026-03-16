@@ -29,7 +29,7 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
 
     adc_dwell_ms = double(truth.meta.adc_dwell_ns) * 1e-6;
     n_adc        = double(truth.meta.adc_samples);
-    adc_dur_ms   = max(n_adc .* adc_dwell_ms);  % max across ADC definitions
+    adc_dur_all  = n_adc .* adc_dwell_ms;  % per-definition durations (ms)
 
     % --- Build segment timing context (ms) ----------------------------
     s_idx = p.Results.segment_idx;
@@ -56,7 +56,8 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
                        max(double(blk.rf_time_s)) * 1e3;
         end
         if blk.has_adc
-            spans(5) = double(blk.adc_delay) * 1e3 + adc_dur_ms;
+            ad = double(blk.adc_def_id) + 1;  % 0-based -> 1-based
+            spans(5) = double(blk.adc_delay) * 1e3 + adc_dur_all(ad);
         end
         block_end_ms(b) = max(spans);
     end

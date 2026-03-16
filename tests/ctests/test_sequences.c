@@ -521,6 +521,7 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                 mu_assert(fabsf(ref_blk->adc_delay - (float)bi.adc_delay_us * 1e-6f)
                           <= GENI_DELAY_ABS_TOL * 1e-6f,
                           "ADC delay mismatch");
+                mu_assert_int_eq(ref_blk->adc_def_id, bi.adc_def_id);
             }
 
             /* --- Digital output ------------------------------------ */

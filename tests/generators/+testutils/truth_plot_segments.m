@@ -24,7 +24,7 @@ function figs = truth_plot_segments(base_or_truth, varargin)
 
     adc_dwell_ms = double(truth.meta.adc_dwell_ns) * 1e-6;  % ns→ms
     n_adc        = double(truth.meta.adc_samples);
-    adc_dur_ms   = max(n_adc .* adc_dwell_ms);  % max across ADC definitions
+    adc_dur_all  = n_adc .* adc_dwell_ms;  % per-definition durations (ms)
 
     if isempty(p.Results.segment_idx)
         seg_ids = 1:truth.segment_def.num_segments;
@@ -67,7 +67,8 @@ function figs = truth_plot_segments(base_or_truth, varargin)
                            max(double(blk.rf_time_s)) * 1e3;
             end
             if blk.has_adc
-                spans(5) = double(blk.adc_delay) * 1e3 + adc_dur_ms;
+                ad = double(blk.adc_def_id) + 1;  % 0-based -> 1-based
+                spans(5) = double(blk.adc_delay) * 1e3 + adc_dur_all(ad);
             end
             block_end_ms(b) = max(spans);
         end
@@ -116,9 +117,10 @@ function figs = truth_plot_segments(base_or_truth, varargin)
         hold on;
         for b = 1:n_blocks
             blk = seg.blocks(b);
-            if blk.has_adc && adc_dur_ms > 0
+            if blk.has_adc
+                ad = double(blk.adc_def_id) + 1;  % 0-based -> 1-based
                 t0 = block_start_ms(b) + double(blk.adc_delay) * 1e3;
-                t1 = t0 + adc_dur_ms;
+                t1 = t0 + adc_dur_all(ad);
                 fill([t0, t1, t1, t0], [0, 0, 1, 1], cmap(b,:), ...
                     'FaceAlpha', 0.45, 'EdgeColor', 'none');
             end

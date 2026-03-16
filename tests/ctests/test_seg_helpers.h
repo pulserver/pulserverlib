@@ -304,7 +304,7 @@ static TSEG_MAYBE_UNUSED int parse_block_meta(const char* path, block_meta* out)
  *       for axis in {x,y,z}:
  *         float32 grad_delay,  grad_amp
  *         int32   grad_n;  float32 grad_wave[grad_n];  float32 grad_time_s[grad_n]
- *       float32 adc_delay
+ *       float32 adc_delay;  int32 adc_def_id
  *       float32 digital_out_delay, digital_out_duration
  *       int32   freq_mod_num_samples
  */
@@ -338,6 +338,7 @@ typedef struct seg_block_def {
 
     /* ADC */
     float adc_delay;
+    int   adc_def_id;   /* 0-based ADC definition index (-1 if none) */
 
     /* Digital output */
     float digital_out_delay;
@@ -420,6 +421,7 @@ static TSEG_MAYBE_UNUSED int parse_seg_def(const char* path, seg_def_file* out)
 
             /* ADC */
             RDF(blk->adc_delay);
+            RD4(blk->adc_def_id);
 
             /* Digital output */
             RDF(blk->digital_out_delay);
