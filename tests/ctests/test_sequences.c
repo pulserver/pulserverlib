@@ -317,11 +317,16 @@ MU_TEST_SUITE(suite_sequences_uieval)
 /*  For each segment/block we check:                                   */
 /*    - flags  (has_rf, has_grad[3], has_adc, has_rotation,           */
 /*              has_digital_out, has_freq_mod)                         */
-/*    - RF     (delay, amp, num_samples, waveform shape)               */
-/*    - Grads  (delay, amp, num_samples, waveform shape per axis)      */
-/*    - ADC    (delay)                                                 */
+/*    - RF     (delay, amp, num_samples, waveform shape, time array)   */
+/*    - Grads  (delay, amp, num_samples, waveform shape, time array)   */
+/*    - ADC    (delay, adc_def_id)                                     */
 /*    - Digitalout (delay, duration)                                   */
-/*    - Freq-mod  (num_samples)                                        */
+/*    - Freq-mod  (num_samples, freq_mod_def_id consistency)           */
+/*    - Anchors (rf_isocenter_us, adc_kzero_us)                        */
+/*  Per segment:                                                       */
+/*    - Segment-level gaps (rf_adc_gap_us, adc_adc_gap_us) vs truth    */
+/*    - Segment properties (pure_delay, trigger params)                */
+/*    - Event walk gap verification (mirrors walk_segment_events)      */
 /* ------------------------------------------------------------------ */
 
 #define GENI_AMP_REL_TOL  1e-3f   /* relative tolerance for normalised amps */
@@ -559,6 +564,14 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                 }
             }
 
+            /* --- Freq-mod definition ID consistency --------------- */
+            if (ref_blk->has_freq_mod) {
+                mu_assert(ref_blk->freq_mod_def_id >= 0,
+                          "freq_mod_def_id should be >= 0 when has_freq_mod");
+            } else {
+                mu_assert_int_eq(-1, ref_blk->freq_mod_def_id);
+            }
+
             /* --- Anchors ------------------------------------------ */
             if (ref_blk->has_rf) {
                 float lib_iso = pulseqlib_get_rf_isocenter_us(coll, s, b);
@@ -587,6 +600,123 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             } else {
                 mu_assert_int_eq(ref_adc_adc, segi.adc_adc_gap_us);
             }
+        }
+
+        /* --- Segment property structural checks ------------------- */
+        /*
+         * Mirrors example_geninstructions.c / example_check.c:
+         *   - pure_delay: segment with 1 block, no RF, no grads
+         *   - is_nav: exposed by segment_info for scanloop PMC logic
+         *   - has_trigger: exposed for vendor trigger arming
+         *   - trigger_delay_us / trigger_duration_us: valid when has_trigger
+         */
+        {
+            int seg_has_active_block = 0;
+            int seg_block_count = ref.num_blocks[s];
+            int sb;
+
+            for (sb = 0; sb < seg_block_count; ++sb) {
+                const seg_block_def* sblk = &ref.blocks[s][sb];
+                if (sblk->has_rf || sblk->has_grad[0] ||
+                    sblk->has_grad[1] || sblk->has_grad[2]) {
+                    seg_has_active_block = 1;
+                    break;
+                }
+            }
+
+            /* pure_delay: 1 block, no RF, no grads (may have ADC trigger) */
+            if (seg_block_count == 1 && !seg_has_active_block) {
+                mu_assert(segi.pure_delay,
+                          "segment with 1 empty block should be pure_delay");
+            } else {
+                mu_assert(!segi.pure_delay,
+                          "segment with active blocks should not be pure_delay");
+            }
+
+            /* has_trigger: when set, delay and duration must be valid */
+            if (segi.has_trigger) {
+                mu_assert(segi.trigger_delay_us >= 0,
+                          "trigger_delay_us should be >= 0 when has_trigger");
+                mu_assert(segi.trigger_duration_us >= 0,
+                          "trigger_duration_us should be >= 0 when has_trigger");
+            } else {
+                mu_assert_int_eq(-1, segi.trigger_delay_us);
+                mu_assert_int_eq(-1, segi.trigger_duration_us);
+            }
+        }
+
+        /* --- Event walk gap verification (mirrors walk_segment_events
+         *     in example_geninstructions.c) ------------------------ */
+        {
+            typedef struct { int kind; int start_us; int end_us; } gap_evt;
+            gap_evt events[SEG_DEF_MAX_BLOCKS * 2];
+            int n_evt = 0, t_walk = 0, wb, je;
+            int walk_rf_adc = -1, walk_adc_adc = -1;
+
+            for (wb = 0; wb < ref.num_blocks[s]; ++wb) {
+                const seg_block_def* wb_blk = &ref.blocks[s][wb];
+                pulseqlib_block_info wbi = PULSEQLIB_BLOCK_INFO_INIT;
+                rc = pulseqlib_get_block_info(coll, s, wb, &wbi);
+                mu_assert(PULSEQLIB_SUCCEEDED(rc), "get_block_info for event walk");
+
+                if (wb_blk->has_rf) {
+                    int rf_dur = wbi.rf_num_samples *
+                                 (int)(opts.rf_raster_us + 0.5f);
+                    events[n_evt].kind     = 0; /* RF */
+                    events[n_evt].start_us = t_walk + wbi.rf_delay_us;
+                    events[n_evt].end_us   = t_walk + wbi.rf_delay_us + rf_dur;
+                    n_evt++;
+                }
+                if (wb_blk->has_adc && wbi.adc_def_id >= 0) {
+                    pulseqlib_adc_def ad = PULSEQLIB_ADC_DEF_INIT;
+                    int adc_dur;
+                    rc = pulseqlib_get_adc_def(coll, wbi.adc_def_id, &ad);
+                    mu_assert(PULSEQLIB_SUCCEEDED(rc), "get_adc_def for walk");
+                    adc_dur = (int)(ad.num_samples * ad.dwell_ns * 1e-3f);
+                    events[n_evt].kind     = 1; /* ADC */
+                    events[n_evt].start_us = t_walk + wbi.adc_delay_us;
+                    events[n_evt].end_us   = t_walk + wbi.adc_delay_us + adc_dur;
+                    n_evt++;
+                }
+                t_walk += wbi.duration_us;
+            }
+
+            /* insertion-sort by start_us (stable) */
+            for (je = 1; je < n_evt; ++je) {
+                gap_evt tmp = events[je];
+                int k = je - 1;
+                while (k >= 0 && events[k].start_us > tmp.start_us) {
+                    events[k + 1] = events[k];
+                    --k;
+                }
+                events[k + 1] = tmp;
+            }
+
+            /* walk events — compute minimum RF->ADC and ADC->ADC gaps */
+            for (je = 0; je < n_evt; ++je) {
+                if (events[je].kind == 0) { /* RF */
+                    int k2;
+                    for (k2 = je + 1; k2 < n_evt; ++k2) {
+                        if (events[k2].kind == 1) { /* next ADC */
+                            int gap = events[k2].start_us - events[je].end_us;
+                            if (walk_rf_adc < 0 || gap < walk_rf_adc)
+                                walk_rf_adc = gap;
+                            break;
+                        }
+                        if (events[k2].kind == 0) break; /* next RF first */
+                    }
+                } else { /* ADC */
+                    if (je > 0 && events[je - 1].kind == 1) { /* prev ADC */
+                        int gap = events[je].start_us - events[je - 1].end_us;
+                        if (walk_adc_adc < 0 || gap < walk_adc_adc)
+                            walk_adc_adc = gap;
+                    }
+                }
+            }
+
+            /* Computed gaps must agree with segment_info */
+            mu_assert_int_eq(walk_rf_adc, segi.rf_adc_gap_us);
+            mu_assert_int_eq(walk_adc_adc, segi.adc_adc_gap_us);
         }
     }
 
@@ -838,6 +968,7 @@ static void run_scan_table_case(const seq_case* tc)
 {
     pulseqlib_opts opts;
     pulseqlib_collection* coll = NULL;
+    pulseqlib_collection_info cinfo = PULSEQLIB_COLLECTION_INFO_INIT;
     scan_table_file ref = SCAN_TABLE_FILE_INIT;
     char scan_path[512];
     int rc, ok, pos;
@@ -848,13 +979,25 @@ static void run_scan_table_case(const seq_case* tc)
     int pure_inst_unique = 0;
     int saw_noncanonical_instance = 0;
 
+    /* Cursor-info tracking state */
+    int prev_seg_id = -1;
+    int prev_seg_end = 0;
+    int total_readout_count = 0;
+    int seg_trigger_seen[MAX_SEGMENTS];
+    int seg_fmod_seen[MAX_SEGMENTS];
+
     memset(pure_inst_durations, 0, sizeof(pure_inst_durations));
+    memset(seg_trigger_seen, 0, sizeof(seg_trigger_seen));
+    memset(seg_fmod_seen, 0, sizeof(seg_fmod_seen));
     is_mprage = (strncmp(tc->name, "mprage_", 7) == 0 &&
                  strncmp(tc->name, "mprage_nav_", 11) != 0) ? 1 : 0;
 
     gre_opts_init(&opts);
     rc = load_seq_with_averages(&coll, tc->seq_file, &opts, tc->num_averages);
     mu_assert(PULSEQLIB_SUCCEEDED(rc), "load_seq failed");
+
+    rc = pulseqlib_get_collection_info(coll, &cinfo);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "get_collection_info in scan table test");
 
     build_case_path(scan_path, sizeof(scan_path), tc, "_scan_table.bin");
     ok = parse_scan_table(scan_path, &ref);
@@ -879,6 +1022,42 @@ static void run_scan_table_case(const seq_case* tc)
 
         rc = pulseqlib_cursor_get_info(coll, &ci);
         mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_cursor_get_info failed");
+
+        /* ---- Cursor info structural validation (mirrors
+         *      example_scanloop.c segment-boundary logic) --------- */
+        {
+            /* segment_id must be valid */
+            mu_assert(ci.segment_id >= 0 && ci.segment_id < cinfo.num_segments,
+                      "cursor segment_id out of range");
+
+            /* Segment transition checks */
+            if (ci.segment_id != prev_seg_id) {
+                /* First block of a new segment must have segment_start */
+                mu_assert(ci.segment_start,
+                          "segment_start should be 1 at segment transition");
+                /* Previous segment's last block should have had segment_end */
+                if (prev_seg_id >= 0)
+                    mu_assert(prev_seg_end,
+                              "prev segment should have ended with segment_end=1");
+
+                /* Cross-check cursor is_nav / has_trigger with segment_info */
+                {
+                    pulseqlib_segment_info si = PULSEQLIB_SEGMENT_INFO_INIT;
+                    rc = pulseqlib_get_segment_info(coll, ci.segment_id, &si);
+                    mu_assert(PULSEQLIB_SUCCEEDED(rc),
+                              "get_segment_info for cursor cross-check");
+                    mu_assert_int_eq(si.is_nav, ci.is_nav);
+                    mu_assert_int_eq(si.has_trigger, ci.has_trigger);
+                }
+
+                prev_seg_id = ci.segment_id;
+            } else {
+                /* Continuation within same segment: segment_start must be 0 */
+                mu_assert(!ci.segment_start,
+                          "segment_start should be 0 within same segment");
+            }
+            prev_seg_end = ci.segment_end;
+        }
 
         if (is_mprage) {
             pulseqlib_segment_info segi = PULSEQLIB_SEGMENT_INFO_INIT;
@@ -978,10 +1157,52 @@ static void run_scan_table_case(const seq_case* tc)
                       "rotmat mismatch");
         }
 
+        /* ---- Trigger flag (per-block truth vs segment-level cursor) */
+        if (e->trigger_flag) {
+            mu_assert(ci.has_trigger,
+                      "cursor has_trigger should be set when truth trigger_flag=1");
+            if (ci.segment_id >= 0 && ci.segment_id < MAX_SEGMENTS)
+                seg_trigger_seen[ci.segment_id] = 1;
+        }
+
+        /* ---- Freq-mod ID consistency ----------------------------- */
+        if (e->freq_mod_id > 0) {
+            if (ci.segment_id >= 0 && ci.segment_id < MAX_SEGMENTS)
+                seg_fmod_seen[ci.segment_id] = 1;
+        }
+
+        /* Count ADC readouts */
+        if (e->adc_flag)
+            total_readout_count++;
+
         ++pos;
     }
 
     mu_assert_int_eq(ref.num_entries, pos);
+
+    /* Final segment_end: the very last block should have segment_end=1 */
+    mu_assert(prev_seg_end, "last block should have segment_end=1");
+
+    /* ---- Total readouts cross-check (example_check.c step 6) ----- */
+    mu_assert_int_eq(total_readout_count, cinfo.total_readouts);
+
+    /* ---- Segment trigger consistency ----------------------------- */
+    /*
+     * For each segment where we saw truth trigger_flag=1 in at least
+     * one block, the library's segment_info.has_trigger must be set.
+     */
+    {
+        int seg;
+        for (seg = 0; seg < cinfo.num_segments && seg < MAX_SEGMENTS; ++seg) {
+            pulseqlib_segment_info si = PULSEQLIB_SEGMENT_INFO_INIT;
+            rc = pulseqlib_get_segment_info(coll, seg, &si);
+            if (PULSEQLIB_SUCCEEDED(rc) && seg_trigger_seen[seg]) {
+                mu_assert(si.has_trigger,
+                          "segment_info.has_trigger should be set "
+                          "when scan table has trigger_flag");
+            }
+        }
+    }
 
     if (is_mprage) {
         fprintf(stderr, "[scantable][%s] pure_seg_id=%d  pure_inst_unique=%d  saw_noncanonical=%d\n",
