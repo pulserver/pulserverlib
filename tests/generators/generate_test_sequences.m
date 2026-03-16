@@ -622,10 +622,19 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
         [gx_cells, gy_cells, adc] = testutils.makeTestSpiral(sys, num_shots * Nz, Nx, fov);
         gx_base = gx_cells{1};
         gy_base = gy_cells{1};
+        gx_rew = mr.makeExtendedTrapezoidArea('x', gx_base.last, 0.0, -gx_base.area, sys);
+        gy_rew = mr.makeExtendedTrapezoidArea('y', gy_base.last, 0.0, -gy_base.area, sys);
         dphi = 2 * pi / (num_shots * Nz);  % interleave angular step
     else
         % Explicit path: pre-compute all interleaves across all partitions.
         [gx_shots, gy_shots, adc] = testutils.makeTestSpiral(sys, num_shots * Nz, Nx, fov);
+        % Build per-interleave rewinders
+        gx_rews = cell(num_shots * Nz, 1);
+        gy_rews = cell(num_shots * Nz, 1);
+        for ii = 1:(num_shots * Nz)
+            gx_rews{ii} = mr.makeExtendedTrapezoidArea('x', gx_shots{ii}.last, 0.0, -gx_shots{ii}.area, sys);
+            gy_rews{ii} = mr.makeExtendedTrapezoidArea('y', gy_shots{ii}.last, 0.0, -gy_shots{ii}.area, sys);
+        end
         spoke_idx = 0;
     end
 
@@ -676,12 +685,14 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
                 seq.addBlock(adc_curr, gx_base, gy_base, ...
                     mr.scaleGrad(gz_phase, zscale), ...
                     mr.makeRotation('axis', 'z', 'angle', rot_angle));
+                seq.addBlock(gx_rew, gy_rew, ...
+                    mr.makeRotation('axis', 'z', 'angle', rot_angle), gz_spoil);
             else
                 spoke_idx = spoke_idx + 1;
                 seq.addBlock(adc_curr, gx_shots{spoke_idx}, gy_shots{spoke_idx}, ...
                     mr.scaleGrad(gz_phase, zscale));
+                seq.addBlock(gx_rews{spoke_idx}, gy_rews{spoke_idx}, gz_spoil);
             end
-            seq.addBlock(gz_spoil);
         end
 
         seq.addBlock(delayTR);
