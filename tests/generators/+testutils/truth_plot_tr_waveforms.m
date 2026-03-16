@@ -11,9 +11,12 @@ function fig = truth_plot_tr_waveforms(base_or_truth, varargin)
 
     truth = coerce_truth(base_or_truth);
 
+    GAMMA_HZ_PER_T = 42.577e6;
+    GAMMA_GRAD     = GAMMA_HZ_PER_T * 1e-3;   % Hz/m -> mT/m
+
     fig = figure('Name', sprintf('Canonical TR waveforms: %s', truth.base_name), 'Color', 'w');
 
-    labels = {'Gx', 'Gy', 'Gz'};
+    labels = {'Gx (mT/m)', 'Gy (mT/m)', 'Gz (mT/m)'};
     fields = {'gx', 'gy', 'gz'};
 
     for ax = 1:3
@@ -22,7 +25,7 @@ function fig = truth_plot_tr_waveforms(base_or_truth, varargin)
         for i = 1:truth.tr_waveforms.num_trs
             w = truth.tr_waveforms.waveforms(i);
             t_ms = double(w.time_us) / 1e3;
-            y = double(w.(fields{ax}));
+            y = double(w.(fields{ax})) / GAMMA_GRAD;
             if p.Results.show_slew
                 dt = diff(t_ms) * 1e-3;
                 dy = diff(y);

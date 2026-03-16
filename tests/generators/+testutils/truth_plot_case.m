@@ -24,7 +24,17 @@ function truth = truth_plot_case(base, varargin)
     end
     if p.Results.plot_freqmod && truth.freqmod_def.num_defs > 0
         for s = 1:truth.segment_def.num_segments
-            testutils.truth_plot_freqmod_defs(truth, 'segment_idx', s);
+            seg = truth.segment_def.segments(s);
+            has_fm = false;
+            for b = 1:seg.num_blocks
+                if seg.blocks(b).has_freq_mod
+                    has_fm = true;
+                    break;
+                end
+            end
+            if has_fm
+                testutils.truth_plot_freqmod_defs(truth, 'segment_idx', s);
+            end
         end
     end
 end

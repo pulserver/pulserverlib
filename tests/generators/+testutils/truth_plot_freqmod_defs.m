@@ -175,7 +175,7 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
         'Orientation', 'horizontal', 'Location', 'north', 'Box', 'off');
 
     sgtitle(fig, sprintf('Frequency Modulation Definitions (%s)  seg %d', ...
-        truth.base_name, s_idx), 'Interpreter', 'none');
+        truth.base_name, s_idx - 1), 'Interpreter', 'none');
 end
 
 function truth = coerce_truth(base_or_truth)
