@@ -50,6 +50,8 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
         end
         ids = unique(seg_def_ids);
         if isempty(ids)
+            warning('truth:empty', ...
+                'No freq_mod_def_id >= 0 found for segment %d despite has_freq_mod blocks', s_idx - 1);
             fig = [];
             return;
         end

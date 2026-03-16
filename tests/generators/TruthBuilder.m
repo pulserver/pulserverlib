@@ -163,8 +163,8 @@ classdef TruthBuilder < handle
             obj.discoverUniqueAdcs();
             obj.computePeakRFAndCanonicalScales();
             obj.buildCanonicalTRs();
-            obj.buildSegmentData();
             obj.buildFreqModDefs();
+            obj.buildSegmentData();
             obj.buildScanTableData();
 
             % Store definitions on the sequence object.
