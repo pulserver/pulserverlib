@@ -49,6 +49,9 @@ function seq = write_my_sequence(write, ...)
     tb.setSegments([4]);                 % unique segment definitions
     tb.setSegmentOrder([1]);             % segment instances per TR
     tb.setNumAverages(1);                % number of averages
+    % Optional: one anchor fraction per unique ADC definition.
+    % [] means all ADC anchors default to 0.5 (middle of readout).
+    % tb.anchorPoints.adc = [0.5, 0.0];  % cartesian ADC, spiral ADC
     % tb.setBaseRotation(R);             % optional rotation matrix
     tb.export(out_dir, base);
 end
@@ -63,6 +66,7 @@ end
 | `setSegments(sizes)` | Unique segment definitions by block count. E.g. `setSegments([2, 1, 4])` for prep, delay, SPGR-shot. |
 | `setSegmentOrder(order)` | Segment instances within one TR (1-based segment IDs). E.g. `setSegmentOrder([1, 2, repmat(3,1,Ny), 2])` for prep -> delay -> Ny shots -> delay. |
 | `setNumAverages(n)` | Number of averages (default 1). |
+| `anchorPoints.adc = [...]` | Optional per-unique-ADC-definition anchor fractions in `[0, 1]`. Empty means all ADC anchors default to `0.5`. |
 | `setBaseRotation(R)` | 3×3 rotation matrix (default `eye(3)`). |
 | `export(out_dir, base_name)` | Run all computation phases and write the 6 output files. |
 
@@ -70,6 +74,8 @@ Notes:
 
 - `setSegments` defines unique segment shapes; `setSegmentOrder` controls reuse/interleaving.
 - Repeated or interleaved delays should be represented by a single delay definition reused in `setSegmentOrder`.
+- `anchorPoints.adc` is indexed by ADC definition, not ADC block instance. For example, if your case has two unique ADC definitions and the second one is a spiral navigator, use `tb.anchorPoints.adc = [0.5, 0.0]`.
+- RF anchors do not need manual configuration here; TruthBuilder continues to use the RF center from Pulseq.
 
 ### Exported files
 
@@ -78,7 +84,7 @@ Notes:
 | Suffix | Format | Contents |
 |--------|--------|----------|
 | `.seq` | Pulseq text | The sequence file itself. |
-| `_meta.txt` | Key-value text | ADC defs, max-B1 index, TR duration. |
+| `_meta.txt` | Key-value text | ADC defs, ADC anchor fractions, max-B1 index, TR duration, segment metadata. |
 | `_tr_waveform.bin` | Binary float32 | Canonical TR waveform knot arrays (time, gx, gy, gz). |
 | `_segment_def.bin` | Binary float32 | Per-segment block-level gradient data (time, gx, gy, gz per block). |
 | `_freqmod_def.bin` | Binary float32 | Frequency-modulation block definitions (RF and ADC). |
@@ -166,7 +172,7 @@ cmake -S . -B build && cmake --build build
 
 - [ ] MATLAB generator builds valid sequence (`seq.checkTiming` passes)
 - [ ] ONCE labels placed on first dummy block and first imaging block
-- [ ] `TruthBuilder` hints match sequence structure (blocks/TR, segment defs, segment order, averages)
+- [ ] `TruthBuilder` hints match sequence structure (blocks/TR, segment defs, segment order, averages, ADC anchors when needed)
 - [ ] `.seq` + 5 truth files appear in `tests/data/`
 - [ ] Case struct entry added to `test_sequences.c`
 - [ ] 5 MU_TEST wrappers + suite registrations added
@@ -198,7 +204,7 @@ report = testutils.truth_report_case('gre_2d_1sl_1avg');
 
 Prints a summary to the command window:
 
-- Metadata: ADC definitions, TR duration, segment count.
+- Metadata: ADC definitions, ADC anchor fractions, TR duration, segment count.
 - Canonical TR waveform stats (samples, duration, peak gradients).
 - Frequency-modulation definitions (type, samples, raster, ref integral).
 - Scan-table coverage (RF / ADC / freq-mod / trigger / digitalout row counts).
