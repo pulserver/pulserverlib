@@ -52,7 +52,7 @@ classdef TruthBuilder < handle
         fmod_types          = []
         fmod_durations      = []   % blockDuration of each def (for scan-table matching)
         fmod_kinds          = []   % 0=RF, 1=ADC (same as fmod_types)
-        fmod_gradsigs       = []   % Nx3 peak |grad amplitude| per axis (for dedup)
+        fmod_waveforms_cell = {}   % cell array of waveform cell arrays for dedup
         scan_table          = []
         rotmat_table        = []
         freq_mod_table      = []
@@ -548,13 +548,13 @@ classdef TruthBuilder < handle
             num_dummy_blocks = obj.findNumDummyBlocks();
 
             % Collect ALL unique freq-mod block types.
-            % Key: blockDuration (distinguishes shapes with different timing).
-            % We keep separate lists for RF-type and ADC-type defs.
+            % Deduplication: compare actual waveforms (not just peak amplitudes).
+            % This correctly distinguishes rotated spirals from identical ones.
             defs = {};
             types = [];
             def_durations = [];   % blockDuration of each def (for matching)
             def_kinds     = [];   % 0=RF, 1=ADC
-            def_gradsigs  = [];   % Nx3 peak |grad amplitude| per axis
+            def_waveforms = [];   % Nx300 resampled waveforms for comparison
 
             for blk = 1:num_total_blocks
                 block = obj.seq.getBlock(blk);
@@ -564,13 +564,15 @@ classdef TruthBuilder < handle
                     rf_end   = block.rf.delay + block.rf.t(end);
                     if obj.anyGradNonzeroInWindow(block, rf_start, rf_end)
                         dur = block.blockDuration;
-                        gsig = TruthBuilder.blockGradSigInWindow(block, rf_start, rf_end);
+                        gwaves = TruthBuilder.blockGradWaveformsInWindow(block, rf_start, rf_end);
                         already = false;
                         for k = 1:length(def_durations)
-                            if def_kinds(k) == 0 && abs(def_durations(k) - dur) < 1e-9 ...
-                                    && max(abs(def_gradsigs(k,:) - gsig)) < 1
-                                already = true;
-                                break;
+                            if def_kinds(k) == 0 && abs(def_durations(k) - dur) < 1e-9
+                                % Compare actual waveforms with tolerance
+                                if TruthBuilder.waveformsAlmostEqual(def_waveforms_cell{k}, gwaves)
+                                    already = true;
+                                    break;
+                                end
                             end
                         end
                         if ~already
@@ -583,7 +585,7 @@ classdef TruthBuilder < handle
                             types(end+1) = 0;         %#ok<AGROW>
                             def_durations(end+1) = dur; %#ok<AGROW>
                             def_kinds(end+1) = 0;      %#ok<AGROW>
-                            def_gradsigs(end+1,:) = gsig; %#ok<AGROW>
+                            def_waveforms_cell{end+1} = gwaves; %#ok<AGROW>
                         end
                     end
                 end
@@ -593,13 +595,15 @@ classdef TruthBuilder < handle
                     adc_end   = block.adc.delay + block.adc.numSamples * block.adc.dwell;
                     if obj.anyGradNonzeroInWindow(block, adc_start, adc_end)
                         dur = block.blockDuration;
-                        gsig = TruthBuilder.blockGradSigInWindow(block, adc_start, adc_end);
+                        gwaves = TruthBuilder.blockGradWaveformsInWindow(block, adc_start, adc_end);
                         already = false;
                         for k = 1:length(def_durations)
-                            if def_kinds(k) == 1 && abs(def_durations(k) - dur) < 1e-9 ...
-                                    && max(abs(def_gradsigs(k,:) - gsig)) < 1
-                                already = true;
-                                break;
+                            if def_kinds(k) == 1 && abs(def_durations(k) - dur) < 1e-9
+                                % Compare actual waveforms with tolerance
+                                if TruthBuilder.waveformsAlmostEqual(def_waveforms_cell{k}, gwaves)
+                                    already = true;
+                                    break;
+                                end
                             end
                         end
                         if ~already
@@ -616,17 +620,17 @@ classdef TruthBuilder < handle
                             types(end+1) = 1;           %#ok<AGROW>
                             def_durations(end+1) = dur;  %#ok<AGROW>
                             def_kinds(end+1) = 1;        %#ok<AGROW>
-                            def_gradsigs(end+1,:) = gsig; %#ok<AGROW>
+                            def_waveforms_cell{end+1} = gwaves; %#ok<AGROW>
                         end
                     end
                 end
             end
 
-            obj.fmod_defs       = defs;
-            obj.fmod_types      = types;
-            obj.fmod_durations  = def_durations;
-            obj.fmod_kinds      = def_kinds;
-            obj.fmod_gradsigs   = def_gradsigs;
+            obj.fmod_defs              = defs;
+            obj.fmod_types             = types;
+            obj.fmod_durations         = def_durations;
+            obj.fmod_kinds             = def_kinds;
+            obj.fmod_waveforms_cell    = def_waveforms_cell;
         end
 
         % ---- Phase 5: scan table ----
@@ -683,12 +687,13 @@ classdef TruthBuilder < handle
                             rf_end   = block.rf.delay + block.rf.t(end);
                             if obj.anyGradNonzeroInWindow(block, rf_start, rf_end)
                                 dur = block.blockDuration;
-                                gsig = TruthBuilder.blockGradSigInWindow(block, rf_start, rf_end);
+                                gwaves = TruthBuilder.blockGradWaveformsInWindow(block, rf_start, rf_end);
                                 for ki = 1:length(obj.fmod_durations)
-                                    if obj.fmod_kinds(ki) == 0 && abs(obj.fmod_durations(ki) - dur) < 1e-9 ...
-                                            && max(abs(obj.fmod_gradsigs(ki,:) - gsig)) < 1
-                                        fmt(act) = ki;
-                                        break;
+                                    if obj.fmod_kinds(ki) == 0 && abs(obj.fmod_durations(ki) - dur) < 1e-9
+                                        if TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
+                                            fmt(act) = ki;
+                                            break;
+                                        end
                                     end
                                 end
                             end
@@ -714,12 +719,13 @@ classdef TruthBuilder < handle
                             adc_end   = block.adc.delay + block.adc.numSamples * block.adc.dwell;
                             if obj.anyGradNonzeroInWindow(block, adc_start, adc_end)
                                 dur = block.blockDuration;
-                                gsig = TruthBuilder.blockGradSigInWindow(block, adc_start, adc_end);
+                                gwaves = TruthBuilder.blockGradWaveformsInWindow(block, adc_start, adc_end);
                                 for ki = 1:length(obj.fmod_durations)
-                                    if obj.fmod_kinds(ki) == 1 && abs(obj.fmod_durations(ki) - dur) < 1e-9 ...
-                                            && max(abs(obj.fmod_gradsigs(ki,:) - gsig)) < 1
-                                        fmt(act) = ki;
-                                        break;
+                                    if obj.fmod_kinds(ki) == 1 && abs(obj.fmod_durations(ki) - dur) < 1e-9
+                                        if TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
+                                            fmt(act) = ki;
+                                            break;
+                                        end
                                     end
                                 end
                             end
@@ -908,12 +914,13 @@ classdef TruthBuilder < handle
                     bd.has_freq_mod = true;
                     bd.num_freq_mod_samples = round(block.blockDuration / obj.sys.rfRasterTime);
                     dur = block.blockDuration;
-                    gsig = TruthBuilder.blockGradSigInWindow(block, rf_ws, rf_we);
+                    gwaves = TruthBuilder.blockGradWaveformsInWindow(block, rf_ws, rf_we);
                     for ki = 1:length(obj.fmod_durations)
-                        if obj.fmod_kinds(ki) == 0 && abs(obj.fmod_durations(ki) - dur) < 1e-9 ...
-                                && max(abs(obj.fmod_gradsigs(ki,:) - gsig)) < 1
-                            bd.freq_mod_def_id = ki - 1;  % 0-based
-                            break;
+                        if obj.fmod_kinds(ki) == 0 && abs(obj.fmod_durations(ki) - dur) < 1e-9
+                            if TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
+                                bd.freq_mod_def_id = ki - 1;  % 0-based
+                                break;
+                            end
                         end
                     end
                 end
@@ -925,12 +932,13 @@ classdef TruthBuilder < handle
                     bd.has_freq_mod = true;
                     bd.num_freq_mod_samples = round(block.blockDuration / obj.sys.adcRasterTime);
                     dur = block.blockDuration;
-                    gsig = TruthBuilder.blockGradSigInWindow(block, adc_ws, adc_we);
+                    gwaves = TruthBuilder.blockGradWaveformsInWindow(block, adc_ws, adc_we);
                     for ki = 1:length(obj.fmod_durations)
-                        if obj.fmod_kinds(ki) == 1 && abs(obj.fmod_durations(ki) - dur) < 1e-9 ...
-                                && max(abs(obj.fmod_gradsigs(ki,:) - gsig)) < 1
-                            bd.freq_mod_def_id = ki - 1;  % 0-based
-                            break;
+                        if obj.fmod_kinds(ki) == 1 && abs(obj.fmod_durations(ki) - dur) < 1e-9
+                            if TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
+                                bd.freq_mod_def_id = ki - 1;  % 0-based
+                                break;
+                            end
                         end
                     end
                 end
@@ -1287,6 +1295,65 @@ classdef TruthBuilder < handle
                     pts = [wstart; t(t > wstart & t < wend); wend];
                     vals = interp1(t, w, pts, 'linear', 0);
                     sig(ch) = max(abs(vals));
+                end
+            end
+        end
+
+        function waveforms = blockGradWaveformsInWindow(block, wstart, wend)
+        % BLOCKGRADWAVEFORMSINWINDOW  Extract gradient waveforms in active window.
+        %   For each gradient with fixed raster, finds samples between wstart and wend,
+        %   extracts them, and pads to common length for comparison.
+        %   Returns cell array {gx_samples, gy_samples, gz_samples} or empty if no grads.
+            waveforms = {};
+            axes = {'gx', 'gy', 'gz'};
+            for ch = 1:3
+                ax = axes{ch};
+                if isfield(block, ax) && ~isempty(block.(ax))
+                    grad = block.(ax);
+                    [t, w] = TruthBuilder.gradToKnots(grad);
+                    % Find indices within window
+                    in_window = (t >= wstart) & (t <= wend);
+                    if any(in_window)
+                        waveforms{ch} = w(in_window);
+                    else
+                        waveforms{ch} = [];
+                    end
+                else
+                    waveforms{ch} = [];
+                end
+            end
+        end
+
+        function match = waveformsAlmostEqual(w1, w2, tol)
+        % WAVEFORMSALMOSTEQUAL  Compare two cell-array gradient waveforms.
+        %   w1, w2: cell arrays {gx, gy, gz} with variable-length samples
+        %   tol: relative tolerance (default 1e-6)
+            if nargin < 3
+                tol = 1e-6;
+            end
+            match = true;
+            for ch = 1:3
+                if isempty(w1{ch}) && isempty(w2{ch})
+                    continue;
+                end
+                if isempty(w1{ch}) || isempty(w2{ch})
+                    match = false;
+                    return;
+                end
+                % Quick checks: length and peak
+                if length(w1{ch}) ~= length(w2{ch})
+                    match = false;
+                    return;
+                end
+                if abs(max(abs(w1{ch})) - max(abs(w2{ch}))) > tol * max(abs(w1{ch}))
+                    match = false;
+                    return;
+                end
+                % Full allclose comparison
+                max_abs = max(abs(w1{ch}), abs(w2{ch}));
+                if any(abs(w1{ch} - w2{ch}) > tol * max(max_abs, 1))
+                    match = false;
+                    return;
                 end
             end
         end
