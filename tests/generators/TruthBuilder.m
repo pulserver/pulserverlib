@@ -1041,6 +1041,15 @@ classdef TruthBuilder < handle
                     if bd.has_rf && ~isempty(bd.rf_rho)
                         fwrite(fid, int32(length(bd.rf_rho)), 'int32');
                         fwrite(fid, single(bd.rf_rho), 'float32');
+                        % rf_time_s: sample times in seconds (0-based).
+                        % Empty bd.rf_time → uniform at rfRasterTime;
+                        % non-empty → non-uniform / extended (e.g. hard pulse).
+                        if isempty(bd.rf_time)
+                            t_s = (0:length(bd.rf_rho)-1).' * obj.sys.rfRasterTime;
+                        else
+                            t_s = bd.rf_time(:);
+                        end
+                        fwrite(fid, single(t_s), 'float32');
                     else
                         fwrite(fid, int32(0), 'int32');
                     end

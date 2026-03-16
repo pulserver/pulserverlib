@@ -53,7 +53,7 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
         rf_n = double(blk.rf_n);
         if rf_n > 0
             spans(4) = double(blk.rf_delay) * 1e3 + ...
-                       (rf_n - 1) * double(blk.rf_raster_us) * 1e-3;
+                       max(double(blk.rf_time_s)) * 1e3;
         end
         if blk.has_adc
             spans(5) = double(blk.adc_delay) * 1e3 + adc_dur_ms;

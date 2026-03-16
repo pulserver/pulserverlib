@@ -64,7 +64,7 @@ function figs = truth_plot_segments(base_or_truth, varargin)
             rf_n = double(blk.rf_n);
             if rf_n > 0
                 spans(4) = double(blk.rf_delay) * 1e3 + ...
-                           (rf_n - 1) * double(blk.rf_raster_us) * 1e-3;
+                           max(double(blk.rf_time_s)) * 1e3;
             end
             if blk.has_adc
                 spans(5) = double(blk.adc_delay) * 1e3 + adc_dur_ms;
@@ -103,7 +103,7 @@ function figs = truth_plot_segments(base_or_truth, varargin)
             if rf_n > 0
                 y    = double(blk.rf_amp) * double(blk.rf_rho(:)) / GAMMA_RF;
                 t_ms = block_start_ms(b) + double(blk.rf_delay) * 1e3 + ...
-                       (0:rf_n-1).' * double(blk.rf_raster_us) * 1e-3;
+                       double(blk.rf_time_s(:)) * 1e3;
                 plot(t_ms, y, 'Color', cmap(b,:), 'LineWidth', 1.1);
             end
         end

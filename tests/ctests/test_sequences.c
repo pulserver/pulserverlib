@@ -418,6 +418,35 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                 }
 
                 { int ch; for (ch = 0; ch < num_channels; ++ch) free(mag[ch]); free(mag); }
+
+                /* RF timing array check */
+                {
+                    float* lib_rf_time = pulseqlib_get_rf_time_us(coll, s, b);
+                    if (lib_rf_time != NULL) {
+                        /* Non-uniform raster: compare against truth rf_time_s */
+                        for (i = 0; i < ref_blk->rf_n; ++i) {
+                            float ref_us = ref_blk->rf_time_s[i] * 1e6f;
+                            float lib_us = lib_rf_time[i];
+                            if (fabsf(ref_us - lib_us) > 0.5f)
+                                fprintf(stderr, "[geninstr][%s] seg%d blk%d rf_time@%d: ref=%.6f us  lib=%.6f us\n",
+                                        tc->name, s, b, i, ref_us, lib_us);
+                            mu_assert(fabsf(ref_us - lib_us) <= 0.5f,
+                                      "RF time array mismatch (>0.5 us)");
+                        }
+                        free(lib_rf_time);
+                    } else {
+                        /* Uniform raster: verify truth times match raster expectation */
+                        for (i = 0; i < ref_blk->rf_n; ++i) {
+                            float ref_us = ref_blk->rf_time_s[i] * 1e6f;
+                            float expected_us = (float)i * ref_blk->rf_raster_us;
+                            if (fabsf(ref_us - expected_us) > 0.5f)
+                                fprintf(stderr, "[geninstr][%s] seg%d blk%d rf_time@%d: ref=%.6f us  expected=%.6f us (uniform)\n",
+                                        tc->name, s, b, i, ref_us, expected_us);
+                            mu_assert(fabsf(ref_us - expected_us) <= 0.5f,
+                                      "RF time array does not match uniform raster");
+                        }
+                    }
+                }
             }
 
             /* --- Gradients ---------------------------------------- */
@@ -449,17 +478,16 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                                   "grad waveform shape mismatch");
                     }
 
-                    /* Timing array check: compare grad_time_s (MATLAB, seconds) to pulseqlib_get_grad_time_us (library, us) */
-                    if (ref_blk->grad_n[ax] > 0 && ref_blk->grad_time_s[ax] != NULL) {
+                    /* Gradient timing array check */
+                    {
                         float* lib_time_us = pulseqlib_get_grad_time_us(coll, s, b, ax);
                         mu_assert(lib_time_us != NULL, "pulseqlib_get_grad_time_us returned NULL");
                         for (i = 0; i < ref_blk->grad_n[ax]; ++i) {
                             float ref_us = ref_blk->grad_time_s[ax][i] * 1e6f;
                             float lib_us = lib_time_us[i];
-                            if (fabsf(ref_us - lib_us) > 0.5f) {
+                            if (fabsf(ref_us - lib_us) > 0.5f)
                                 fprintf(stderr, "[geninstr][%s] seg%d blk%d ax%d time@%d: ref=%.6f us  lib=%.6f us\n",
                                         tc->name, s, b, ax, i, ref_us, lib_us);
-                            }
                             mu_assert(fabsf(ref_us - lib_us) <= 0.5f,
                                       "grad time array mismatch (>0.5 us)");
                         }

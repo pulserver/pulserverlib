@@ -299,11 +299,11 @@ static TSEG_MAYBE_UNUSED int parse_block_meta(const char* path, block_meta* out)
  *     for each block:
  *       uint8  flags  (bit 0=rf, 1=gx, 2=gy, 3=gz, 4=adc,
  *                       5=rotation, 6=digital_out, 7=freq_mod)
- *       float32 rf_delay,  rf_amp
- *       int32   rf_n;  float32 rf_rho[rf_n]
+ *       float32 rf_delay,  rf_amp,  rf_raster_us
+ *       int32   rf_n;  float32 rf_rho[rf_n];  float32 rf_time_s[rf_n]
  *       for axis in {x,y,z}:
  *         float32 grad_delay,  grad_amp
- *         int32   grad_n;  float32 grad_wave[grad_n]
+ *         int32   grad_n;  float32 grad_wave[grad_n];  float32 grad_time_s[grad_n]
  *       float32 adc_delay
  *       float32 digital_out_delay, digital_out_duration
  *       int32   freq_mod_num_samples
@@ -327,12 +327,14 @@ typedef struct seg_block_def {
     float rf_raster_us;   /* rfRasterTime in us (new field) */
     int   rf_n;
     float rf_rho[SEG_DEF_MAX_WAVE];
+    float rf_time_s[SEG_DEF_MAX_WAVE];   /* sample times in seconds (0-based) */
 
     /* Gradients (x,y,z) */
     float grad_delay[3];
     float grad_amp[3];
     int   grad_n[3];
     float grad_wave[3][SEG_DEF_MAX_WAVE];
+    float grad_time_s[3][SEG_DEF_MAX_WAVE];  /* knot/sample times in seconds (0-based) */
 
     /* ADC */
     float adc_delay;
@@ -403,6 +405,7 @@ static TSEG_MAYBE_UNUSED int parse_seg_def(const char* path, seg_def_file* out)
             blk->rf_n = n;
             if (n > SEG_DEF_MAX_WAVE) { fclose(f); return 0; }
             RDFN(blk->rf_rho, n);
+            RDFN(blk->rf_time_s, n);
 
             /* Gradients */
             for (ax = 0; ax < 3; ++ax) {
@@ -412,12 +415,7 @@ static TSEG_MAYBE_UNUSED int parse_seg_def(const char* path, seg_def_file* out)
                 blk->grad_n[ax] = n;
                 if (n > SEG_DEF_MAX_WAVE) { fclose(f); return 0; }
                 RDFN(blk->grad_wave[ax], n);
-                /* grad_time_s: visualisation-only, skip bytes without storing */
-                if (n > 0) {
-                    if (fseek(f, (long)n * (long)sizeof(float), SEEK_CUR) != 0) {
-                        fclose(f); return 0;
-                    }
-                }
+                RDFN(blk->grad_time_s[ax], n);
             }
 
             /* ADC */
