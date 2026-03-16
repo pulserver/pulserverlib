@@ -50,7 +50,8 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
         end
         ids = unique(seg_def_ids);
         if isempty(ids)
-            error('truth:empty', 'No frequency modulation definitions for segment %d', s_idx - 1);
+            fig = [];
+            return;
         end
     end
 
