@@ -3,7 +3,7 @@ function truth = truth_parse_case(base)
 %
 % base can be:
 %   - basename (e.g. 'gre_2d_1sl_1avg')
-%   - full path without suffix
+%   - path to basename in another folder
 %   - .seq path
 %   - one of the exported artifact paths
 
@@ -22,12 +22,22 @@ function truth = truth_parse_case(base)
         'seq', fullfile(data_dir, [base_name '.seq']));
 
     required = {'meta', 'tr_waveform', 'segment_def', 'freqmod_def', 'scan_table'};
+    missing = {};
     for i = 1:numel(required)
         key = required{i};
         p = truth.paths.(key);
         if ~isfile(p)
-            error('truth:io', 'Missing required truth artifact: %s', p);
+            missing{end + 1} = sprintf('%s -> %s', key, p); %#ok<AGROW>
         end
+    end
+    if ~isempty(missing)
+        error('truth:io', [ ...
+            'Missing required ground truth artifacts.\n' ...
+            'Current folder: %s\n' ...
+            'Resolved base: %s\n' ...
+            'Checked paths:\n  %s\n' ...
+            'Tip: run from the data folder or pass an explicit path prefix.'], ...
+            pwd, base_name, strjoin(missing, '\n  '));
     end
 
     truth.meta = truth_parse_meta(truth.paths.meta);
@@ -50,7 +60,7 @@ function [data_dir, base_name] = normalize_case_path(base)
 
     [in_dir, in_name, in_ext] = fileparts(base);
     if isempty(in_dir)
-        data_dir = fullfile(fileparts(mfilename('fullpath')), '..', '..', 'data');
+        data_dir = pwd;
     else
         data_dir = in_dir;
     end
@@ -70,11 +80,7 @@ function [data_dir, base_name] = normalize_case_path(base)
         end
     end
 
-    if isempty(in_ext)
-        base_name = in_name;
-    else
-        base_name = [in_name in_ext];
-    end
+    base_name = in_name;
 end
 
 function validation = local_validate(truth)

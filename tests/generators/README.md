@@ -177,6 +177,10 @@ cmake -S . -B build && cmake --build build
 Use the helper functions below to validate generated ground-truth artifacts
 before debugging C-library behavior.
 
+Assumption for these helpers: run MATLAB from `tests/data/` (or pass an
+explicit path/prefix), and ensure `tests/generators` is on the MATLAB path
+so `testutils.*` is visible.
+
 ### Parse all artifacts for one case
 
 ```matlab
