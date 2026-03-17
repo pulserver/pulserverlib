@@ -12,12 +12,14 @@ from ._sequence import SequenceCollection
 
 # Matplotlib is imported lazily to avoid hard dependency at import time.
 
-# ── Colour palette for segments ──────────────────────────────────────
-_SEG_COLORS = [
-    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
-    '#9467bd', '#8c564b', '#e377c2', '#7f7f7f',
-    '#bcbd22', '#17becf',
+# ── MATLAB lines-like palette for style parity ───────────────────────
+_MATLAB_LINES = [
+    '#0072BD', '#D95319', '#EDB120', '#7E2F8E',
+    '#77AC30', '#4DBEEE', '#A2142F',
 ]
+
+_MAIN_LINEWIDTH = 1.1
+_OVERLAY_LINEWIDTH = 1.0
 
 # Physical-unit conversion constants
 _GAMMA_DEFAULT = 42.576e6  # Hz/T
@@ -27,7 +29,17 @@ def _seg_color(idx: int) -> str:
     """Return a colour for segment index *idx* (cycling)."""
     if idx < 0:
         return '#aaaaaa'  # prep/cooldown
-    return _SEG_COLORS[idx % len(_SEG_COLORS)]
+    return _MATLAB_LINES[idx % len(_MATLAB_LINES)]
+
+
+def _segment_idx_for_time(blocks, t_us: float) -> int:
+    """Return segment index for a time sample based on block spans."""
+    for blk in blocks:
+        blk_start = blk.start_us
+        blk_end = blk_start + blk.duration_us
+        if (t_us >= blk_start - 0.5) and (t_us <= blk_end + 0.5):
+            return blk.segment_idx
+    return -1
 
 
 def _slew_rate(ch: ChannelWaveform) -> ChannelWaveform:
@@ -227,6 +239,7 @@ def plot(
             figsize = (14, 8)
 
         fig_obj, axes_grid = plt.subplots(3, 2, figsize=figsize, sharex=True)
+        fig_obj.patch.set_facecolor('white')
         axes = {
             'rf_mag':   axes_grid[0, 0],
             'rf_phase': axes_grid[1, 0],
@@ -244,7 +257,7 @@ def plot(
         ch = wf.rf_mag
         if ch.time_us.size > 0:
             ax.plot(_t(ch.time_us), ch.amplitude,
-                    color='k', linewidth=0.8)
+                    color=_MATLAB_LINES[0], linewidth=_MAIN_LINEWIDTH)
         ax.set_ylabel('|RF| (uT)')
 
         # ── RF phase ──
@@ -252,7 +265,7 @@ def plot(
         ch = wf.rf_phase
         if ch.time_us.size > 0:
             ax.plot(_t(ch.time_us), ch.amplitude,
-                    color='k', linewidth=0.8)
+                    color=_MATLAB_LINES[0], linewidth=_MAIN_LINEWIDTH)
         ax.set_ylabel('RF phase (rad)')
         ax.set_yticks([-np.pi, 0, np.pi])
         ax.set_yticklabels(['-pi', '0', 'pi'])
@@ -262,10 +275,10 @@ def plot(
         for adc in wf.adc_events:
             t_start = _t(np.array([adc.onset_us]))[0]
             t_end = _t(np.array([adc.onset_us + adc.duration_us]))[0]
+            seg_idx = _segment_idx_for_time(wf.blocks, adc.onset_us)
             rect = Rectangle(
                 (t_start, 0.1), t_end - t_start, 0.8,
-                facecolor='#ff7f0e', alpha=0.5, edgecolor='k',
-                linewidth=0.5,
+                facecolor=_seg_color(seg_idx), alpha=0.45, edgecolor='none',
             )
             ax.add_patch(rect)
         ax.set_ylim(0, 1)
@@ -273,17 +286,17 @@ def plot(
         ax.set_ylabel('ADC')
 
         # ── Gradients (Gx, Gy, Gz) ──
-        axis_color = {'gx': '#1f77b4', 'gy': '#2ca02c', 'gz': '#d62728'}
+        axis_color = {'gx': _MATLAB_LINES[0], 'gy': _MATLAB_LINES[1], 'gz': _MATLAB_LINES[2]}
         for gname in ('gx', 'gy', 'gz'):
             ax = axes[gname]
             ch = getattr(wf, gname)
             if ch.time_us.size > 0:
                 if show_segments and len(wf.blocks) > 0:
                     _plot_segmented(ax, _t, ch, wf.blocks,
-                                    linewidth=0.8, alpha=1.0)
+                                    linewidth=_MAIN_LINEWIDTH, alpha=1.0)
                 else:
                     ax.plot(_t(ch.time_us), ch.amplitude,
-                            color=axis_color[gname], linewidth=0.8)
+                            color=axis_color[gname], linewidth=_MAIN_LINEWIDTH)
 
             ax.set_ylabel(f'{gname.upper()} (mT/m)')
 
@@ -326,7 +339,7 @@ def plot(
         axes['adc'].set_xlabel(t_label)
         axes['gz'].set_xlabel(t_label)
         for ax_item in axes.values():
-            ax_item.grid(True, alpha=0.2)
+            ax_item.grid(True)
 
         fig_obj.tight_layout()
 
@@ -376,7 +389,7 @@ def plot(
                     t_us += fig.first_tr_start_us    # align with C base
                     fig.axes[ch_name].plot(
                         t_us * t_scale, arr[1] * scale,
-                        linewidth=0.7, alpha=alpha, label=label)
+                        linewidth=_OVERLAY_LINEWIDTH, alpha=alpha, label=label)
 
         # RF magnitude & phase
         if len(channels) > 3:
@@ -387,10 +400,10 @@ def plot(
                 rf_phase = np.angle(arr[1])
                 fig.axes['rf_mag'].plot(
                     t_us * t_scale, rf_mag,
-                    linewidth=0.7, alpha=alpha, label=label)
+                    linewidth=_OVERLAY_LINEWIDTH, alpha=alpha, label=label)
                 fig.axes['rf_phase'].plot(
                     t_us * t_scale, rf_phase,
-                    linewidth=0.7, alpha=alpha, label=label)
+                    linewidth=_OVERLAY_LINEWIDTH, alpha=alpha, label=label)
 
         if label:
             fig.axes['rf_mag'].legend(fontsize=8, loc='upper right')
@@ -432,7 +445,7 @@ def _overlay_xml(handle, xml_path, *, t_scale, label):
                 amp = data[n:] * g_per_cm_to_mT_per_m
                 handle.axes[ch_name].plot(
                     t_us * t_scale, amp,
-                    linewidth=0.7, alpha=alpha, label=label)
+                    linewidth=_OVERLAY_LINEWIDTH, alpha=alpha, label=label)
 
     rf_elem = root.find('.//rf')
     if rf_elem is not None and rf_elem.text:
@@ -443,7 +456,7 @@ def _overlay_xml(handle, xml_path, *, t_scale, label):
             amp = data[n:] * g_to_uT
             handle.axes['rf_mag'].plot(
                 t_us * t_scale, np.abs(amp),
-                linewidth=0.7, alpha=alpha, label=label)
+                linewidth=_OVERLAY_LINEWIDTH, alpha=alpha, label=label)
 
     if label:
         handle.axes['rf_mag'].legend(fontsize=8, loc='upper right')

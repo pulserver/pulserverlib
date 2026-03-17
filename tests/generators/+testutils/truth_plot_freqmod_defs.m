@@ -1,14 +1,9 @@
 function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
-%TRUTH_PLOT_FREQMOD_DEFS Plot frequency modulation waveforms and cumulative phase.
+%TRUTH_PLOT_FREQMOD_DEFS Plot base and projected frequency modulation.
 %
-% Each def is shown on the full segment timeline in ms: zero before the
-% active window (RF or ADC delay), the stored waveform during the window,
-% and zero again after.  Rows 1-3 show Hz/m; rows 4-6 show rad/m.
-% A circle marker on the phase rows checks the stored ref_integral value.
-%
-%   truth_plot_freqmod_defs('gre_2d_1sl_1avg')
-%   truth_plot_freqmod_defs(truth_struct, 'def_idx', [1 2])
-%   truth_plot_freqmod_defs(truth_struct, 'segment_idx', 2)
+% Layout is 4x2:
+%   Rows 1-3: base per-axis frequency modulation and cumulative phase.
+%   Row 4: projected actual modulation and phase_total for x/y/z/oblique probes.
 
     p = inputParser;
     addParameter(p, 'def_idx',     [], @(x) isempty(x) || isnumeric(x));
@@ -107,10 +102,12 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
         end
     end
 
-    % --- Plot (3 rows x 2 cols: col1=freq mod, col2=phase) -------------
+    % --- Plot (4 rows x 2 cols: col1=freq mod, col2=phase) -------------
     n_defs     = numel(ids);
     cmap       = lines(n_defs);
     bot_margin = 0.09;
+    probe_colors = [0.85 0.33 0.10; 0.00 0.45 0.74; 0.47 0.67 0.19; 0.49 0.18 0.56];
+    probe_labels = {'x', 'y', 'z', 'oblique'};
 
     fig    = figure('Name', sprintf('Freqmod defs: %s', truth.base_name), 'Color', 'w');
     labels = {'Gx', 'Gy', 'Gz'};
@@ -132,6 +129,20 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     end
     xlabel(fm_ax(3), 'Time (ms)');
     xlabel(ph_ax(3), 'Time (ms)');
+
+    fm_actual_ax = subplot(4, 2, 7);
+    hold(fm_actual_ax, 'on');
+    ylabel(fm_actual_ax, 'f_{proj} (Hz)');
+    xlabel(fm_actual_ax, 'Time (ms)');
+    grid(fm_actual_ax, 'on');
+    title(fm_actual_ax, 'Projected Actual Modulation');
+
+    ph_actual_ax = subplot(4, 2, 8);
+    hold(ph_actual_ax, 'on');
+    ylabel(ph_actual_ax, '\phi_{proj} (rad)');
+    xlabel(ph_actual_ax, 'Time (ms)');
+    grid(ph_actual_ax, 'on');
+    title(ph_actual_ax, 'Projected Phase Compensation');
 
     def_lbls = cell(1, n_defs);
     for i = 1:n_defs
@@ -166,12 +177,36 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
                 'Color', cmap(i,:), 'MarkerSize', 7, 'MarkerFaceColor', cmap(i,:), ...
                 'HandleVisibility', 'off');
         end
+
+        if isfield(truth, 'freqmod_plan') && truth.freqmod_plan.num_plans > 0
+            plan_idx = find(arrayfun(@(p) p.def_id == d, truth.freqmod_plan.plans), 1, 'first');
+            if ~isempty(plan_idx)
+                pe = truth.freqmod_plan.plans(plan_idx);
+                t_win_ms = (0:double(pe.num_samples)-1).' * double(def.raster_us) * 1e-3;
+                dur_ms = double(def.duration_us) * 1e-3;
+                for q = 1:min(4, truth.freqmod_plan.num_probes)
+                    wf = pe.waveforms(q, 1:pe.num_samples).';
+                    t_plot  = [0;  t0_ms;  t0_ms + t_win_ms;  t0_ms + dur_ms;  total_dur_ms];
+                    wf_plot = [0;  0;      wf;                 0;               0            ];
+                    ph_tot = pe.phase_total(q);
+                    ph_plot = [0; 0; ph_tot; ph_tot];
+                    t_phase = [0; t0_ms + double(def.ref_time_us) * 1e-3; total_dur_ms; total_dur_ms];
+
+                    plot(fm_actual_ax, t_plot, wf_plot, ...
+                        'Color', probe_colors(q, :), 'LineWidth', 1.2, ...
+                        'DisplayName', sprintf('Def %d %s', d, probe_labels{q}));
+                    plot(ph_actual_ax, t_phase, ph_plot, ...
+                        'Color', probe_colors(q, :), 'LineWidth', 1.2, ...
+                        'DisplayName', sprintf('Def %d %s', d, probe_labels{q}));
+                end
+            end
+        end
     end
 
-    all_ax = [fm_ax, ph_ax];
+    all_ax = [fm_ax, ph_ax, fm_actual_ax, ph_actual_ax];
     linkaxes(all_ax, 'x');
 
-    for k = 1:6
+    for k = 1:8
         pos    = get(all_ax(k), 'Position');
         pos(2) = pos(2) * (1 - bot_margin) + bot_margin;
         pos(4) = pos(4) * (1 - bot_margin);
@@ -189,7 +224,10 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     legend(lgd_ax, dummy_h, def_lbls, ...
         'Orientation', 'horizontal', 'Location', 'north', 'Box', 'off');
 
-    sgtitle(fig, sprintf('Frequency Modulation Definitions (%s)  seg %d', ...
+    legend(fm_actual_ax, 'show', 'Location', 'eastoutside');
+    legend(ph_actual_ax, 'show', 'Location', 'eastoutside');
+
+    sgtitle(fig, sprintf('Frequency Modulation Definitions (%s) seg %d', ...
         truth.base_name, s_idx - 1), 'Interpreter', 'none');
 end
 

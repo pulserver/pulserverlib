@@ -9,8 +9,15 @@ function report = truth_report_case(base)
     report.num_unique_adcs = truth.meta.num_unique_adcs;
     report.num_segments = truth.meta.num_segments;
     report.num_canonical_trs = truth.meta.num_canonical_trs;
+    report.canonical_mode = truth.meta.canonical_mode;
+    report.canonical_duration_us = truth.meta.canonical_duration_us;
     report.num_scan_entries = truth.scan_table.num_entries;
     report.num_freqmod_defs = truth.freqmod_def.num_defs;
+    report.num_freqmod_plan_entries = truth.freqmod_plan.num_plans;
+    report.num_freqmod_plan_probes = truth.freqmod_plan.num_probes;
+    report.num_labels = truth.label_state.num_labels;
+    report.num_label_scan_rows = truth.label_state.scan_rows;
+    report.num_label_adc_rows = truth.label_state.adc_rows;
     report.validation_ok = truth.validation.ok;
     report.validation_warnings = truth.validation.warnings;
 
@@ -48,6 +55,10 @@ function report = truth_report_case(base)
     end
 
     fprintf('Canonical TRs: %d\n', truth.tr_waveforms.num_trs);
+    fprintf('Canonical mode: %s\n', truth.meta.canonical_mode);
+    if ~isempty(truth.meta.canonical_duration_us)
+        fprintf('Canonical duration (meta): %d us\n', truth.meta.canonical_duration_us);
+    end
     for i = 1:truth.tr_waveforms.num_trs
         w = truth.tr_waveforms.waveforms(i);
         fprintf('  TR %d: samples=%d t_end_us=%.3f max|g|=[%.3f %.3f %.3f]\n', ...
@@ -60,6 +71,24 @@ function report = truth_report_case(base)
         def = truth.freqmod_def.defs(d);
         fprintf('  Def %d: type=%d samples=%d raster_us=%.3f duration_us=%.3f\n', ...
             d, def.type, def.num_samples, def.raster_us, def.duration_us);
+    end
+
+    fprintf('Freqmod plan entries: %d (probes=%d)\n', ...
+        truth.freqmod_plan.num_plans, truth.freqmod_plan.num_probes);
+    for p = 1:truth.freqmod_plan.num_plans
+        pe = truth.freqmod_plan.plans(p);
+        fprintf('  Plan %d: def=%d ns=%d phase_total=[%s]\n', ...
+            p - 1, pe.def_id, pe.num_samples, num2str(pe.phase_total, '%.6g '));
+    end
+
+    fprintf('Label states: labels=%d scan_rows=%d adc_rows=%d\n', ...
+        truth.label_state.num_labels, truth.label_state.scan_rows, truth.label_state.adc_rows);
+    for li = 1:truth.label_state.num_labels
+        fprintf('  Label %s: adc_min=%d adc_max=%d (int32=[%d,%d])\n', ...
+            truth.label_state.label_names{li}, ...
+            round(truth.label_state.adc_value_min(li)), ...
+            round(truth.label_state.adc_value_max(li)), ...
+            intmin('int32'), intmax('int32'));
     end
 
     fprintf('Scan table rows: %d\n', truth.scan_table.num_entries);

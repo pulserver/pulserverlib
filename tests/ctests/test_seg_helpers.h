@@ -694,4 +694,94 @@ static TSEG_MAYBE_UNUSED int parse_scan_table(const char* path, scan_table_file*
     return 1;
 }
 
+#define MAX_FMOD_PLAN_PROBES   8
+#define MAX_FMOD_PLAN_ENTRIES  2048
+
+typedef struct fmod_plan_entry {
+    int   def_id;  /* 1-based fmod def id */
+    int   num_samples;
+    float rotmat[9];
+    float phase_active[MAX_FMOD_PLAN_PROBES];
+    float phase_extra[MAX_FMOD_PLAN_PROBES];
+    float phase_total[MAX_FMOD_PLAN_PROBES];
+    float waveforms[MAX_FMOD_PLAN_PROBES][MAX_FMOD_SAMPLES];
+} fmod_plan_entry;
+
+typedef struct fmod_plan_file {
+    int num_probes;
+    float probes[MAX_FMOD_PLAN_PROBES][3];
+    int num_plans;
+    int max_samples;
+    fmod_plan_entry plans[MAX_FMOD_PLAN_ENTRIES];
+    int scan_len;
+    int scan_to_plan[MAX_SCAN_TABLE_ENTRIES];
+} fmod_plan_file;
+
+#define FMOD_PLAN_FILE_INIT {0, {{0}}, 0, 0, {{0}}, 0, {0}}
+
+static TSEG_MAYBE_UNUSED int parse_fmod_plan(const char* path, fmod_plan_file* out)
+{
+    FILE* f;
+    int i, q;
+    fmod_plan_file res;
+
+    memset(&res, 0, sizeof(res));
+
+    f = fopen(path, "rb");
+    if (!f) return 0;
+
+    if (fread(&res.num_probes, sizeof(int), 1, f) != 1 ||
+        res.num_probes < 0 || res.num_probes > MAX_FMOD_PLAN_PROBES) {
+        fclose(f); return 0;
+    }
+    if (res.num_probes > 0) {
+        if (fread(res.probes, sizeof(float), (size_t)res.num_probes * 3, f)
+            != (size_t)res.num_probes * 3) {
+            fclose(f); return 0;
+        }
+    }
+
+    if (fread(&res.num_plans, sizeof(int), 1, f) != 1 ||
+        res.num_plans < 0 || res.num_plans > MAX_FMOD_PLAN_ENTRIES) {
+        fclose(f); return 0;
+    }
+    if (fread(&res.max_samples, sizeof(int), 1, f) != 1 ||
+        res.max_samples < 0 || res.max_samples > MAX_FMOD_SAMPLES) {
+        fclose(f); return 0;
+    }
+
+    for (i = 0; i < res.num_plans; ++i) {
+        fmod_plan_entry* e = &res.plans[i];
+        if (fread(&e->def_id, sizeof(int), 1, f) != 1) { fclose(f); return 0; }
+        if (fread(&e->num_samples, sizeof(int), 1, f) != 1) { fclose(f); return 0; }
+        if (e->num_samples < 0 || e->num_samples > res.max_samples) { fclose(f); return 0; }
+        if (fread(e->rotmat, sizeof(float), 9, f) != 9) { fclose(f); return 0; }
+        if (fread(e->phase_active, sizeof(float), (size_t)res.num_probes, f)
+            != (size_t)res.num_probes) { fclose(f); return 0; }
+        if (fread(e->phase_extra, sizeof(float), (size_t)res.num_probes, f)
+            != (size_t)res.num_probes) { fclose(f); return 0; }
+        if (fread(e->phase_total, sizeof(float), (size_t)res.num_probes, f)
+            != (size_t)res.num_probes) { fclose(f); return 0; }
+        for (q = 0; q < res.num_probes; ++q) {
+            if (fread(e->waveforms[q], sizeof(float), (size_t)res.max_samples, f)
+                != (size_t)res.max_samples) { fclose(f); return 0; }
+        }
+    }
+
+    if (fread(&res.scan_len, sizeof(int), 1, f) != 1 ||
+        res.scan_len < 0 || res.scan_len > MAX_SCAN_TABLE_ENTRIES) {
+        fclose(f); return 0;
+    }
+    if (res.scan_len > 0) {
+        if (fread(res.scan_to_plan, sizeof(int), (size_t)res.scan_len, f)
+            != (size_t)res.scan_len) {
+            fclose(f); return 0;
+        }
+    }
+
+    fclose(f);
+    *out = res;
+    return 1;
+}
+
 #endif /* TEST_SEG_HELPERS_H */

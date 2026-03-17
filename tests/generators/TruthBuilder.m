@@ -36,6 +36,8 @@ classdef TruthBuilder < handle
         segment_order     = []   % expanded segment instances per TR (1-based segment IDs)
         num_averages      = 1
         base_rot          = eye(3)
+        canonical_mode    = 'tr'  % 'tr' or 'pass_expanded'
+        multipass_info    = struct('enabled', false, 'pass_starts', [], 'pass_len', 0, 'once_flags', [])
 
         % Derived quantities (computed by prepare())
         peakRF              = 0
@@ -56,6 +58,16 @@ classdef TruthBuilder < handle
         scan_table          = []
         rotmat_table        = []
         freq_mod_table      = []
+        scan_src_block_idx  = []
+        scan_src_tr_start_idx = []
+        fmod_plan_truth     = struct()
+        label_names         = {}
+        label_states_per_block = int32([])
+        label_states_per_scan = int32([])
+        label_states_per_adc = int32([])
+        label_adc_scan_rows = int32([])
+        label_adc_value_min = int32([])
+        label_adc_value_max = int32([])
 
         prepared          = false
     end
@@ -144,6 +156,12 @@ classdef TruthBuilder < handle
 
             % Scan table binary
             obj.exportScanTable(fullfile(out_dir, [base_name '_scan_table.bin']));
+
+            % Supplemental label-state truth for metadata validation
+            obj.exportLabelState(fullfile(out_dir, [base_name '_label_state.bin']));
+
+            % Supplemental plan-level freq-mod truth (rotation-aware projected library)
+            obj.exportFreqModPlan(fullfile(out_dir, [base_name '_freqmod_plan.bin']));
         end
     end
 
@@ -168,11 +186,13 @@ classdef TruthBuilder < handle
 
             obj.discoverUniqueAdcs();
             obj.validateAnchorPoints();
+            obj.determineCanonicalMode();
             obj.computePeakRFAndCanonicalScales();
             obj.buildCanonicalTRs();
             obj.buildFreqModDefs();
             obj.buildSegmentData();
             obj.buildScanTableData();
+            obj.buildFreqModPlanTruth();
 
             % Store definitions on the sequence object.
             obj.seq.setDefinition('PeakRF', obj.peakRF);
@@ -219,11 +239,73 @@ classdef TruthBuilder < handle
             obj.anchorPoints.adc = adc;
         end
 
+        function determineCanonicalMode(obj)
+        % DETERMINECANONICALMODE  Choose TR-based or pass-expanded canonical mode.
+            nbt = obj.num_blocks_in_tr;
+            nblocks = length(obj.seq.blockEvents);
+            once_flags = obj.getOnceFlags();
+
+            obj.canonical_mode = 'tr';
+            obj.multipass_info = struct('enabled', false, ...
+                'pass_starts', [], 'pass_len', 0, 'once_flags', once_flags);
+
+            if isempty(once_flags) || nblocks == 0
+                return;
+            end
+
+            starts = find(once_flags == 1 & [true, once_flags(1:end-1) ~= 1]);
+            if length(starts) < 2
+                return;
+            end
+
+            pass_lens = diff([starts, nblocks + 1]);
+            if any(pass_lens ~= pass_lens(1))
+                return;
+            end
+
+            pass_len = pass_lens(1);
+            if pass_len ~= nbt
+                return;
+            end
+
+            has_main = true;
+            has_nonmain = false;
+            for p = 1:length(starts)
+                i0 = starts(p);
+                i1 = i0 + pass_len - 1;
+                st = once_flags(i0:i1);
+                if ~any(st == 0)
+                    has_main = false;
+                    break;
+                end
+                if any(st == 1) || any(st == 2)
+                    has_nonmain = true;
+                end
+            end
+
+            if ~has_main || ~has_nonmain
+                return;
+            end
+
+            obj.canonical_mode = 'pass_expanded';
+            obj.multipass_info = struct('enabled', true, ...
+                'pass_starts', starts(:)', ...
+                'pass_len', pass_len, ...
+                'once_flags', once_flags);
+        end
+
         % ---- TR group discovery ----
         function discoverTRGroups(obj)
         % DISCOVERTGROUPS  Fingerprint imaging TRs by gradient shape;
         %   group TRs with identical shot-index patterns.
         %   Mirrors C library's pulseqlib__find_unique_shot_trs().
+            if obj.multipass_info.enabled
+                np = length(obj.multipass_info.pass_starts);
+                obj.num_canonical_trs = 1;
+                obj.tr_group_labels = zeros(np, 1);
+                return;
+            end
+
             nbt = obj.num_blocks_in_tr;
             num_dummy = obj.findNumDummyBlocks();
             num_imaging_blocks = length(obj.seq.blockEvents) - num_dummy;
@@ -266,6 +348,52 @@ classdef TruthBuilder < handle
             import mr.*
 
             obj.discoverTRGroups();
+
+            if obj.multipass_info.enabled
+                pass_starts = obj.multipass_info.pass_starts;
+                pass_len = obj.multipass_info.pass_len;
+                num_total_blocks = length(obj.seq.blockEvents);
+
+                % Global peak RF across all blocks.
+                peak_rf = 0;
+                for blk = 1:num_total_blocks
+                    block = obj.seq.getBlock(blk);
+                    if isfield(block, 'rf') && ~isempty(block.rf)
+                        pk = max(abs(block.rf.signal));
+                        if pk > peak_rf, peak_rf = pk; end
+                    end
+                end
+                obj.peakRF = peak_rf;
+
+                % Choose worst-energy pass as canonical representative.
+                best_energy = -inf;
+                best_idx = pass_starts(1);
+                for p = 1:length(pass_starts)
+                    e = 0;
+                    base_blk = pass_starts(p);
+                    for pos = 1:pass_len
+                        block = obj.seq.getBlock(base_blk + pos - 1);
+                        ax_names = {'gx', 'gy', 'gz'};
+                        for a = 1:3
+                            axn = ax_names{a};
+                            if isfield(block, axn) && ~isempty(block.(axn))
+                                e = e + TruthBuilder.gradEnergy(block.(axn));
+                            end
+                        end
+                    end
+                    if e > best_energy
+                        best_energy = e;
+                        best_idx = base_blk;
+                    end
+                end
+
+                obj.canonical_scales = {[]};
+                obj.segment_data = struct();
+                obj.segment_data.max_seg_energy_idx = best_idx;
+                obj.segment_data.repr_energy_indices = best_idx;
+                obj.segment_data.first_group_indices = best_idx;
+                return;
+            end
 
             nbt = obj.num_blocks_in_tr;
             num_total_blocks = length(obj.seq.blockEvents);
@@ -372,6 +500,76 @@ classdef TruthBuilder < handle
         function buildCanonicalTRs(obj)
             import mr.*
 
+            if obj.multipass_info.enabled
+                obj.canonical_seqs = cell(1, 1);
+                obj.tr_waveforms   = cell(1, 1);
+                obj.tr_times_list  = cell(1, 1);
+
+                pass_len = obj.multipass_info.pass_len;
+                once_flags = obj.multipass_info.once_flags;
+                pass_start = obj.segment_data.first_group_indices(1);
+
+                cseq = mr.Sequence(obj.sys);
+                for avg = 1:obj.num_averages
+                    for pos = 1:pass_len
+                        blk_idx = pass_start + pos - 1;
+                        once = once_flags(blk_idx);
+                        keep = (once == 0) || ...
+                               (once == 1 && avg == 1) || ...
+                               (once == 2 && avg == obj.num_averages);
+                        if ~keep
+                            continue;
+                        end
+
+                        block = obj.seq.getBlock(blk_idx);
+                        args = {};
+
+                        if isfield(block, 'rf') && ~isempty(block.rf)
+                            args{end+1} = block.rf; %#ok<AGROW>
+                        end
+
+                        ax_names = {'gx', 'gy', 'gz'};
+                        for a = 1:3
+                            axn = ax_names{a};
+                            if isfield(block, axn) && ~isempty(block.(axn))
+                                args{end+1} = block.(axn); %#ok<AGROW>
+                            end
+                        end
+
+                        if isfield(block, 'adc') && ~isempty(block.adc)
+                            args{end+1} = block.adc; %#ok<AGROW>
+                        end
+
+                        if isempty(args)
+                            cseq.addBlock(mr.makeDelay(block.blockDuration));
+                        else
+                            cseq.addBlock(args{:});
+                        end
+                    end
+                end
+
+                obj.canonical_seqs{1} = cseq;
+
+                wave_data = cseq.waveforms_and_times(false);
+                raster = 0.5 * obj.sys.gradRasterTime;
+                times = 0.0 : raster : cseq.duration;
+                samples = zeros(length(times), 3);
+                for c = 1:3
+                    if c <= length(wave_data) && ~isempty(wave_data{c})
+                        t_raw = wave_data{c}(1, :);
+                        w_raw = wave_data{c}(2, :);
+                        [t_u, iu] = unique(t_raw, 'last');
+                        w_u = w_raw(iu);
+                        samples(:, c) = interp1(t_u, w_u, times, 'linear', 0);
+                    end
+                end
+
+                obj.tr_times_list{1} = times(:) * 1e6;
+                obj.tr_waveforms{1}  = samples;
+                obj.TR = cseq.duration;
+                return;
+            end
+
             nbt = obj.num_blocks_in_tr;
             M = obj.num_canonical_trs;
             repr = obj.segment_data.first_group_indices;
@@ -462,10 +660,19 @@ classdef TruthBuilder < handle
             import mr.*
 
             nbt = obj.num_blocks_in_tr;
-            num_total_blocks = length(obj.seq.blockEvents);
-            num_dummy = obj.findNumDummyBlocks();
-            num_imaging_blocks = num_total_blocks - num_dummy;
-            num_trs = num_imaging_blocks / nbt;
+            if obj.multipass_info.enabled
+                tr_starts = obj.multipass_info.pass_starts;
+                num_trs = length(tr_starts);
+            else
+                num_total_blocks = length(obj.seq.blockEvents);
+                num_dummy = obj.findNumDummyBlocks();
+                num_imaging_blocks = num_total_blocks - num_dummy;
+                num_trs = num_imaging_blocks / nbt;
+                tr_starts = zeros(1, num_trs);
+                for tr_i = 1:num_trs
+                    tr_starts(tr_i) = num_dummy + (tr_i - 1) * nbt + 1;
+                end
+            end
             num_seg = length(obj.segment_sizes);
             seg_order = obj.segment_order;
 
@@ -492,8 +699,7 @@ classdef TruthBuilder < handle
                 best_start = -1;
 
                 for tr_i = 1:num_trs
-                    % MATLAB Sequence block indices are 1-based.
-                    tr_base = num_dummy + (tr_i - 1) * nbt + 1;
+                    tr_base = tr_starts(tr_i);
 
                     for ii = 1:length(inst_ids)
                         inst = inst_ids(ii);
@@ -644,10 +850,19 @@ classdef TruthBuilder < handle
             st  = zeros(max_entries, num_cols);
             rot = zeros(max_entries, 9);
             fmt = zeros(max_entries, 1);
+            src_blk = zeros(max_entries, 1);
+            src_tr_start = zeros(max_entries, 1);
             act = 1;
 
             ppm_to_hz = 1e-6 * obj.sys.gamma * obj.sys.B0;
             num_dummy_blocks = obj.findNumDummyBlocks();
+
+            obj.ensureLabelTimeline();
+            block_label_states = obj.label_states_per_block;
+            nlabels = size(block_label_states, 2);
+            once_col = obj.findLabelColumn('ONCE');
+            norot_col = obj.findLabelColumn('NOROT');
+            label_scan = zeros(max_entries, nlabels, 'int32');
 
             once  = 0;
             norot_active = 0;
@@ -656,24 +871,15 @@ classdef TruthBuilder < handle
                 for b = 1:num_blocks_per_pass
                     block = obj.seq.getBlock(b);
 
-                    % Read labels from sequence block.
-                    if isfield(block, 'label') && ~isempty(block.label)
-                        for lbl = 1:length(block.label)
-                            lab = block.label(lbl);
-                            if strcmp(lab.label, 'ONCE')
-                                if strcmp(lab.type, 'labelset')
-                                    once = lab.value;
-                                elseif strcmp(lab.type, 'labelinc')
-                                    once = once + lab.value;
-                                end
-                            elseif strcmp(lab.label, 'NOROT')
-                                if strcmp(lab.type, 'labelset')
-                                    norot_active = lab.value;
-                                elseif strcmp(lab.type, 'labelinc')
-                                    norot_active = norot_active + lab.value;
-                                end
-                            end
-                        end
+                    if once_col > 0
+                        once = double(block_label_states(b, once_col));
+                    else
+                        once = 0;
+                    end
+                    if norot_col > 0
+                        norot_active = double(block_label_states(b, norot_col));
+                    else
+                        norot_active = 0;
                     end
 
                     % ONCE filter: once==1 → first avg only; once==2 → last avg only.
@@ -755,6 +961,11 @@ classdef TruthBuilder < handle
                             act_rotmat = obj.base_rot * rotmat;
                         end
                         rot(act, :) = reshape(act_rotmat', 1, 9);
+                        src_blk(act) = b;
+                        src_tr_start(act) = floor((b - 1) / obj.num_blocks_in_tr) * obj.num_blocks_in_tr + 1;
+                        if nlabels > 0
+                            label_scan(act, :) = block_label_states(b, :);
+                        end
 
                         act = act + 1;
                     end
@@ -765,30 +976,319 @@ classdef TruthBuilder < handle
             obj.scan_table    = st(1:n, :);
             obj.rotmat_table  = rot(1:n, :);
             obj.freq_mod_table = fmt(1:n);
+            obj.scan_src_block_idx = src_blk(1:n);
+            obj.scan_src_tr_start_idx = src_tr_start(1:n);
+
+            if nlabels > 0
+                obj.label_states_per_scan = label_scan(1:n, :);
+                adc_rows = find(obj.scan_table(:, 7) ~= 0);
+                obj.label_adc_scan_rows = int32(adc_rows(:) - 1);  % 0-based rows
+                if isempty(adc_rows)
+                    obj.label_states_per_adc = zeros(0, nlabels, 'int32');
+                    obj.label_adc_value_min = zeros(1, nlabels, 'int32');
+                    obj.label_adc_value_max = zeros(1, nlabels, 'int32');
+                else
+                    obj.label_states_per_adc = obj.label_states_per_scan(adc_rows, :);
+                    obj.label_adc_value_min = min(obj.label_states_per_adc, [], 1);
+                    obj.label_adc_value_max = max(obj.label_states_per_adc, [], 1);
+                end
+            else
+                obj.label_states_per_scan = zeros(n, 0, 'int32');
+                obj.label_states_per_adc = zeros(0, 0, 'int32');
+                obj.label_adc_scan_rows = zeros(0, 1, 'int32');
+                obj.label_adc_value_min = zeros(1, 0, 'int32');
+                obj.label_adc_value_max = zeros(1, 0, 'int32');
+            end
+        end
+
+        function buildFreqModPlanTruth(obj)
+        % BUILDFREQMODPLANTRUTH  Build supplemental plan-level projected freq-mod truth.
+            nscan = length(obj.freq_mod_table);
+            oblique = [1, 2, 3];
+            oblique = oblique / norm(oblique);
+            probes = [1, 0, 0; 0, 1, 0; 0, 0, 1; oblique];
+
+            plan_map = -1 * ones(nscan, 1);
+            plans = struct('def_id', {}, 'rot', {}, 'scan_row', {});
+
+            for i = 1:nscan
+                def_id = obj.freq_mod_table(i);
+                if def_id <= 0
+                    continue;
+                end
+                rot = reshape(obj.rotmat_table(i, :), [3, 3])';
+
+                found = 0;
+                for p = 1:length(plans)
+                    if plans(p).def_id == def_id && max(abs(plans(p).rot(:) - rot(:))) < 1e-7
+                        plan_map(i) = p - 1;
+                        found = 1;
+                        break;
+                    end
+                end
+
+                if ~found
+                    plans(end+1).def_id = def_id; %#ok<AGROW>
+                    plans(end).rot = rot;
+                    plans(end).scan_row = i;
+                    plan_map(i) = length(plans) - 1;
+                end
+            end
+
+            num_plans = length(plans);
+            max_samples = 0;
+            for p = 1:num_plans
+                fm = obj.fmod_defs{plans(p).def_id};
+                max_samples = max(max_samples, fm.num_samples);
+            end
+
+            plan_defs = zeros(num_plans, 1);
+            plan_num_samples = zeros(num_plans, 1);
+            plan_rot = zeros(num_plans, 9);
+            plan_phase_active = zeros(num_plans, size(probes, 1));
+            plan_phase_extra = zeros(num_plans, size(probes, 1));
+            plan_phase_total = zeros(num_plans, size(probes, 1));
+            plan_waveforms = zeros(num_plans, size(probes, 1), max_samples);
+
+            for p = 1:num_plans
+                def_id = plans(p).def_id;
+                fm = obj.fmod_defs{def_id};
+                row = plans(p).scan_row;
+                block_idx = obj.scan_src_block_idx(row);
+                tr_start_idx = obj.scan_src_tr_start_idx(row);
+                block = obj.seq.getBlock(block_idx);
+
+                active_axes = max(abs(fm.waveform), [], 1) > 1e-12;
+                [ref_abs_s, ok] = obj.getFreqModReferenceTime(block, def_id);
+                if ~ok
+                    ref_abs_s = 0;
+                end
+
+                plan_defs(p) = def_id;
+                plan_num_samples(p) = fm.num_samples;
+                plan_rot(p, :) = reshape(plans(p).rot', [1, 9]);
+
+                for q = 1:size(probes, 1)
+                    d = probes(q, :).';
+                    u = plans(p).rot' * d;
+                    w = fm.waveform * u;
+
+                    phase_active = dot(fm.ref_integral, u.');
+                    phase_extra = obj.integrateInactivePhaseFromTrStart( ...
+                        tr_start_idx, block_idx, ref_abs_s, active_axes, u);
+
+                    plan_phase_active(p, q) = phase_active;
+                    plan_phase_extra(p, q) = phase_extra;
+                    plan_phase_total(p, q) = phase_active + phase_extra;
+                    plan_waveforms(p, q, 1:fm.num_samples) = w;
+                end
+            end
+
+            obj.fmod_plan_truth = struct();
+            obj.fmod_plan_truth.probes = probes;
+            obj.fmod_plan_truth.num_plans = num_plans;
+            obj.fmod_plan_truth.max_samples = max_samples;
+            obj.fmod_plan_truth.plan_defs = plan_defs;
+            obj.fmod_plan_truth.plan_num_samples = plan_num_samples;
+            obj.fmod_plan_truth.plan_rot = plan_rot;
+            obj.fmod_plan_truth.plan_phase_active = plan_phase_active;
+            obj.fmod_plan_truth.plan_phase_extra = plan_phase_extra;
+            obj.fmod_plan_truth.plan_phase_total = plan_phase_total;
+            obj.fmod_plan_truth.plan_waveforms = plan_waveforms;
+            obj.fmod_plan_truth.scan_to_plan = plan_map;
+        end
+
+        function [ref_abs_s, ok] = getFreqModReferenceTime(obj, block, def_id)
+            ok = true;
+            ref_abs_s = 0;
+
+            if obj.fmod_types(def_id) == 0
+                if isfield(block, 'rf') && ~isempty(block.rf)
+                    rf_iso_delay = block.rf.t(end) - mr.calcRfCenter(block.rf);
+                    ref_abs_s = block.rf.delay + rf_iso_delay;
+                else
+                    ok = false;
+                end
+            else
+                if isfield(block, 'adc') && ~isempty(block.adc)
+                    key = [block.adc.numSamples, block.adc.dwell];
+                    match = find(obj.unique_adcs(:,1) == key(1) & ...
+                                 abs(obj.unique_adcs(:,2) - key(2)) < 1e-15, 1);
+                    if isempty(match)
+                        ok = false;
+                        return;
+                    end
+                    anchor = obj.getADCAnchorFraction(match - 1);
+                    adc_dur = block.adc.numSamples * block.adc.dwell;
+                    ref_abs_s = block.adc.delay + anchor * adc_dur;
+                else
+                    ok = false;
+                end
+            end
+        end
+
+        function phase = integrateInactivePhaseFromTrStart(obj, tr_start_idx, block_idx, ref_abs_s, active_axes, u)
+            phase = 0;
+            if tr_start_idx <= 0 || block_idx <= 0
+                return;
+            end
+
+            area = zeros(1, 3);
+            for bb = tr_start_idx:block_idx
+                blk = obj.seq.getBlock(bb);
+                if bb < block_idx
+                    t0 = 0;
+                    t1 = blk.blockDuration;
+                else
+                    t0 = 0;
+                    t1 = max(0, min(ref_abs_s, blk.blockDuration));
+                end
+
+                if t1 <= t0
+                    continue;
+                end
+
+                ax_names = {'gx', 'gy', 'gz'};
+                for ch = 1:3
+                    if active_axes(ch)
+                        continue;
+                    end
+                    axn = ax_names{ch};
+                    if isfield(blk, axn) && ~isempty(blk.(axn))
+                        area(ch) = area(ch) + TruthBuilder.integrateGradientInterval(blk.(axn), t0, t1);
+                    end
+                end
+            end
+
+            phase = 2 * pi * dot(area, u.');
+        end
+
+        function exportFreqModPlan(obj, path)
+            fid = fopen(path, 'wb');
+            if fid < 0, error('Failed to open %s', path); end
+
+            p = obj.fmod_plan_truth;
+            if isempty(fieldnames(p))
+                fwrite(fid, int32(0), 'int32');
+                fwrite(fid, int32(0), 'int32');
+                fwrite(fid, int32(0), 'int32');
+                fwrite(fid, int32(0), 'int32');
+                fclose(fid);
+                return;
+            end
+
+            nprobe = size(p.probes, 1);
+            fwrite(fid, int32(nprobe), 'int32');
+            fwrite(fid, single(p.probes(:)), 'float32');
+
+            fwrite(fid, int32(p.num_plans), 'int32');
+            fwrite(fid, int32(p.max_samples), 'int32');
+
+            for i = 1:p.num_plans
+                fwrite(fid, int32(p.plan_defs(i)), 'int32');
+                fwrite(fid, int32(p.plan_num_samples(i)), 'int32');
+                fwrite(fid, single(p.plan_rot(i, :)), 'float32');
+                fwrite(fid, single(p.plan_phase_active(i, :)), 'float32');
+                fwrite(fid, single(p.plan_phase_extra(i, :)), 'float32');
+                fwrite(fid, single(p.plan_phase_total(i, :)), 'float32');
+                for q = 1:nprobe
+                    wf = squeeze(p.plan_waveforms(i, q, :));
+                    fwrite(fid, single(wf), 'float32');
+                end
+            end
+
+            fwrite(fid, int32(length(p.scan_to_plan)), 'int32');
+            fwrite(fid, int32(p.scan_to_plan), 'int32');
+
+            fclose(fid);
+        end
+
+        function once_flags = getOnceFlags(obj)
+        % GETONCEFLAGS  ONCE state per block after applying label updates.
+            obj.ensureLabelTimeline();
+            once_col = obj.findLabelColumn('ONCE');
+            if once_col <= 0
+                once_flags = zeros(1, length(obj.seq.blockEvents));
+            else
+                once_flags = double(obj.label_states_per_block(:, once_col)).';
+            end
+        end
+
+        function ensureLabelTimeline(obj)
+            nblocks = length(obj.seq.blockEvents);
+            if size(obj.label_states_per_block, 1) == nblocks
+                return;
+            end
+
+            names = {};
+            states = zeros(nblocks, 0, 'int32');
+            curr = zeros(1, 0, 'int32');
+
+            for b = 1:nblocks
+                block = obj.seq.getBlock(b);
+                if isfield(block, 'label') && ~isempty(block.label)
+                    labels_in_block = {block.label.label};
+                    [ordered_labels, ~] = unique(labels_in_block, 'stable');
+
+                    % Pulseq label semantics are sticky; apply all SETs then INCs per label.
+                    for li = 1:length(ordered_labels)
+                        name = ordered_labels{li};
+                        idx = find(strcmp(names, name), 1);
+                        if isempty(idx)
+                            names{end+1} = name; %#ok<AGROW>
+                            states(:, end+1) = int32(0); %#ok<AGROW>
+                            curr(1, end+1) = int32(0); %#ok<AGROW>
+                            idx = numel(names);
+                        end
+
+                        set_mask = strcmp({block.label.label}, name) & strcmp({block.label.type}, 'labelset');
+                        if any(set_mask)
+                            set_vals = [block.label(set_mask).value];
+                            curr(idx) = int32(round(set_vals(end)));
+                        end
+
+                        inc_mask = strcmp({block.label.label}, name) & strcmp({block.label.type}, 'labelinc');
+                        if any(inc_mask)
+                            inc_vals = [block.label(inc_mask).value];
+                            curr(idx) = curr(idx) + int32(round(sum(inc_vals)));
+                        end
+                    end
+                end
+
+                if ~isempty(curr)
+                    states(b, :) = curr;
+                end
+            end
+
+            obj.label_names = names;
+            obj.label_states_per_block = states;
+        end
+
+        function idx = findLabelColumn(obj, label_name)
+            idx = find(strcmp(obj.label_names, label_name), 1);
+            if isempty(idx)
+                idx = 0;
+            end
         end
 
         % ---- helper: find number of dummy blocks via ONCE label ----
         function n = findNumDummyBlocks(obj)
-            % Walk blocks until we find SET ONCE 0, which marks end of dummy region.
+            % Walk states until first transition from ONCE=1 region to ONCE=0.
             n = 0;
-            once_state = 0;
-            for b = 1:length(obj.seq.blockEvents)
-                block = obj.seq.getBlock(b);
-                if isfield(block, 'label') && ~isempty(block.label)
-                    for lbl = 1:length(block.label)
-                        lab = block.label(lbl);
-                        if strcmp(lab.label, 'ONCE') && strcmp(lab.type, 'labelset')
-                            if lab.value == 1 && once_state == 0
-                                once_state = 1;
-                            elseif lab.value == 0 && once_state == 1
-                                n = b - 1;
-                                return;
-                            end
-                        end
-                    end
+            once_flags = obj.getOnceFlags();
+            if isempty(once_flags)
+                return;
+            end
+
+            in_prep = false;
+            for b = 1:length(once_flags)
+                if once_flags(b) == 1
+                    in_prep = true;
+                elseif once_flags(b) == 0 && in_prep
+                    n = b - 1;
+                    return;
                 end
             end
-            % If no ONCE=0 found, assume no dummies.
             n = 0;
         end
 
@@ -1058,6 +1558,17 @@ classdef TruthBuilder < handle
                 fprintf(fid, 'segment_%d_num_blocks %d\n', s - 1, obj.segment_sizes(s));
             end
             fprintf(fid, 'num_canonical_trs %d\n', obj.num_canonical_trs);
+            fprintf(fid, 'canonical_mode %s\n', obj.canonical_mode);
+            if ~isempty(obj.tr_times_list) && ~isempty(obj.tr_times_list{1})
+                fprintf(fid, 'canonical_duration_us %d\n', round(obj.tr_times_list{1}(end)));
+            end
+            if ~isempty(fieldnames(obj.fmod_plan_truth))
+                fprintf(fid, 'num_freqmod_plan_probes %d\n', size(obj.fmod_plan_truth.probes, 1));
+                fprintf(fid, 'num_freqmod_plan_entries %d\n', obj.fmod_plan_truth.num_plans);
+            end
+            fprintf(fid, 'num_labels %d\n', numel(obj.label_names));
+            fprintf(fid, 'num_label_scan_rows %d\n', size(obj.label_states_per_scan, 1));
+            fprintf(fid, 'num_label_adc_rows %d\n', size(obj.label_states_per_adc, 1));
             fprintf(fid, 'segment_order');
             for k = 1:length(obj.segment_order)
                 fprintf(fid, ' %d', obj.segment_order(k) - 1);  % 0-based
@@ -1235,6 +1746,44 @@ classdef TruthBuilder < handle
 
             fclose(fid);
         end
+
+        function exportLabelState(obj, path)
+            fid = fopen(path, 'wb');
+            if fid < 0, error('Failed to open %s', path); end
+
+            nlabels = numel(obj.label_names);
+            fwrite(fid, int32(nlabels), 'int32');
+            for i = 1:nlabels
+                name = obj.label_names{i};
+                bytes = uint8(name);
+                fwrite(fid, int32(numel(bytes)), 'int32');
+                fwrite(fid, bytes, 'uint8');
+            end
+
+            nscan = size(obj.label_states_per_scan, 1);
+            nadc = size(obj.label_states_per_adc, 1);
+            fwrite(fid, int32(nscan), 'int32');
+            fwrite(fid, int32(nadc), 'int32');
+
+            if nlabels > 0 && nscan > 0
+                fwrite(fid, int32(obj.label_states_per_scan.'), 'int32');
+            end
+
+            if nadc > 0
+                fwrite(fid, int32(obj.label_adc_scan_rows(:)), 'int32');
+            end
+
+            if nlabels > 0 && nadc > 0
+                fwrite(fid, int32(obj.label_states_per_adc.'), 'int32');
+                fwrite(fid, int32(obj.label_adc_value_min(:)), 'int32');
+                fwrite(fid, int32(obj.label_adc_value_max(:)), 'int32');
+            elseif nlabels > 0
+                fwrite(fid, int32(zeros(nlabels, 1)), 'int32');
+                fwrite(fid, int32(zeros(nlabels, 1)), 'int32');
+            end
+
+            fclose(fid);
+        end
     end
 
     methods (Static)
@@ -1396,6 +1945,27 @@ classdef TruthBuilder < handle
                 t = grad.delay + grad.tt(:);
                 w = grad.waveform(:);
             end
+        end
+
+        function area = integrateGradientInterval(grad, t0, t1)
+        % INTEGRATEGRADIENTINTERVAL  Integrate gradient waveform over [t0, t1] in seconds.
+            area = 0;
+            if t1 <= t0
+                return;
+            end
+
+            [t, w] = TruthBuilder.gradToKnots(grad);
+            [t, iu] = unique(t(:), 'last');
+            w = w(iu);
+
+            if isempty(t) || numel(t) < 2
+                return;
+            end
+
+            tk = t(t > t0 & t < t1);
+            tq = [t0; tk; t1];
+            wq = interp1(t, w, tq, 'linear', 0);
+            area = trapz(tq, wq);
         end
 
         function fmod = buildFreqModDefinition(block, active_start_s, active_end_s, ref_time_s, grad_raster_s, target_raster_s)

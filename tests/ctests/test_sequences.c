@@ -745,8 +745,10 @@ MU_TEST(test_sequences_geninstructions_mprage_nav_2d_3sl_3avg) { run_sequences_g
 
 static void check_fmod_shift(const pulseqlib_collection* coll,
     const fmod_def_file* ref,
+    const fmod_plan_file* plan,
     const scan_table_file* scan,
     const float* shift,
+    int probe_idx,
     const float* fov_rotation,
     const char* label)
 {
@@ -790,6 +792,7 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
             float tol;
             int def_idx = se->freq_mod_id - 1;
             int plan_idx = lib->scan_to_plan[pos];
+            int ref_plan_idx = (plan && pos < plan->scan_len) ? plan->scan_to_plan[pos] : -1;
 
             mu_assert(def_idx >= 0 && def_idx < ref->num_defs,
                       "invalid expected freq_mod_id in scan table");
@@ -832,6 +835,29 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
             mu_assert((float)fabs(phase_rad - expected_phase) <= phase_tol,
                       "freq_mod phase mismatch");
 
+            if (plan && plan->num_plans > 0 && ref_plan_idx >= 0) {
+                const fmod_plan_entry* pe;
+                float proj_phase;
+                float proj_tol;
+                mu_assert_int_eq(ref_plan_idx, plan_idx);
+                mu_assert(ref_plan_idx >= 0 && ref_plan_idx < plan->num_plans,
+                          "invalid supplemental plan index");
+                pe = &plan->plans[ref_plan_idx];
+                mu_assert_int_eq(se->freq_mod_id, pe->def_id);
+
+                for (s = 0; s < ns; ++s) {
+                    float pexp = pe->waveforms[probe_idx][s];
+                    mu_assert((float)fabs(waveform[s] - pexp) <= tol,
+                              "supplemental projected waveform mismatch");
+                }
+
+                proj_phase = pe->phase_total[probe_idx];
+                proj_tol = (float)fabs(proj_phase) * 1e-4f;
+                if (proj_tol < 1e-8f) proj_tol = 1e-8f;
+                mu_assert((float)fabs(phase_rad - proj_phase) <= proj_tol,
+                          "supplemental projected phase mismatch");
+            }
+
             seen_defs[def_idx] = 1;
         }
     }
@@ -859,8 +885,10 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
     pulseqlib_opts opts;
     pulseqlib_collection* coll = NULL;
     fmod_def_file ref = FMOD_DEF_FILE_INIT;
+    fmod_plan_file plan = FMOD_PLAN_FILE_INIT;
     scan_table_file scan = SCAN_TABLE_FILE_INIT;
     char fmod_path[512];
+    char fmod_plan_path[512];
     char scan_path[512];
     int rc, ok, t;
 
@@ -891,6 +919,11 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
     mu_assert(ok, "failed to parse freqmod_def.bin");
     mu_assert(ref.num_defs >= 2, "expected at least 2 freq_mod defs");
 
+    build_case_path(fmod_plan_path, sizeof(fmod_plan_path), tc, "_freqmod_plan.bin");
+    ok = parse_fmod_plan(fmod_plan_path, &plan);
+    mu_assert(ok, "failed to parse freqmod_plan.bin");
+    mu_assert(plan.num_probes >= 4, "freqmod plan must include x/y/z/oblique probes");
+
     /* Parse scan table to get total position span for robust freq-mod search. */
     build_case_path(scan_path, sizeof(scan_path), tc, "_scan_table.bin");
     ok = parse_scan_table(scan_path, &scan);
@@ -903,8 +936,10 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
         int r;
         for (r = 0; r < 4; ++r) {
             check_fmod_shift(coll, &ref,
+                             &plan,
                              &scan,
                              shifts[t],
+                             t,
                              rotations[r],
                              "build_freq_mod_collection failed");
         }

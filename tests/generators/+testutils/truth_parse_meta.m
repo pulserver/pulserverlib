@@ -26,6 +26,13 @@ function meta = truth_parse_meta(path)
     meta.num_segments = 0;
     meta.segment_num_blocks = [];
     meta.num_canonical_trs = 0;
+    meta.canonical_mode = 'tr';
+    meta.canonical_duration_us = [];
+    meta.num_freqmod_plan_probes = 0;
+    meta.num_freqmod_plan_entries = 0;
+    meta.num_labels = 0;
+    meta.num_label_scan_rows = 0;
+    meta.num_label_adc_rows = 0;
     meta.segment_order = [];
 
     for i = 1:numel(raw)
@@ -35,6 +42,13 @@ function meta = truth_parse_meta(path)
         if strcmp(key, 'segment_order')
             % Variable-length: segment_order 0 1 2 2 2 1
             meta.segment_order = cellfun(@str2double, parts(2:end));
+            continue;
+        end
+
+        if strcmp(key, 'canonical_mode')
+            if numel(parts) >= 2
+                meta.canonical_mode = parts{2};
+            end
             continue;
         end
 
@@ -50,6 +64,18 @@ function meta = truth_parse_meta(path)
             meta.num_segments = round(val);
         elseif strcmp(key, 'num_canonical_trs')
             meta.num_canonical_trs = round(val);
+        elseif strcmp(key, 'canonical_duration_us')
+            meta.canonical_duration_us = round(val);
+        elseif strcmp(key, 'num_freqmod_plan_probes')
+            meta.num_freqmod_plan_probes = round(val);
+        elseif strcmp(key, 'num_freqmod_plan_entries')
+            meta.num_freqmod_plan_entries = round(val);
+        elseif strcmp(key, 'num_labels')
+            meta.num_labels = round(val);
+        elseif strcmp(key, 'num_label_scan_rows')
+            meta.num_label_scan_rows = round(val);
+        elseif strcmp(key, 'num_label_adc_rows')
+            meta.num_label_adc_rows = round(val);
         else
             tok = regexp(key, '^adc_(\d+)_(samples|dwell_ns|anchor)$', 'tokens', 'once');
             if ~isempty(tok)

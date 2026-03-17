@@ -68,7 +68,7 @@ end
 | `setNumAverages(n)` | Number of averages (default 1). |
 | `anchorPoints.adc = [...]` | Optional per-unique-ADC-definition anchor fractions in `[0, 1]`. Empty means all ADC anchors default to `0.5`. |
 | `setBaseRotation(R)` | 3×3 rotation matrix (default `eye(3)`). |
-| `export(out_dir, base_name)` | Run all computation phases and write the 6 output files. |
+| `export(out_dir, base_name)` | Run all computation phases and write the truth output files. |
 
 Notes:
 
@@ -88,6 +88,8 @@ Notes:
 | `_tr_waveform.bin` | Binary float32 | Canonical TR waveform knot arrays (time, gx, gy, gz). |
 | `_segment_def.bin` | Binary float32 | Per-segment block-level gradient data (time, gx, gy, gz per block). |
 | `_freqmod_def.bin` | Binary float32 | Frequency-modulation block definitions (RF and ADC). |
+| `_freqmod_plan.bin` | Binary float32 | Supplemental plan-level projected freq-mod truth (x/y/z/oblique probes). |
+| `_label_state.bin` | Binary int32 | Supplemental sticky-label state snapshots for all scan and ADC rows. |
 | `_scan_table.bin` | Binary int32 | Scan table: block indices, once flags, norot flags, rotation matrices. |
 
 ## Step 2: Add C test cases
@@ -173,7 +175,7 @@ cmake -S . -B build && cmake --build build
 - [ ] MATLAB generator builds valid sequence (`seq.checkTiming` passes)
 - [ ] ONCE labels placed on first dummy block and first imaging block
 - [ ] `TruthBuilder` hints match sequence structure (blocks/TR, segment defs, segment order, averages, ADC anchors when needed)
-- [ ] `.seq` + 5 truth files appear in `tests/data/`
+- [ ] `.seq` + truth artifact files appear in `tests/data/`
 - [ ] Case struct entry added to `test_sequences.c`
 - [ ] 5 MU_TEST wrappers + suite registrations added
 - [ ] All tests pass (`run_tests` exits 0)
@@ -282,3 +284,17 @@ Convenience entrypoint that parses once, then runs report + all three plotters.
 | `'plot_tr'` | `true` | Plot canonical TR waveforms. |
 | `'plot_segments'` | `true` | Plot segment block waveforms. |
 | `'plot_freqmod'` | `true` | Plot frequency-modulation definitions (skipped if none exist). |
+
+### Label-state export note (future MRD converters)
+
+`TruthBuilder` also exports `_label_state.bin` to capture dynamic sticky labels
+for downstream metadata validation. This artifact is designed for future MRD
+converter checks where label state must be validated at ADC rows.
+
+- Label vocabulary is discovered dynamically from sequence block labels.
+- Per-block updates use sticky semantics with `SET` applied before `INC`.
+- Two tables are exported:
+    - per-scan-row label states (aligned to `_scan_table.bin` row order), and
+    - per-ADC-row label states (subset of scan rows with ADC active).
+- Per-label ADC observed min/max values are exported for encoding-limit checks
+    against int32 metadata storage.

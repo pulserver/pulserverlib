@@ -14,7 +14,7 @@ function fig = truth_plot_tr_waveforms(base_or_truth, varargin)
     GAMMA_HZ_PER_T = 42.577e6;
     GAMMA_GRAD     = GAMMA_HZ_PER_T * 1e-3;   % Hz/m -> mT/m
 
-    fig = figure('Name', sprintf('Canonical TR waveforms: %s', truth.base_name), 'Color', 'w');
+    fig = figure('Name', sprintf('Canonical waveforms: %s', truth.base_name), 'Color', 'w');
 
     labels = {'Gx (mT/m)', 'Gy (mT/m)', 'Gz (mT/m)'};
     fields = {'gx', 'gy', 'gz'};
@@ -48,7 +48,12 @@ function fig = truth_plot_tr_waveforms(base_or_truth, varargin)
         end
     end
 
-    sgtitle(sprintf('Canonical TRs (%s)', truth.base_name), 'Interpreter', 'none');
+    if isfield(truth, 'meta') && isfield(truth.meta, 'canonical_mode')
+        mode_lbl = truth.meta.canonical_mode;
+    else
+        mode_lbl = 'tr';
+    end
+    sgtitle(sprintf('Canonical waveforms (%s, mode=%s)', truth.base_name, mode_lbl), 'Interpreter', 'none');
 end
 
 function truth = coerce_truth(base_or_truth)

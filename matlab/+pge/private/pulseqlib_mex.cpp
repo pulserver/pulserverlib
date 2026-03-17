@@ -255,14 +255,42 @@ public:
                 return s;
             };
 
+            auto copy_adc_events = [&]() -> StructArray {
+                StructArray arr = factory.createStructArray(
+                    {1, (size_t)cw.num_adc_events},
+                    {"onset_us", "duration_us", "num_samples", "freq_offset_hz", "phase_offset_rad"});
+                for (int i = 0; i < cw.num_adc_events; ++i) {
+                    arr[0][i]["onset_us"]         = factory.createScalar((double)cw.adc_events[i].onset_us);
+                    arr[0][i]["duration_us"]      = factory.createScalar((double)cw.adc_events[i].duration_us);
+                    arr[0][i]["num_samples"]      = factory.createScalar((double)cw.adc_events[i].num_samples);
+                    arr[0][i]["freq_offset_hz"]   = factory.createScalar((double)cw.adc_events[i].freq_offset_hz);
+                    arr[0][i]["phase_offset_rad"] = factory.createScalar((double)cw.adc_events[i].phase_offset_rad);
+                }
+                return arr;
+            };
+
+            auto copy_blocks = [&]() -> StructArray {
+                StructArray arr = factory.createStructArray(
+                    {1, (size_t)cw.num_blocks},
+                    {"start_us", "duration_us", "segment_idx"});
+                for (int i = 0; i < cw.num_blocks; ++i) {
+                    arr[0][i]["start_us"]    = factory.createScalar((double)cw.blocks[i].start_us);
+                    arr[0][i]["duration_us"] = factory.createScalar((double)cw.blocks[i].duration_us);
+                    arr[0][i]["segment_idx"] = factory.createScalar((double)cw.blocks[i].segment_idx);
+                }
+                return arr;
+            };
+
             StructArray result = factory.createStructArray(
                 {1, 1},
-                {"gx", "gy", "gz", "rf_mag", "rf_phase", "total_duration_us"});
+                {"gx", "gy", "gz", "rf_mag", "rf_phase", "adc_events", "blocks", "total_duration_us"});
             result[0]["gx"]       = copy_ch(cw.gx);
             result[0]["gy"]       = copy_ch(cw.gy);
             result[0]["gz"]       = copy_ch(cw.gz);
             result[0]["rf_mag"]   = copy_ch(cw.rf_mag);
             result[0]["rf_phase"] = copy_ch(cw.rf_phase);
+            result[0]["adc_events"] = copy_adc_events();
+            result[0]["blocks"]     = copy_blocks();
             result[0]["total_duration_us"] = factory.createScalar((double)cw.total_duration_us);
 
             pulseqlib_tr_waveforms_free(&cw);

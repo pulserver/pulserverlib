@@ -17,7 +17,12 @@ function wf = get_tr_waveforms(seq, varargin)
 %   collapse_delays  logical  Shrink pure delays. Default: false
 %
 % Output
-%   wf      struct with fields: gx, gy, gz, rf_mag, rf_phase, total_duration_us.
+%   wf      struct with fields:
+%             gx, gy, gz, rf_mag, rf_phase  (each has .time_us and .amplitude)
+%             adc_events (struct array: onset_us, duration_us, num_samples,
+%                         freq_offset_hz, phase_offset_rad)
+%             blocks     (struct array: start_us, duration_us, segment_idx)
+%             total_duration_us
 %           Each channel field is a struct with .time_us and .amplitude.
 %
 % See also: pulserver.SequenceCollection, pulserver.plot
