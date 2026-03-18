@@ -9,10 +9,25 @@
 clear; clc;
 import mr.*
 
+write_bssfp(true, 1, 1);
+write_bssfp(true, 3, 1);
+write_bssfp(true, 1, 3);
+write_bssfp(true, 3, 3);
+
 write_gre(true, 1, 1);
 write_gre(true, 3, 1);
 write_gre(true, 1, 3);
 write_gre(true, 3, 3);
+
+write_fse(true, 1, 1);
+write_fse(true, 3, 1);
+write_fse(true, 1, 3);
+write_fse(true, 3, 3);
+
+write_epi(true, 1, 1);
+write_epi(true, 3, 1);
+write_epi(true, 1, 3);
+write_epi(true, 3, 3);
 
 write_mprage(true, 1, 1);
 write_mprage(true, 3, 1);
@@ -33,6 +48,11 @@ write_mprage_noncart(true, 1, 1, true);
 write_mprage_noncart(true, 3, 1, true);
 write_mprage_noncart(true, 1, 3, true);
 write_mprage_noncart(true, 3, 3, true);
+
+write_qalas_noncart(true, 1, 1, true);
+write_qalas_noncart(true, 3, 1, true);
+write_qalas_noncart(true, 1, 3, true);
+write_qalas_noncart(true, 3, 3, true);
 
 
 function seq = write_bssfp(write, num_slices, num_averages)
@@ -295,6 +315,488 @@ function seq = write_gre(write, num_slices, num_averages)
     tb.setBlocksPerTR(4);
     tb.setSegments([4]);
     tb.setSegmentOrder([1]);
+    tb.setNumAverages(num_averages);
+    tb.export(out_dir, base);
+end
+
+
+function seq = write_fse(write, num_slices, num_averages)
+    base = sprintf('fse_2d_%dsl_%davg', num_slices, num_averages);
+    fprintf('Generating sequence: %s\n', base);
+
+    sys = make_system();
+
+    fov = 0.22;
+    Nx = 64;
+    Ny = 8;
+    necho   = 16;
+    Nslices = num_slices;
+    slice_thickness = 5e-3;
+
+    rflip  = 180 * ones(1, necho);
+    TE1    = 12e-3;
+    TR     = 2000e-3;
+    TEeff  = 100e-3;
+    Ndummy = 1;        % one dummy excitation
+
+    samplingTime = 5.120e-3;       % dwell = 20 us (mult of adcRaster); samplingTime+2*adcDeadTime on gradRaster
+    readoutTime  = samplingTime + 2 * sys.adcDeadTime;
+    tEx   = 2.5e-3;
+    tExwd = tEx + sys.rfRingdownTime + sys.rfDeadTime;
+    tRef  = 3e-3;
+    tRefwd = tRef + sys.rfRingdownTime + sys.rfDeadTime;
+    tSp    = 0.5 * (TE1 - readoutTime - tRefwd);
+    tSp    = sys.blockDurationRaster * round(tSp / sys.blockDurationRaster);
+    tSpex  = 0.5 * (TE1 - tExwd - tRefwd);
+    tSpex  = sys.blockDurationRaster * round(tSpex / sys.blockDurationRaster);
+    fspR   = 1.0;
+    fspS   = 0.5;
+    dG     = 260e-6;    % ramp time (multiple of 20 us grad raster)
+
+    rfex_phase  = pi / 2;
+    rfref_phase = 0;
+
+    % --- RF pulses ---
+    flipex = 90 * pi / 180;
+    [rfex, gz_ex] = mr.makeSincPulse(flipex, sys, ...
+        'Duration', tEx, 'SliceThickness', slice_thickness, ...
+        'apodization', 0.5, 'timeBwProduct', 4, ...
+        'PhaseOffset', rfex_phase, 'use', 'excitation');
+
+    flipref = rflip(1) * pi / 180;
+    [rfref, ~] = mr.makeSincPulse(flipref, sys, ...
+        'Duration', tRef, 'SliceThickness', slice_thickness, ...
+        'apodization', 0.5, 'timeBwProduct', 4, ...
+        'PhaseOffset', rfref_phase, 'use', 'refocusing');
+
+    GSex  = mr.makeTrapezoid('z', sys, 'amplitude', gz_ex.amplitude, ...
+                             'FlatTime', tExwd, 'riseTime', dG);
+    GSref = mr.makeTrapezoid('z', sys, 'amplitude', GSex.amplitude, ...
+                             'FlatTime', tRefwd, 'riseTime', dG);
+
+    AGSex  = GSex.area / 2;
+    GSspr  = mr.makeTrapezoid('z', sys, 'area', AGSex * (1 + fspS), ...
+                              'duration', tSp, 'riseTime', dG);
+    GSspex = mr.makeTrapezoid('z', sys, 'area', AGSex * fspS, ...
+                              'duration', tSpex, 'riseTime', dG);
+
+    % --- readout ---
+    deltak  = 1 / fov;
+    kWidth  = Nx * deltak;
+    GRacq  = mr.makeTrapezoid('x', sys, 'FlatArea', kWidth, ...
+                              'FlatTime', readoutTime, 'riseTime', dG);
+    adc    = mr.makeAdc(Nx, 'Duration', samplingTime, 'Delay', sys.adcDeadTime);
+    GRspr  = mr.makeTrapezoid('x', sys, 'area', GRacq.area * fspR, ...
+                              'duration', tSp, 'riseTime', dG);
+    GRpreph = mr.makeTrapezoid('x', sys, 'Area', ...
+                               GRacq.area / 2 + GRspr.area, ...
+                               'duration', tSpex, 'riseTime', dG);
+
+    % --- phase-encode ordering ---
+    nex = floor(Ny / necho);
+    pe_steps = (1:(necho * nex)) - 0.5 * necho * nex - 1;
+    if mod(necho, 2) == 0
+        pe_steps = circshift(pe_steps, [0, -round(nex/2)]);
+    end
+    [~, iPEmin] = min(abs(pe_steps));
+    k0curr      = floor((iPEmin - 1) / nex) + 1;
+    k0prescr    = max(round(TEeff / TE1), 1);
+    PEorder     = circshift(reshape(pe_steps, [nex, necho])', k0prescr - k0curr);
+    phaseAreas  = PEorder * deltak;
+
+    % --- phase-encode template (max area) ---
+    maxPeArea = max(abs(phaseAreas(:)));
+    gyMax     = mr.makeTrapezoid('y', sys, 'Area', maxPeArea, ...
+                                'Duration', tSp, 'riseTime', dG);
+
+    % --- split gradients for optimal timing ---
+    % Slice-select splits
+    GS1times = [0, GSex.riseTime];
+    GS1amp   = [0, GSex.amplitude];
+    GS1 = mr.makeExtendedTrapezoid('z', 'times', GS1times, 'amplitudes', GS1amp);
+
+    GS2times = [0, GSex.flatTime];
+    GS2amp   = [GSex.amplitude, GSex.amplitude];
+    GS2 = mr.makeExtendedTrapezoid('z', 'times', GS2times, 'amplitudes', GS2amp);
+
+    GS3times = [0, GSspex.riseTime, ...
+                GSspex.riseTime + GSspex.flatTime, ...
+                GSspex.riseTime + GSspex.flatTime + GSspex.fallTime];
+    GS3amp   = [GSex.amplitude, GSspex.amplitude, GSspex.amplitude, GSref.amplitude];
+    GS3 = mr.makeExtendedTrapezoid('z', 'times', GS3times, 'amplitudes', GS3amp);
+
+    GS4times = [0, GSref.flatTime];
+    GS4amp   = [GSref.amplitude, GSref.amplitude];
+    GS4 = mr.makeExtendedTrapezoid('z', 'times', GS4times, 'amplitudes', GS4amp);
+
+    GS5times = [0, GSspr.riseTime, ...
+                GSspr.riseTime + GSspr.flatTime, ...
+                GSspr.riseTime + GSspr.flatTime + GSspr.fallTime];
+    GS5amp   = [GSref.amplitude, GSspr.amplitude, GSspr.amplitude, 0];
+    GS5 = mr.makeExtendedTrapezoid('z', 'times', GS5times, 'amplitudes', GS5amp);
+
+    GS7times = [0, GSspr.riseTime, ...
+                GSspr.riseTime + GSspr.flatTime, ...
+                GSspr.riseTime + GSspr.flatTime + GSspr.fallTime];
+    GS7amp   = [0, GSspr.amplitude, GSspr.amplitude, GSref.amplitude];
+    GS7 = mr.makeExtendedTrapezoid('z', 'times', GS7times, 'amplitudes', GS7amp);
+
+    % Readout splits
+    GR3 = GRpreph;
+    GR5times = [0, GRspr.riseTime, ...
+                GRspr.riseTime + GRspr.flatTime, ...
+                GRspr.riseTime + GRspr.flatTime + GRspr.fallTime];
+    GR5amp   = [0, GRspr.amplitude, GRspr.amplitude, GRacq.amplitude];
+    GR5 = mr.makeExtendedTrapezoid('x', 'times', GR5times, 'amplitudes', GR5amp);
+
+    GR6times = [0, readoutTime];
+    GR6amp   = [GRacq.amplitude, GRacq.amplitude];
+    GR6 = mr.makeExtendedTrapezoid('x', 'times', GR6times, 'amplitudes', GR6amp);
+
+    GR7times = [0, GRspr.riseTime, ...
+                GRspr.riseTime + GRspr.flatTime, ...
+                GRspr.riseTime + GRspr.flatTime + GRspr.fallTime];
+    GR7amp   = [GRacq.amplitude, GRspr.amplitude, GRspr.amplitude, 0];
+    GR7 = mr.makeExtendedTrapezoid('x', 'times', GR7times, 'amplitudes', GR7amp);
+
+    % Timing
+    tex     = mr.calcDuration(GS1) + mr.calcDuration(GS2) + mr.calcDuration(GS3);
+    tref    = mr.calcDuration(GS4) + mr.calcDuration(GS5) + mr.calcDuration(GS7) + readoutTime;
+    tend    = mr.calcDuration(GS4) + mr.calcDuration(GS5);
+    tETrain = tex + necho * tref + tend;
+    TRfill = 0.1e-3;  % override for short TR test (no fill, but still valid since echoes fit within TR)
+    delayTR = mr.makeDelay(TRfill);
+
+    % --- labels ---
+    lblOnce1 = mr.makeLabel('SET', 'ONCE', 1);
+    lblOnce0 = mr.makeLabel('SET', 'ONCE', 0);
+
+    % --- main imaging loop ---
+    for kex = 0:nex
+        for s = 1:Nslices
+            rfex.freqOffset  = GSex.amplitude * slice_thickness * (s - 1 - (Nslices-1)/2);
+            rfref.freqOffset = GSref.amplitude * slice_thickness * (s - 1 - (Nslices-1)/2);
+            rfex.phaseOffset  = rfex_phase - 2*pi * rfex.freqOffset * mr.calcRfCenter(rfex);
+            rfref.phaseOffset = rfref_phase - 2*pi * rfref.freqOffset * mr.calcRfCenter(rfref);
+
+            if kex == 0 && s == 1
+                seq.addBlock(GS1, lblOnce1);  % start of prep (dummy excitation) -> Block 1
+            elseif kex == Ndummy && s == 1
+                seq.addBlock(GS1, lblOnce0);  % end prep, start of main -> Block 1
+            else
+                seq.addBlock(GS1); % Block 1
+            end
+            seq.addBlock(GS2, rfex); % Block 2
+            seq.addBlock(GS3, GR3); % Block 3
+
+            for kech = 1:necho
+                if kex > 0
+                    phaseArea = phaseAreas(kech, kex);
+                else
+                    phaseArea = 0;
+                end
+                if maxPeArea > 0 && kex > 0
+                    pe_scale = phaseArea / maxPeArea;
+                else
+                    pe_scale = 0;
+                end
+                GPpre = mr.scaleGrad(gyMax, pe_scale);
+                GPrew = mr.scaleGrad(gyMax, -pe_scale);
+
+                seq.addBlock(GS4, rfref); % Block 3 + 4 * (kech-1) + 1
+                seq.addBlock(GS5, GR5, GPpre); % Block 3 + 4 * (kech-1) + 2
+                if kex > 0
+                    seq.addBlock(GR6, adc); % Block 3 + 4 * (kech-1) + 3
+                else
+                    seq.addBlock(GR6); % Block 3 + 4 * (kech-1) + 3
+                end
+                seq.addBlock(GS7, GR7, GPrew); % Block 3 + 4 * (kech-1) + 4
+            end
+
+            seq.addBlock(GS4); % Block 3 + 4 * necho + 1
+            seq.addBlock(GS5); % Block 3 + 4 * necho + 2
+            seq.addBlock(delayTR); % Block 3 + 4 * necho + 3
+        end
+    end
+
+    [ok, err] = seq.checkTiming;
+    if ~ok
+        error('Timing check failed:\n%s', strjoin(err, '\n'));
+    end
+
+    if write == false
+        return;
+    end
+
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
+
+    tb = TruthBuilder(seq, sys);
+    tb.setBlocksPerTR(3 + 4 * necho + 3);
+    tb.setSegments([3 + 4 * necho + 3]);
+    tb.setSegmentOrder([1]);
+    tb.setNumAverages(num_averages);
+    tb.export(out_dir, base);
+end
+
+
+function seq = write_epi(write, num_slices, num_averages)
+    base = sprintf('epi_2d_%dsl_%davg', num_slices, num_averages);
+    fprintf('Generating sequence: %s\n', base);
+
+    sys = make_system();
+
+    % Basic EPI geometry intentionally small for fast iteration.
+    fov = 0.22;
+    Nx = 64;
+    Ny = 8;
+    slice_thickness = 5e-3;
+    slice_gap  = 1.5e-3;
+    TR        = 3000e-3;
+    ro_os     = 2;
+    readoutTime = 580e-6;
+    partFourierFactor = 1;
+    Nnav      = 3;          % navigator echoes
+    pe_enable = 1;
+
+     % Fat-sat pulse
+    sat_ppm = -3.35;
+    rf_fs = mr.makeGaussPulse(110 * pi / 180, 'system', sys, ...
+        'Duration', 8e-3, ...
+        'bandwidth', abs(sat_ppm * 1e-6 * sys.B0 * sys.gamma), ...
+        'freqPPM', sat_ppm, 'use', 'saturation');
+    rf_fs.phasePPM = -2*pi * rf_fs.freqPPM * rf_fs.center;
+    gz_fs = mr.makeTrapezoid('z', sys, 'delay', mr.calcDuration(rf_fs), 'Area', 0.1 / 1e-4);
+
+    % Excitation
+    [rf, gz, gzReph] = mr.makeSincPulse(pi / 2, 'system', sys, ...
+        'Duration', 2e-3, 'SliceThickness', slice_thickness, ...
+        'apodization', 0.42, 'timeBwProduct', 4, 'use', 'excitation');
+
+    trig = mr.makeDigitalOutputPulse('osc0', 'duration', 100e-6);
+
+    % Readout gradient
+    deltak = 1 / fov;
+    blip_dur = ceil(2 * sqrt(deltak / sys.maxSlew) / sys.gradRasterTime / 2)  * sys.gradRasterTime * 2;
+    gy = mr.makeTrapezoid('y', sys, 'Area', -deltak, 'Duration', blip_dur);
+
+    extra_area = blip_dur/2 * blip_dur/2 * sys.maxSlew;
+    gx = mr.makeTrapezoid('x', sys, 'Area', deltak * Nx + extra_area, 'Duration', readoutTime + blip_dur);
+    actual_area = gx.area ...
+        - gx.amplitude / gx.riseTime  * blip_dur/2 * blip_dur/2 / 2 ...
+        - gx.amplitude / gx.fallTime  * blip_dur/2 * blip_dur/2 / 2;
+    gx.amplitude = gx.amplitude / actual_area * (Nx * deltak);
+    gx.area      = gx.amplitude * (gx.flatTime + gx.riseTime/2 + gx.fallTime/2);
+    gx.flatArea  = gx.amplitude * gx.flatTime;
+    assert(gx.amplitude <= sys.maxGrad, 'Readout gradient exceeds maxGrad');
+
+    % ADC
+    assert(ro_os >= 2);
+    adcSamples = Nx * ro_os;
+    adcDwell   = sys.adcRasterTime * floor(readoutTime / adcSamples / sys.adcRasterTime);
+    adc = mr.makeAdc(adcSamples, 'Dwell', adcDwell, 'Delay', blip_dur / 2);
+    time_to_center = adc.dwell * ((adcSamples - 1)/2 + 0.5);
+    adc.delay = round((gx.riseTime + gx.flatTime/2 - time_to_center) * 1e6) * 1e-6;
+
+    % Split blips
+    gy_parts = mr.splitGradientAt(gy, blip_dur / 2, sys);
+    [gy_blipup, gy_blipdown, ~] = mr.align('right', gy_parts(1), 'left', gy_parts(2), gx);
+    gy_blipdownup = mr.addGradients({gy_blipdown, gy_blipup}, sys);
+
+    gy_blipup.waveform     = gy_blipup.waveform * pe_enable;
+    gy_blipdown.waveform   = gy_blipdown.waveform * pe_enable;
+    gy_blipdownup.waveform = gy_blipdownup.waveform * pe_enable;
+
+    % Phase encoding
+    Ny_pre  = round(partFourierFactor * Ny / 2 - 1);
+    Ny_post = round(Ny / 2 + 1);
+    Ny_meas = Ny_pre + Ny_post;
+
+    % Pre-phasing
+    gxPre = mr.makeTrapezoid('x', sys, 'Area', -gx.area / 2);
+    gyPre = mr.makeTrapezoid('y', sys, 'Area', Ny_pre * deltak);
+    [gxPre, gyPre, gzReph] = mr.align('right', gxPre, 'left', gyPre, gzReph);
+    gyPre = mr.makeTrapezoid('y', sys, 'Area', gyPre.area, ...
+        'Duration', mr.calcDuration(gxPre, gyPre, gzReph));
+    gyPre.amplitude = gyPre.amplitude * pe_enable;
+
+    % Slice positions (interleaved)
+    slicePositions = (slice_thickness + slice_gap) * ((0:(Nslices-1)) - (Nslices-1)/2);
+    slicePositions = slicePositions([1:2:Nslices, 2:2:Nslices]);
+
+    % TR timing
+    TRdelay = 0.1e-3;
+    TRdelay_perSlice = round(TRdelay / Nslices / sys.blockDurationRaster) * sys.blockDurationRaster;
+    assert(TRdelay_perSlice > 0, 'TR too short for EPI');
+
+    ROpolarity = sign(gx.amplitude);
+
+    % Labels
+    lblOnce1  = mr.makeLabel('SET', 'ONCE', 1);
+    lblOnce0  = mr.makeLabel('SET', 'ONCE', 0);
+    lblSetSlc = mr.makeLabel('SET', 'SLC', 0);
+    lblIncSlc = mr.makeLabel('INC', 'SLC', 1);
+    lblNoPos1 = mr.makeLabel('SET', 'NOPOS', 1);
+    lblNoPos0 = mr.makeLabel('SET', 'NOPOS', 0);
+    lblNoRot1 = mr.makeLabel('SET', 'NOROT', 1);
+    lblNoRot0 = mr.makeLabel('SET', 'NOROT', 0);
+
+    % Hardcoded volume number
+    NDummyVolumes = 1; % in fMRI, dummy scans to reach steady state
+    NVolumes = 1; % number of volumes to sample hemodynamics
+    NSlices = num_slices; % number of slices per volume
+
+    % --- prep (ONCE=1): one dummy volume ---
+    % Structure mirrors main section (same block defs & ordering) so the C
+    % library detects degenerate prep.  ADC is omitted because it does not
+    % contribute to the block definition key; dummy data is not acquired.
+    for v = 1:NDummyVolumes
+        for s = 1:Nslices
+
+            % Fat saturation
+            if v == 1 && s == 1
+                seq.addBlock(rf_fs, gz_fs, lblOnce1, lblSetSlc, lblNoPos1, lblNoRot1);
+            elseif s == 1
+                seq.addBlock(rf_fs, gz_fs, lblSetSlc, lblNoPos1, lblNoRot1);
+            else
+                seq.addBlock(rf_fs, gz_fs, lblNoPos1, lblNoRot1);
+            end
+            rf.freqOffset  = gz.amplitude * slicePositions(s);
+            
+            % Excitation
+            seq.addBlock(rf, gz, trig, lblNoPos0, lblNoRot0);
+
+            % Phase correction navigators
+            gxPre_nav = mr.scaleGrad(gxPre, -1);
+            gx_nav    = mr.scaleGrad(gx, -1);
+            seq.addBlock(gxPre_nav, gzReph, ...
+                mr.makeLabel('SET', 'NAV', 1), ...
+                mr.makeLabel('SET', 'LIN', floor(Ny/2)));
+            for n = 1:Nnav
+                seq.addBlock( ...
+                    gx_nav, ...
+                    mr.makeLabel('SET', 'REV', sign(gx_nav.amplitude) ~= ROpolarity), ...
+                    mr.makeLabel('SET', 'SEG', sign(gx_nav.amplitude) ~= ROpolarity), ...
+                    mr.makeLabel('SET', 'AVG', n == Nnav));
+                gx_nav = mr.scaleGrad(gx_nav, -1);
+            end
+
+            % Phase encoding prephaser
+            seq.addBlock(mr.scaleGrad(gyPre, 0.0), ...
+                mr.makeLabel('SET', 'LIN', -1), ...
+                mr.makeLabel('SET', 'NAV', 0), ...
+                mr.makeLabel('SET', 'AVG', 0));
+
+            % Readout train
+            for i = 1:Ny_meas
+                lrev = mr.makeLabel('SET', 'REV', sign(gx.amplitude) ~= ROpolarity);
+                lseg = mr.makeLabel('SET', 'SEG', sign(gx.amplitude) ~= ROpolarity);
+                llin = mr.makeLabel('INC', 'LIN', 1);
+
+                if i == 1
+                    seq.addBlock(gx, gy_blipup, lrev, lseg, llin);
+                elseif i == Ny_meas
+                    seq.addBlock(gx, gy_blipdown, lrev, lseg, llin);
+                else
+                    seq.addBlock(gx, gy_blipdownup, lrev, lseg, llin);
+                end
+                gx = mr.scaleGrad(gx, -1);
+            end
+
+            if sign(gx.amplitude) ~= ROpolarity
+                gx = mr.scaleGrad(gx, -1);
+            end
+
+            % Pause
+            seq.addBlock(lblIncSlc, TRdelay_perSlice);
+        end
+    end
+
+    % --- main: imaging volume ---
+    for v = 1:NVolumes
+        for s = 1:Nslices
+            % Fat saturation (Segment 0)
+            if v == 1 && s == 1
+                seq.addBlock(rf_fs, gz_fs, lblOnce0, lblSetSlc, lblNoPos1, lblNoRot1); % Block 0
+            elseif s == 1
+                seq.addBlock(rf_fs, gz_fs, lblSetSlc, lblNoPos1, lblNoRot1); % Block 0
+            else
+                seq.addBlock(rf_fs, gz_fs, lblNoPos1, lblNoRot1); % Block 0
+            end
+
+            % Excitation (Segment 1)
+            rf.freqOffset  = gz.amplitude * slicePositions(s);
+            rf.phaseOffset = -2*pi * rf.freqOffset * rf.center;
+            seq.addBlock(rf, gz, trig, lblNoPos0, lblNoRot0); % Block 1
+
+            % Navigators for phase correction
+            gxPre_nav = mr.scaleGrad(gxPre, -1);
+            gx_tmp    = mr.scaleGrad(gx, -1);
+            seq.addBlock(gxPre_nav, gzReph, ...
+                mr.makeLabel('SET', 'NAV', 1), ...
+                mr.makeLabel('SET', 'LIN', floor(Ny/2))); % Block 2
+
+            for n = 1:Nnav
+                seq.addBlock( ...
+                    gx_tmp, adc, ...
+                    mr.makeLabel('SET', 'REV', sign(gx_tmp.amplitude) ~= ROpolarity), ...
+                    mr.makeLabel('SET', 'SEG', sign(gx_tmp.amplitude) ~= ROpolarity), ...
+                    mr.makeLabel('SET', 'AVG', n == Nnav)); % Block 3..(3+Nnav-1)
+                gx_tmp = mr.scaleGrad(gx_tmp, -1);
+            end
+
+            % Phase encoding prephaser
+            seq.addBlock(gyPre, ...
+                mr.makeLabel('SET', 'LIN', -1), ...
+                mr.makeLabel('SET', 'NAV', 0), ...
+                mr.makeLabel('SET', 'AVG', 0)); % Block 3+Nnav
+
+            % Readout train
+            for i = 1:Ny_meas
+                lrev = mr.makeLabel('SET', 'REV', sign(gx.amplitude) ~= ROpolarity);
+                lseg = mr.makeLabel('SET', 'SEG', sign(gx.amplitude) ~= ROpolarity);
+                llin = mr.makeLabel('INC', 'LIN', 1);
+
+                if i == 1
+                    seq.addBlock(gx, gy_blipup, adc, lrev, lseg, llin); % Block (4+Nnav)..(4+Nnav+Ny_meas-1)
+                elseif i == Ny_meas
+                    seq.addBlock(gx, gy_blipdown, adc, lrev, lseg, llin); % Block (4+Nnav)..(4+Nnav+Ny_meas-1)
+                else
+                    seq.addBlock(gx, gy_blipdownup, adc, lrev, lseg, llin); % Block (4+Nnav)..(4+Nnav+Ny_meas-1)
+                end
+                gx = mr.scaleGrad(gx, -1);
+            end
+
+            if sign(gx.amplitude) ~= ROpolarity
+                gx = mr.scaleGrad(gx, -1);
+            end
+
+            % Pause (Segment 2)
+            seq.addBlock(lblIncSlc, TRdelay_perSlice); % Block (4+Nnav+Ny_meas)
+        end
+    end
+
+    % Definitions
+    seq.setDefinition('Name', 'epi');
+    seq.setDefinition('SlicePositions', slicePositions);
+    seq.setDefinition('SliceThickness', slice_thickness);
+    seq.setDefinition('SliceGap', slice_gap);
+    seq.setDefinition('ReadoutOversamplingFactor', ro_os);
+
+    [ok, err] = seq.checkTiming;
+    if ~ok
+        error('Timing check failed:\n%s', strjoin(err, '\n'));
+    end
+
+    if write == false
+        return;
+    end
+
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
+
+    tb = TruthBuilder(seq, sys);
+    tb.setBlocksPerTR(4 + Nnav + Ny_meas);
+    tb.setSegments([1, 2 + Nnav + Ny_meas, 1]);
+    tb.setSegmentOrder([1, 2, 3]);
     tb.setNumAverages(num_averages);
     tb.export(out_dir, base);
 end
@@ -722,6 +1224,189 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
     tb.setBlocksPerTR(2 + 1 + 3 * num_shots + 1);
     tb.setSegments([2, 1, 3]);
     tb.setSegmentOrder([1, 2, 3 * ones(1, num_shots), 2]);
+    tb.setNumAverages(num_averages);
+    tb.anchorPoints.adc = 0.0;
+    tb.export(out_dir, base);
+end
+
+
+function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
+    base = sprintf('qalas_noncart_3d_%dsl_%davg_userotext%d', Nz, num_averages, use_rotext);
+    fprintf('Generating sequence: %s\n', base);
+
+    sys = make_system();
+
+    % Basic geometry intentionally small for fast iteration.
+    fov = 0.22;
+    Nx = 64;
+    num_shots = 2;
+    slab_thickness = 15e-3;
+
+    alpha = 10 * pi / 180;
+    rf_spoil_inc = 84.0; % degrees
+
+    % T2-prep
+    rf90 = mr.makeBlockPulse(pi/2, ...
+        'Duration', 10.0e-3, ...
+        'use', 'excitation', ...
+        'system', sys);
+     rf90_inv = mr.makeBlockPulse(pi/2, ...
+        'Duration', 10.0e-3, ...
+        'use', 'excitation', ...
+        'system', sys, ...
+        'phaseOffset', pi); % 180 degree phase shift for inversion
+    t2prep_delay = mr.makeDelay(50e-3);
+    
+    % Inversion
+    rf180 = mr.makeBlockPulse(pi, ...
+        'Duration', 20.0e-3, ...
+        'use', 'excitation', ...
+        'system', sys);
+    delayTI = mr.makeDelay(0.1e-3);
+
+    % Excitation
+    rf = mr.makeBlockPulse(alpha, ...
+        'Duration', 2.0e-3, ...
+        'use', 'excitation', ...
+        'system', sys);
+    gz_spoil = mr.makeTrapezoid('z', 'Area', 4 / 5.0e-3, 'Duration', 1.0e-3, 'system', sys);
+
+    % --- Spiral readout (multi-interleave) ---
+    if use_rotext
+        % Rotext path: generate only first interleave; rotation events
+        % will rotate it to the other interleave angles.
+        [gx_cells, gy_cells, adc] = testutils.makeTestSpiral(sys, num_shots * Nz, Nx, fov);
+        gx_base = gx_cells{1};
+        gy_base = gy_cells{1};
+        gx_rew = mr.makeExtendedTrapezoidArea('x', gx_base.last, 0.0, -gx_base.area, sys);
+        gy_rew = mr.makeExtendedTrapezoidArea('y', gy_base.last, 0.0, -gy_base.area, sys);
+        dphi = 2 * pi / (num_shots  * Nz);  % interleave angular step
+    else
+        % Explicit path: pre-compute all interleaves across all partitions.
+        [gx_shots, gy_shots, adc] = testutils.makeTestSpiral(sys, num_shots * Nz, Nx, fov);
+        % Build per-interleave rewinders
+        gx_rews = cell(num_shots * Nz, 1);
+        gy_rews = cell(num_shots * Nz, 1);
+        for ii = 1:(num_shots * Nz)
+            gx_rews{ii} = mr.makeExtendedTrapezoidArea('x', gx_shots{ii}.last, 0.0, -gx_shots{ii}.area, sys);
+            gy_rews{ii} = mr.makeExtendedTrapezoidArea('y', gy_shots{ii}.last, 0.0, -gy_shots{ii}.area, sys);
+        end
+    end
+    
+    % Partition encoding (along z)
+    gz_phase = mr.makeTrapezoid('z', 'Area', -Nz / fov / 2, 'system', sys);
+
+    delayTR = mr.makeDelay(0.5e-3);
+
+    if Nz > 1
+        z_areas = ((0:Nz-1) - floor(Nz/2)) / slab_thickness;
+        max_z_area = max(abs(z_areas));
+    else
+        z_areas = 0;
+        max_z_area = 0;
+    end
+
+    seq = mr.Sequence(sys);
+
+    rf_center = mr.calcRfCenter(rf);
+    rf_phase = 0.0;
+    rf_inc = 0.0;
+    spoke_idx = 0;
+
+    % Main imaging loop: partitions -> shots
+    for z = 1:Nz
+        if max_z_area > 0
+            zscale = z_areas(z) / max_z_area;
+        else
+            zscale = 0;
+        end
+
+        % T2-prep module
+        seq.addBlock(rf90);
+        seq.addBlock(t2prep_delay);
+        seq.addBlock(rf180);
+        seq.addBlock(t2prep_delay);
+        seq.addBlock(rf90_inv);
+        seq.addBlock(gz_spoil);
+
+        % Spiral FLASH readout
+        rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
+        rf_phase = mod(rf_phase + rf_inc, 360.0);
+        spoke_idx = spoke_idx + 1;
+
+        rf_curr = rf;
+        rf_curr.phaseOffset = rf_phase / 180 * pi - 2 * pi * rf_curr.freqOffset * rf_center;
+
+        adc_curr = adc;
+        adc_curr.phaseOffset = rf_phase / 180 * pi;
+
+        seq.addBlock(rf_curr);
+        if use_rotext
+            rot_angle = (spoke_idx-1) * dphi;
+            seq.addBlock(adc_curr, gx_base, gy_base, ...
+                mr.scaleGrad(gz_phase, zscale), ...
+                mr.makeRotation('axis', 'z', 'angle', rot_angle));
+            seq.addBlock(gx_rew, gy_rew, ...
+                mr.makeRotation('axis', 'z', 'angle', rot_angle), gz_spoil);
+        else
+            seq.addBlock(adc_curr, gx_shots{spoke_idx}, gy_shots{spoke_idx}, ...
+                mr.scaleGrad(gz_phase, zscale));
+            seq.addBlock(gx_rews{spoke_idx}, gy_rews{spoke_idx}, gz_spoil);
+        end
+
+        %  Inversion module
+        seq.addBlock(rf180);
+        seq.addBlock(gz_spoil);
+        seq.addBlock(delayTI);
+        
+        % Multiple spiral FLASH shots
+        for i = 1:num_shots
+            rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
+            rf_phase = mod(rf_phase + rf_inc, 360.0);
+            spoke_idx = spoke_idx + 1;
+
+            rf_curr = rf;
+            rf_curr.phaseOffset = rf_phase / 180 * pi - 2 * pi * rf_curr.freqOffset * rf_center;
+
+            adc_curr = adc;
+            adc_curr.phaseOffset = rf_phase / 180 * pi;
+
+            seq.addBlock(rf_curr);
+            if use_rotext
+                rot_angle = (spoke_idx-1) * dphi;
+                seq.addBlock(adc_curr, gx_base, gy_base, ...
+                    mr.scaleGrad(gz_phase, zscale), ...
+                    mr.makeRotation('axis', 'z', 'angle', rot_angle));
+                seq.addBlock(gx_rew, gy_rew, ...
+                    mr.makeRotation('axis', 'z', 'angle', rot_angle), gz_spoil);
+            else
+                seq.addBlock(adc_curr, gx_shots{spoke_idx}, gy_shots{spoke_idx}, ...
+                    mr.scaleGrad(gz_phase, zscale));
+                seq.addBlock(gx_rews{spoke_idx}, gy_rews{spoke_idx}, gz_spoil);
+            end
+        end
+
+        seq.addBlock(delayTR);
+    end
+
+    seq.setDefinition('FOV', [fov fov slab_thickness]);
+    seq.setDefinition('NumPartitions', Nz);
+
+    [ok, err] = seq.checkTiming;
+    if ~ok
+        error('Timing check failed:\n%s', strjoin(err, '\n'));
+    end
+
+    if write == false
+        return;
+    end
+
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
+
+    tb = TruthBuilder(seq, sys);
+    tb.setBlocksPerTR(5 + 3 + 2 + 1 + 3 * num_shots + 1);
+    tb.setSegments([5, 3, 2, 1]);
+    tb.setSegmentOrder([1, 2, 3, 4, 2 * ones(1, num_shots), 4]);
     tb.setNumAverages(num_averages);
     tb.anchorPoints.adc = 0.0;
     tb.export(out_dir, base);
