@@ -56,7 +56,7 @@ write_qalas_noncart(true, 3, 3, true);
 
 
 function seq = write_bssfp(write, num_slices, num_averages)
-    base = sprintf('gre_2d_%dsl_%davg', num_slices, num_averages);
+    base = sprintf('bssfp_2d_%dsl_%davg', num_slices, num_averages);
     fprintf('Generating sequence: %s\n', base);
 
     sys = make_system();
@@ -71,14 +71,14 @@ function seq = write_bssfp(write, num_slices, num_averages)
 
     % --- create events ---
     [rf, gz, gz_reph] = mr.makeSincPulse(alpha * pi / 180, ...
-        'Duration', rf_dur, 'SliceThickness', thick, ...
+        'Duration', 2.0e-3, 'SliceThickness', slice_thickness, ...
         'apodization', 0.5, 'timeBwProduct', 1.5, ...
         'system', sys, 'use', 'excitation');
 
     deltak = 1 / fov;
     gx = mr.makeTrapezoid('x', ...
         'FlatArea', Nx * deltak, ...
-        'FlatTime', adc_dur, ...
+        'FlatTime', Nx * 4e-6, ...
         'system', sys);
     adc = mr.makeAdc(Nx, ...
         'Duration', gx.flatTime, ...
@@ -126,14 +126,17 @@ function seq = write_bssfp(write, num_slices, num_averages)
     rf05.signal = 0.5 * rf.signal;
 
     % --- prep delay to center main acquisition around TR/2 ---
-    prep_delay = mr.makeDelay( round((TR/2 - mr.calcDuration(gz_1)) / sys.gradRasterTime) * sys.gradRasterTime);
+    prep_delay = mr.makeDelay(0.0);
+%     prep_delay = mr.makeDelay( round((TR/2 - mr.calcDuration(gz_1)) / sys.gradRasterTime) * sys.gradRasterTime);
     gx_1_1 = mr.makeExtendedTrapezoidArea('x', 0, gx_2.first, -gx_2.area, sys);
     gy_pre_2 = mr.scaleGrad(gyMax, phase_areas(end) / max_pe_area);
     [prep_delay, gz_2, gy_pre_2, gx_1_1] = mr.align('left', prep_delay, gz_2, gy_pre_2, 'right', gx_1_1);
 
+    seq = mr.Sequence(sys);
+
     for z = 1:num_slices
-        rf05.freqOffset = gz.amplitude * thick * (z - 1 - (num_slices-1)/2);
-        rf.freqOffset = gz.amplitude * thick * (z - 1 - (num_slices-1)/2);
+        rf05.freqOffset = gz.amplitude * slice_thickness * (z - 1 - (num_slices-1)/2);
+        rf.freqOffset = gz.amplitude * slice_thickness * (z - 1 - (num_slices-1)/2);
         
         % --- alpha/2 prep (ONCE=1) ---
         seq.addBlock(rf05, gz_1, lblOnce1);
@@ -158,7 +161,6 @@ function seq = write_bssfp(write, num_slices, num_averages)
         % --- exit block (ONCE=2) ---
         seq.addBlock(gx_2, lblOnce2);
     end
-
 
     seq.setDefinition('FOV', [fov fov slice_thickness * num_slices]);
     seq.setDefinition('NumSlices', num_slices);
@@ -393,7 +395,7 @@ function seq = write_fse(write, num_slices, num_averages)
                                'duration', tSpex, 'riseTime', dG);
 
     % --- phase-encode ordering ---
-    nex = floor(Ny / necho);
+    nex = max(1, floor(Ny / necho));
     pe_steps = (1:(necho * nex)) - 0.5 * necho * nex - 1;
     if mod(necho, 2) == 0
         pe_steps = circshift(pe_steps, [0, -round(nex/2)]);
@@ -470,6 +472,8 @@ function seq = write_fse(write, num_slices, num_averages)
     % --- labels ---
     lblOnce1 = mr.makeLabel('SET', 'ONCE', 1);
     lblOnce0 = mr.makeLabel('SET', 'ONCE', 0);
+    
+    seq = mr.Sequence(sys);
 
     % --- main imaging loop ---
     for kex = 0:nex
@@ -610,6 +614,7 @@ function seq = write_epi(write, num_slices, num_averages)
     Ny_pre  = round(partFourierFactor * Ny / 2 - 1);
     Ny_post = round(Ny / 2 + 1);
     Ny_meas = Ny_pre + Ny_post;
+    Nslices = num_slices;
 
     % Pre-phasing
     gxPre = mr.makeTrapezoid('x', sys, 'Area', -gx.area / 2);
@@ -644,6 +649,8 @@ function seq = write_epi(write, num_slices, num_averages)
     NDummyVolumes = 1; % in fMRI, dummy scans to reach steady state
     NVolumes = 1; % number of volumes to sample hemodynamics
     NSlices = num_slices; % number of slices per volume
+    
+    seq = mr.Sequence(sys);
 
     % --- prep (ONCE=1): one dummy volume ---
     % Structure mirrors main section (same block defs & ordering) so the C
@@ -794,8 +801,8 @@ function seq = write_epi(write, num_slices, num_averages)
     out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
 
     tb = TruthBuilder(seq, sys);
-    tb.setBlocksPerTR(4 + Nnav + Ny_meas);
-    tb.setSegments([1, 2 + Nnav + Ny_meas, 1]);
+    tb.setBlocksPerTR(5 + Nnav + Ny_meas);
+    tb.setSegments([1, 3 + Nnav + Ny_meas, 1]);
     tb.setSegmentOrder([1, 2, 3]);
     tb.setNumAverages(num_averages);
     tb.export(out_dir, base);
@@ -1404,8 +1411,8 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
     out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
 
     tb = TruthBuilder(seq, sys);
-    tb.setBlocksPerTR(5 + 3 + 2 + 1 + 3 * num_shots + 1);
-    tb.setSegments([5, 3, 2, 1]);
+    tb.setBlocksPerTR(6 + 3 + 2 + 1 + 3 * num_shots + 1);
+    tb.setSegments([6, 3, 2, 1]);
     tb.setSegmentOrder([1, 2, 3, 4, 2 * ones(1, num_shots), 4]);
     tb.setNumAverages(num_averages);
     tb.anchorPoints.adc = 0.0;

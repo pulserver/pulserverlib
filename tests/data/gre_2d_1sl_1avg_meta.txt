@@ -7,4 +7,11 @@ tr_duration_us 6700
 num_segments 1
 segment_0_num_blocks 4
 num_canonical_trs 1
+canonical_mode tr
+canonical_duration_us 6700
+num_freqmod_plan_probes 4
+num_freqmod_plan_entries 2
+num_labels 1
+num_label_scan_rows 52
+num_label_adc_rows 8
 segment_order 0

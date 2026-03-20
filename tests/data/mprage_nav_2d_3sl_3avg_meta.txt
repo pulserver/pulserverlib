@@ -15,4 +15,11 @@ segment_3_num_blocks 3
 segment_4_num_blocks 3
 segment_5_num_blocks 3
 num_canonical_trs 1
+canonical_mode tr
+canonical_duration_us 84260
+num_freqmod_plan_probes 4
+num_freqmod_plan_entries 8
+num_labels 1
+num_label_scan_rows 405
+num_label_adc_rows 99
 segment_order 0 1 2 2 2 2 2 2 2 2 3 4 5 1
