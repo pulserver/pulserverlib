@@ -301,6 +301,12 @@ typedef struct pulseqlib_freq_mod_library {
     /* O(1) accessor by scan-table position. */
     int  scan_table_len;
     int* scan_to_plan;          /* [scan_table_len] -> plan instance, -1   */
+
+    /* Per-scan-row phase tracking from TR start (inactive-axis areas).
+     * scan_inactive_area_3ch: shift-independent, kept for PMC update path.
+     * scan_phase_extra: shift-dependent, recomputed by compute_scan_phase_extra(). */
+    float* scan_inactive_area_3ch; /* [scan_table_len * 3]  or NULL */
+    float* scan_phase_extra;       /* [scan_table_len]      or NULL */
 } pulseqlib_freq_mod_library;
 
 /* ================================================================== */

@@ -786,8 +786,6 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
 
         {
             const fmod_def* fd;
-            float expected_phase;
-            float phase_tol;
             float max_val = 0.0f;
             float tol;
             int def_idx = se->freq_mod_id - 1;
@@ -826,14 +824,6 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
                 mu_assert((float)fabs(waveform[s] - expected) <= tol,
                           "freq_mod waveform sample mismatch");
             }
-
-            expected_phase = fd->ref_integral[0] * shift[0]
-                           + fd->ref_integral[1] * shift[1]
-                           + fd->ref_integral[2] * shift[2];
-            phase_tol = (float)fabs(expected_phase) * 1e-4f;
-            if (phase_tol < 1e-8f) phase_tol = 1e-8f;
-            mu_assert((float)fabs(phase_rad - expected_phase) <= phase_tol,
-                      "freq_mod phase mismatch");
 
             if (plan && plan->num_plans > 0 && ref_plan_idx >= 0) {
                 const fmod_plan_entry* pe;

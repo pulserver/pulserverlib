@@ -40,18 +40,22 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
         % entries belong to this segment, then collect their freq_mod_id.
         seg_order  = truth.meta.segment_order;   % 0-based segment IDs
         seg_nblk   = truth.meta.segment_num_blocks;  % blocks per segment def
-        blk_fmod_ids = zeros(1, n_blocks);  % per-block freq_mod_id for this segment
+        blk_fmod_ids = zeros(1, n_blocks);  % per-block freq_mod_id (OR-merged across all TRs)
+        blocks_per_tr = sum(arrayfun(@(s) seg_nblk(s + 1), seg_order));
+        n_scan = numel(truth.scan_table.entries);
         st_pos = 1;  % current position in scan table
-        for k = 1:numel(seg_order)
-            sid  = seg_order(k);       % 0-based
-            nb   = seg_nblk(sid + 1);  % 1-based index
-            if sid == (s_idx - 1)      % this is our segment
-                for bb = 1:nb
-                    blk_fmod_ids(bb) = double(truth.scan_table.entries(st_pos + bb - 1).freq_mod_id);
+        while st_pos + blocks_per_tr - 1 <= n_scan
+            for k = 1:numel(seg_order)
+                sid = seg_order(k);       % 0-based
+                nb  = seg_nblk(sid + 1);  % 1-based index
+                if sid == (s_idx - 1)     % this is our segment
+                    for bb = 1:nb
+                        fid_k = double(truth.scan_table.entries(st_pos + bb - 1).freq_mod_id);
+                        blk_fmod_ids(bb) = max(blk_fmod_ids(bb), fid_k);
+                    end
                 end
-                break;  % first occurrence is enough (representative)
+                st_pos = st_pos + nb;
             end
-            st_pos = st_pos + nb;
         end
         ids = unique(blk_fmod_ids(blk_fmod_ids > 0));
         if isempty(ids)
@@ -203,6 +207,12 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
                     plot(ph_ax(4), t_phase, ph_plot, ...
                         'Color', probe_colors(q, :), 'LineWidth', 1.2, ...
                         'DisplayName', sprintf('Def %d %s', d, probe_labels{q}));
+                    
+                    % Diamond at the reference timepoint on phase subplot
+                    ref_t_ms = double(def.ref_time_us) * 1e-3;
+                    plot(ph_ax(4), t0_ms + ref_t_ms, ph_tot, 'd', ...
+                        'Color', probe_colors(q, :), 'MarkerSize', 7, ...
+                        'MarkerFaceColor', probe_colors(q, :), 'HandleVisibility', 'off');
                 end
             end
         end

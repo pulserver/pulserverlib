@@ -113,8 +113,161 @@ static int axis_is_active(const float* waveform, int num_samples)
 }
 
 /* ================================================================== */
-/*  Helper: build peak-normalized grad waveform within active window  */
+/*  Helper: integrate one gradient axis over a block time interval    */
 /* ================================================================== */
+
+/*
+ * Returns the area of gradient axis `axis` between [t0_us, t1_us]
+ * (both relative to block start, in microseconds) in Hz/m * s.
+ * Uses the per-instance amplitude from grad_table and the shape from
+ * grad_definitions, mirroring the integration already in TruthBuilder.
+ */
+static float integrate_grad_interval_us(
+    const pulseqlib_sequence_descriptor* desc,
+    const pulseqlib_block_table_element* bte,
+    int axis,
+    float t0_us, float t1_us)
+{
+    int gt_id, bd_id, gd_id;
+    float amplitude;
+    const pulseqlib_grad_definition* gdef;
+    float delay_us;
+    float area;
+
+    if (t1_us <= t0_us) return 0.0f;
+
+    if (axis == 0)      gt_id = bte->gx_id;
+    else if (axis == 1) gt_id = bte->gy_id;
+    else                gt_id = bte->gz_id;
+
+    if (gt_id < 0 || gt_id >= desc->grad_table_size) return 0.0f;
+
+    amplitude = desc->grad_table[gt_id].amplitude;
+    if (amplitude == 0.0f) return 0.0f;
+
+    bd_id = bte->id;
+    if (bd_id < 0 || bd_id >= desc->num_unique_blocks) return 0.0f;
+
+    if (axis == 0)      gd_id = desc->block_definitions[bd_id].gx_id;
+    else if (axis == 1) gd_id = desc->block_definitions[bd_id].gy_id;
+    else                gd_id = desc->block_definitions[bd_id].gz_id;
+
+    if (gd_id < 0 || gd_id >= desc->num_unique_grads) return 0.0f;
+
+    gdef     = &desc->grad_definitions[gd_id];
+    delay_us = (float)gdef->delay;
+    area     = 0.0f;
+
+    if (gdef->type == 0) {
+        /* Trapezoid: piecewise-linear knot integration */
+        float rise_us = (float)gdef->rise_time_or_unused;
+        float flat_us = (float)gdef->flat_time_or_unused;
+        float fall_us = (float)gdef->fall_time_or_num_uncompressed_samples;
+        float k0 = delay_us;
+        float k1 = k0 + rise_us;
+        float k2 = k1 + flat_us;
+        float k3 = k2 + fall_us;
+        float a, b_end, sa, sb, wa, wb;
+
+        a     = (t0_us > k0) ? t0_us : k0;
+        b_end = (t1_us < k3) ? t1_us : k3;
+        if (b_end <= a) return 0.0f;
+
+        /* Ramp-up segment [k0, k1] */
+        if (rise_us > 0.0f) {
+            sa = (a  < k0) ? k0 : ((a  > k1) ? k1 : a);
+            sb = (b_end < k0) ? k0 : ((b_end > k1) ? k1 : b_end);
+            if (sb > sa) {
+                wa = (sa - k0) / rise_us;
+                wb = (sb - k0) / rise_us;
+                area += 0.5f * (wa + wb) * (sb - sa);
+            }
+        }
+        /* Plateau segment [k1, k2] */
+        if (flat_us > 0.0f) {
+            sa = (a  < k1) ? k1 : ((a  > k2) ? k2 : a);
+            sb = (b_end < k1) ? k1 : ((b_end > k2) ? k2 : b_end);
+            if (sb > sa) area += sb - sa;
+        }
+        /* Ramp-down segment [k2, k3] */
+        if (fall_us > 0.0f) {
+            sa = (a  < k2) ? k2 : ((a  > k3) ? k3 : a);
+            sb = (b_end < k2) ? k2 : ((b_end > k3) ? k3 : b_end);
+            if (sb > sa) {
+                wa = 1.0f - (sa - k2) / fall_us;
+                wb = 1.0f - (sb - k2) / fall_us;
+                area += 0.5f * (wa + wb) * (sb - sa);
+            }
+        }
+        return amplitude * area * 1e-6f;  /* us -> s */
+
+    } else {
+        /* Arbitrary: decompress shape and integrate via linear interpolation */
+        int shot_idx, shape_id, time_shape_id, i, n;
+        int has_time_shape;
+        float grad_raster_us;
+        float t_prev, t_curr, w_prev, w_curr;
+        pulseqlib_shape_arbitrary decomp_wave, decomp_time;
+
+        shot_idx = (gt_id >= 0 && gt_id < desc->grad_table_size)
+                   ? desc->grad_table[gt_id].shot_index : 0;
+        if (shot_idx < 0 || shot_idx >= PULSEQLIB_MAX_GRAD_SHOTS)
+            shot_idx = 0;
+
+        shape_id      = gdef->shot_shape_ids[shot_idx];
+        time_shape_id = gdef->unused_or_time_shape_id;
+        grad_raster_us = desc->grad_raster_us;
+        has_time_shape = 0;
+
+        if (shape_id <= 0 || shape_id > desc->num_shapes) return 0.0f;
+
+        decomp_wave.samples = NULL;
+        decomp_time.samples = NULL;
+
+        if (!pulseqlib__decompress_shape(&decomp_wave,
+                &desc->shapes[shape_id - 1], 1.0f))
+            return 0.0f;
+
+        n = decomp_wave.num_uncompressed_samples;
+
+        if (time_shape_id > 0 && time_shape_id <= desc->num_shapes) {
+            if (pulseqlib__decompress_shape(&decomp_time,
+                    &desc->shapes[time_shape_id - 1], grad_raster_us))
+                has_time_shape = 1;
+        }
+
+        t_prev = delay_us;
+        w_prev = 0.0f;
+        for (i = 0; i < n; ++i) {
+            float ta, tb, fa, fb, wa, wb;
+            if (has_time_shape && decomp_time.samples)
+                t_curr = delay_us + decomp_time.samples[i];
+            else
+                t_curr = delay_us + 0.5f * grad_raster_us
+                         + (float)i * grad_raster_us;
+            w_curr = decomp_wave.samples[i];
+
+            if (t_curr > t0_us && t_prev < t1_us && t_curr > t_prev) {
+                ta = (t_prev > t0_us) ? t_prev : t0_us;
+                tb = (t_curr < t1_us) ? t_curr : t1_us;
+                if (tb > ta) {
+                    fa = (ta - t_prev) / (t_curr - t_prev);
+                    fb = (tb - t_prev) / (t_curr - t_prev);
+                    wa = w_prev + fa * (w_curr - w_prev);
+                    wb = w_prev + fb * (w_curr - w_prev);
+                    area += 0.5f * (wa + wb) * (tb - ta);
+                }
+            }
+            t_prev = t_curr;
+            w_prev = w_curr;
+        }
+
+        if (decomp_wave.samples) PULSEQLIB_FREE(decomp_wave.samples);
+        if (decomp_time.samples) PULSEQLIB_FREE(decomp_time.samples);
+
+        return amplitude * area * 1e-6f;  /* us -> s */
+    }
+}
 
 /*
  * Identical to the former static build_freq_mod_for_block() in
@@ -421,6 +574,68 @@ static void compute_plan_waveforms(
         for (ch = 0; ch < 3; ++ch)
             lib->plan_phase[p] += lib->entry_ref_3ch[eidx * 3 + ch] * u[ch];
     }
+}
+
+/* ================================================================== */
+/*  Helper: compute per-scan-row extra phase from inactive-axis areas */
+/* ================================================================== */
+
+/*
+ * For each scan-table row that has a freq-mod event, accumulate the
+ * phase contribution from gradient axes that are inactive during the
+ * active window, integrated from TR-start to the reference timepoint.
+ *
+ * scan_phase_extra[pos] = 2π * dot(scan_inactive_area_3ch[pos*3..], u)
+ * where  u = R^T @ shift_m  for the plan instance at this row.
+ *
+ * scan_inactive_area_3ch must be pre-built (shift-independent).
+ */
+static void compute_scan_phase_extra(
+    pulseqlib_freq_mod_library* lib,
+    const float* shift_m)
+{
+    int p, pos, ch;
+    float identity[9] = {1,0,0, 0,1,0, 0,0,1};
+    float* all_u = NULL;
+
+    if (!lib->scan_phase_extra || !lib->scan_inactive_area_3ch
+            || lib->num_plan_instances == 0 || lib->scan_table_len == 0)
+        return;
+
+    all_u = (float*)PULSEQLIB_ALLOC(
+        (size_t)lib->num_plan_instances * 3 * sizeof(float));
+    if (!all_u) {
+        for (pos = 0; pos < lib->scan_table_len; ++pos)
+            lib->scan_phase_extra[pos] = 0.0f;
+        return;
+    }
+
+    for (p = 0; p < lib->num_plan_instances; ++p) {
+        int ridx = lib->pi_rotation_idx[p];
+        const float* R;
+        float u[3];
+        R = (ridx >= 0 && ridx < lib->num_rotations)
+            ? (const float*)lib->rotations[ridx] : identity;
+        pulseqlib__apply_rotation(u, R, shift_m, 1);   /* transpose */
+        all_u[p * 3 + 0] = u[0];
+        all_u[p * 3 + 1] = u[1];
+        all_u[p * 3 + 2] = u[2];
+    }
+
+    for (pos = 0; pos < lib->scan_table_len; ++pos) {
+        int pi = lib->scan_to_plan[pos];
+        if (pi < 0) {
+            lib->scan_phase_extra[pos] = 0.0f;
+        } else {
+            float extra = 0.0f;
+            for (ch = 0; ch < 3; ++ch)
+                extra += lib->scan_inactive_area_3ch[pos * 3 + ch]
+                       * all_u[pi * 3 + ch];
+            lib->scan_phase_extra[pos] = (float)PULSEQLIB__TWO_PI * extra;
+        }
+    }
+
+    PULSEQLIB_FREE(all_u);
 }
 
 /* ================================================================== */
@@ -947,6 +1162,116 @@ static int build_freq_mod_library(
     /* ==== Compute plan waveforms ==== */
     compute_plan_waveforms(lib, shift_m);
 
+    /* ==== Compute per-scan-row inactive-axis gradient areas ==== */
+    {
+        /* All declarations at top of block (C89 compliance) */
+        int nbt = desc->tr_descriptor.tr_size;
+        int* pi_active_mask  = NULL;
+        float* pi_ref_abs_us = NULL;
+        int ok, p, ii;
+
+        lib->scan_inactive_area_3ch = NULL;
+        lib->scan_phase_extra       = NULL;
+        ok = 0;
+
+        if (nbt > 0 && num_plan > 0 && lib->scan_table_len > 0) {
+            pi_active_mask  = (int*)PULSEQLIB_ALLOC(
+                (size_t)num_plan * 3 * sizeof(int));
+            pi_ref_abs_us   = (float*)PULSEQLIB_ALLOC(
+                (size_t)num_plan * sizeof(float));
+            lib->scan_inactive_area_3ch = (float*)PULSEQLIB_ALLOC(
+                (size_t)lib->scan_table_len * 3 * sizeof(float));
+            lib->scan_phase_extra = (float*)PULSEQLIB_ALLOC(
+                (size_t)lib->scan_table_len * sizeof(float));
+
+            if (pi_active_mask && pi_ref_abs_us &&
+                    lib->scan_inactive_area_3ch && lib->scan_phase_extra)
+                ok = 1;
+        }
+
+        if (ok) {
+            memset(lib->scan_inactive_area_3ch, 0,
+                   (size_t)lib->scan_table_len * 3 * sizeof(float));
+            memset(lib->scan_phase_extra, 0,
+                   (size_t)lib->scan_table_len * sizeof(float));
+
+            /* Per-plan: determine active axes and ref time from block start */
+            for (p = 0; p < num_plan; ++p) {
+                int eidx     = lib->pi_entry_idx[p];
+                int ev       = entry_unique[eidx];
+                int bi       = base_map[ev];
+                int rf_id_p  = base_rows[ev][1];
+                int adc_id_p = base_rows[ev][2];
+                float active_start_us_p;
+
+                pi_active_mask[p * 3 + 0] = base_active_mask[bi * 3 + 0];
+                pi_active_mask[p * 3 + 1] = base_active_mask[bi * 3 + 1];
+                pi_active_mask[p * 3 + 2] = base_active_mask[bi * 3 + 2];
+
+                if (rf_id_p >= 0 && rf_id_p < desc->num_unique_rfs)
+                    active_start_us_p =
+                        (float)desc->rf_definitions[rf_id_p].delay;
+                else if (adc_id_p >= 0 && adc_id_p < desc->num_unique_adcs)
+                    active_start_us_p =
+                        (float)desc->adc_definitions[adc_id_p].delay;
+                else
+                    active_start_us_p = 0.0f;
+
+                pi_ref_abs_us[p] = active_start_us_p + base_defs[bi].ref_time_us;
+            }
+
+            /* For each scan-table row with freq_mod: integrate inactive axes
+             * from the TR start block to the reference timepoint. */
+            for (ii = 0; ii < desc->scan_table_len; ++ii) {
+                int pi, blk_idx_ii, tr_start_blk, bb, ch;
+                float ref_abs_us_ii;
+
+                pi = lib->scan_to_plan[ii];
+                if (pi < 0) continue;
+
+                blk_idx_ii    = desc->scan_table_block_idx[ii];
+                tr_start_blk  = (blk_idx_ii / nbt) * nbt;
+                ref_abs_us_ii = pi_ref_abs_us[pi];
+
+                for (bb = tr_start_blk; bb <= blk_idx_ii; ++bb) {
+                    const pulseqlib_block_table_element* bte_bb;
+                    float t0_us_bb, t1_us_bb;
+
+                    if (bb >= desc->num_blocks) break;
+                    bte_bb   = &desc->block_table[bb];
+                    t0_us_bb = 0.0f;
+                    t1_us_bb = (bb < blk_idx_ii)
+                        ? (float)bte_bb->duration_us
+                        : ref_abs_us_ii;
+                    if (t1_us_bb <= 0.0f) continue;
+
+                    for (ch = 0; ch < 3; ++ch) {
+                        if (pi_active_mask[pi * 3 + ch]) continue;
+                        lib->scan_inactive_area_3ch[ii * 3 + ch] +=
+                            integrate_grad_interval_us(
+                                desc, bte_bb, ch, t0_us_bb, t1_us_bb);
+                    }
+                }
+            }
+        }
+
+        if (!ok) {
+            if (lib->scan_inactive_area_3ch) {
+                PULSEQLIB_FREE(lib->scan_inactive_area_3ch);
+                lib->scan_inactive_area_3ch = NULL;
+            }
+            if (lib->scan_phase_extra) {
+                PULSEQLIB_FREE(lib->scan_phase_extra);
+                lib->scan_phase_extra = NULL;
+            }
+        }
+        if (pi_active_mask) PULSEQLIB_FREE(pi_active_mask);
+        if (pi_ref_abs_us)  PULSEQLIB_FREE(pi_ref_abs_us);
+    }
+
+    /* Compute shift-dependent scan_phase_extra from inactive areas */
+    compute_scan_phase_extra(lib, shift_m);
+
     /* ==== For non-PMC: discard 3-channel data ==== */
     if (!desc->enable_pmc) {
         PULSEQLIB_FREE(lib->entry_waveform_3ch);
@@ -1009,6 +1334,7 @@ static int update_freq_mod_library(
         return PULSEQLIB_SUCCESS;
 
     compute_plan_waveforms(lib, shift_m);
+    compute_scan_phase_extra(lib, shift_m);
     return PULSEQLIB_SUCCESS;
 }
 
@@ -1034,6 +1360,8 @@ static int freq_mod_library_get(
     *out_waveform    = lib->plan_waveforms[pi];
     *out_num_samples = lib->plan_num_samples[pi];
     *out_phase_rad   = lib->plan_phase[pi];
+    if (lib->scan_phase_extra)
+        *out_phase_rad += lib->scan_phase_extra[scan_table_pos];
     return 1;
 }
 
@@ -1116,6 +1444,17 @@ static int freq_mod_library_write_cache(
         if (fwrite(lib->scan_to_plan, sizeof(int),
                    (size_t)lib->scan_table_len, f)
             != (size_t)lib->scan_table_len) goto write_fail;
+
+        /* Inactive-axis gradient areas for phase tracking */
+        {
+            int has_ia = (lib->scan_inactive_area_3ch != NULL);
+            if (fwrite(&has_ia, sizeof(int), 1, f) != 1) goto write_fail;
+            if (has_ia) {
+                size_t ia_total = (size_t)lib->scan_table_len * 3;
+                if (fwrite(lib->scan_inactive_area_3ch, sizeof(float),
+                           ia_total, f) != ia_total) goto write_fail;
+            }
+        }
     }
 
     return PULSEQLIB_SUCCESS;
@@ -1241,12 +1580,34 @@ static int freq_mod_library_read_cache(
         if (fread(lib->scan_to_plan, sizeof(int),
                   (size_t)lib->scan_table_len, f)
             != (size_t)lib->scan_table_len) goto read_fail;
+
+        /* Inactive-axis gradient areas */
+        {
+            int has_ia = 0;
+            if (fread(&has_ia, sizeof(int), 1, f) != 1) goto read_fail;
+            if (has_ia) {
+                size_t ia_total = (size_t)lib->scan_table_len * 3;
+                lib->scan_inactive_area_3ch = (float*)PULSEQLIB_ALLOC(
+                    ia_total * sizeof(float));
+                if (!lib->scan_inactive_area_3ch) goto read_fail;
+                if (fread(lib->scan_inactive_area_3ch, sizeof(float),
+                          ia_total, f) != ia_total) goto read_fail;
+                lib->scan_phase_extra = (float*)PULSEQLIB_ALLOC(
+                    (size_t)lib->scan_table_len * sizeof(float));
+                if (!lib->scan_phase_extra) goto read_fail;
+                memset(lib->scan_phase_extra, 0,
+                       (size_t)lib->scan_table_len * sizeof(float));
+            }
+        }
     }
 
     /* If 3ch data present and PMC enabled: recompute plan for new shift.
      * Otherwise plan waveforms from cache are used as-is. */
     if (has_3ch && lib->num_plan_instances > 0 && lib->entry_waveform_3ch)
         compute_plan_waveforms(lib, shift_m);
+
+    /* Always recompute shift-dependent scan_phase_extra */
+    compute_scan_phase_extra(lib, shift_m);
 
     /* If not PMC-enabled: discard 3-channel data */
     if (!pmc_enabled) {
@@ -1288,7 +1649,9 @@ static void freq_mod_library_free(pulseqlib_freq_mod_library* lib)
     if (lib->plan_num_samples)    PULSEQLIB_FREE(lib->plan_num_samples);
     if (lib->plan_phase)          PULSEQLIB_FREE(lib->plan_phase);
 
-    if (lib->scan_to_plan)        PULSEQLIB_FREE(lib->scan_to_plan);
+    if (lib->scan_to_plan)            PULSEQLIB_FREE(lib->scan_to_plan);
+    if (lib->scan_inactive_area_3ch)  PULSEQLIB_FREE(lib->scan_inactive_area_3ch);
+    if (lib->scan_phase_extra)        PULSEQLIB_FREE(lib->scan_phase_extra);
 
     PULSEQLIB_FREE(lib);
 }
@@ -1377,7 +1740,7 @@ int pulseqlib_freq_mod_collection_get(
 /* ================================================================== */
 
 #define FMCOL_CACHE_MAGIC   0x464D434F  /* "FMCO" */
-#define FMCOL_CACHE_VERSION 1
+#define FMCOL_CACHE_VERSION 2
 
 int pulseqlib_freq_mod_collection_write_cache(
     const pulseqlib_freq_mod_collection* fmc,
