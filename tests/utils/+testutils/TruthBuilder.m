@@ -327,7 +327,7 @@ classdef TruthBuilder < handle
                     for a = 1:3
                         axn = ax_names{a};
                         if isfield(block, axn) && ~isempty(block.(axn))
-                            [sid, shapes] = TruthBuilder.matchOrAddShape(block.(axn), shapes);
+                            [sid, shapes] = testutils.TruthBuilder.matchOrAddShape(block.(axn), shapes);
                         else
                             sid = 0;
                         end
@@ -377,7 +377,7 @@ classdef TruthBuilder < handle
                         for a = 1:3
                             axn = ax_names{a};
                             if isfield(block, axn) && ~isempty(block.(axn))
-                                e = e + TruthBuilder.gradEnergy(block.(axn));
+                                e = e + testutils.TruthBuilder.gradEnergy(block.(axn));
                             end
                         end
                     end
@@ -449,9 +449,9 @@ classdef TruthBuilder < handle
                             axn = ax_names{a};
                             if isfield(block, axn) && ~isempty(block.(axn))
                                 grad = block.(axn);
-                                amp = TruthBuilder.gradPeakAmpSigned(grad);
-                                [sid, shapes] = TruthBuilder.matchOrAddShape(grad, shapes);
-                                tr_energy = tr_energy + TruthBuilder.gradEnergy(grad);
+                                amp = testutils.TruthBuilder.gradPeakAmpSigned(grad);
+                                [sid, shapes] = testutils.TruthBuilder.matchOrAddShape(grad, shapes);
+                                tr_energy = tr_energy + testutils.TruthBuilder.gradEnergy(grad);
 
                                 if ref_shape_ids(pos, a) == 0
                                     ref_shape_ids(pos, a) = sid;
@@ -462,7 +462,7 @@ classdef TruthBuilder < handle
                                     if strcmp(grad.type, 'trap') || strcmp(grad.type, 'trapezoid')
                                         same_state = (sid == ref_shape_ids(pos, a));
                                     else
-                                        same_state = TruthBuilder.gradArbStateMatches(ref_grads{pos, a}, grad);
+                                        same_state = testutils.TruthBuilder.gradArbStateMatches(ref_grads{pos, a}, grad);
                                     end
                                     if same_state && abs(amp) > abs(can_scale(pos, a))
                                         can_scale(pos, a) = sign(can_scale(pos, a)) * abs(amp);
@@ -599,7 +599,7 @@ classdef TruthBuilder < handle
                     for a = 1:3
                         axn = ax_names{a};
                         if isfield(block, axn) && ~isempty(block.(axn))
-                            ref_amp = TruthBuilder.gradPeakAmpSigned(block.(axn));
+                            ref_amp = testutils.TruthBuilder.gradPeakAmpSigned(block.(axn));
                             can_amp = can_scale(pos, a);
                             if ref_amp ~= 0
                                 scale = can_amp / ref_amp;
@@ -712,7 +712,7 @@ classdef TruthBuilder < handle
                             for a = 1:3
                                 axn = ax_names{a};
                                 if isfield(block, axn) && ~isempty(block.(axn))
-                                    e = e + TruthBuilder.gradEnergy(block.(axn));
+                                    e = e + testutils.TruthBuilder.gradEnergy(block.(axn));
                                 end
                             end
                         end
@@ -770,12 +770,12 @@ classdef TruthBuilder < handle
                     rf_end   = block.rf.delay + block.rf.t(end);
                     if obj.anyGradNonzeroInWindow(block, rf_start, rf_end)
                         dur = block.blockDuration;
-                        gwaves = TruthBuilder.blockGradWaveformsInWindow(block, rf_start, rf_end);
+                        gwaves = testutils.TruthBuilder.blockGradWaveformsInWindow(block, rf_start, rf_end);
                         already = false;
                         for k = 1:length(def_durations)
                             if def_kinds(k) == 0 && abs(def_durations(k) - dur) < 1e-9
                                 % Compare actual waveforms with tolerance
-                                if TruthBuilder.waveformsAlmostEqual(def_waveforms_cell{k}, gwaves)
+                                if testutils.TruthBuilder.waveformsAlmostEqual(def_waveforms_cell{k}, gwaves)
                                     already = true;
                                     break;
                                 end
@@ -785,7 +785,7 @@ classdef TruthBuilder < handle
                             rf_active_start = block.rf.delay;
                             rf_active_end   = block.rf.delay + block.rf.t(end);
                             rf_isodelay     = block.rf.t(end) - mr.calcRfCenter(block.rf);
-                            defs{end+1} = TruthBuilder.buildFreqModDefinition( ...
+                            defs{end+1} = testutils.TruthBuilder.buildFreqModDefinition( ...
                                 block, rf_active_start, rf_active_end, rf_isodelay, ...
                                 obj.sys.gradRasterTime, obj.sys.rfRasterTime); %#ok<AGROW>
                             types(end+1) = 0;         %#ok<AGROW>
@@ -801,12 +801,12 @@ classdef TruthBuilder < handle
                     adc_end   = block.adc.delay + block.adc.numSamples * block.adc.dwell;
                     if obj.anyGradNonzeroInWindow(block, adc_start, adc_end)
                         dur = block.blockDuration;
-                        gwaves = TruthBuilder.blockGradWaveformsInWindow(block, adc_start, adc_end);
+                        gwaves = testutils.TruthBuilder.blockGradWaveformsInWindow(block, adc_start, adc_end);
                         already = false;
                         for k = 1:length(def_durations)
                             if def_kinds(k) == 1 && abs(def_durations(k) - dur) < 1e-9
                                 % Compare actual waveforms with tolerance
-                                if TruthBuilder.waveformsAlmostEqual(def_waveforms_cell{k}, gwaves)
+                                if testutils.TruthBuilder.waveformsAlmostEqual(def_waveforms_cell{k}, gwaves)
                                     already = true;
                                     break;
                                 end
@@ -820,7 +820,7 @@ classdef TruthBuilder < handle
                             match = find(obj.unique_adcs(:,1) == key(1) & ...
                                          abs(obj.unique_adcs(:,2) - key(2)) < 1e-15, 1);
                             adc_ref_time     = obj.getADCAnchorFraction(match - 1) * adc_dur;
-                            defs{end+1} = TruthBuilder.buildFreqModDefinition( ...
+                            defs{end+1} = testutils.TruthBuilder.buildFreqModDefinition( ...
                                 block, adc_active_start, adc_active_end, adc_ref_time, ...
                                 obj.sys.gradRasterTime, obj.sys.adcRasterTime); %#ok<AGROW>
                             types(end+1) = 1;           %#ok<AGROW>
@@ -893,10 +893,10 @@ classdef TruthBuilder < handle
                             rf_end   = block.rf.delay + block.rf.t(end);
                             if obj.anyGradNonzeroInWindow(block, rf_start, rf_end)
                                 dur = block.blockDuration;
-                                gwaves = TruthBuilder.blockGradWaveformsInWindow(block, rf_start, rf_end);
+                                gwaves = testutils.TruthBuilder.blockGradWaveformsInWindow(block, rf_start, rf_end);
                                 for ki = 1:length(obj.fmod_durations)
                                     if obj.fmod_kinds(ki) == 0 && abs(obj.fmod_durations(ki) - dur) < 1e-9
-                                        if TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
+                                        if testutils.TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
                                             fmt(act) = ki;
                                             break;
                                         end
@@ -907,13 +907,13 @@ classdef TruthBuilder < handle
 
                         % Gradients
                         if isfield(block, 'gx') && ~isempty(block.gx)
-                            st(act, 4) = TruthBuilder.gradPeakAmpSigned(block.gx);
+                            st(act, 4) = testutils.TruthBuilder.gradPeakAmpSigned(block.gx);
                         end
                         if isfield(block, 'gy') && ~isempty(block.gy)
-                            st(act, 5) = TruthBuilder.gradPeakAmpSigned(block.gy);
+                            st(act, 5) = testutils.TruthBuilder.gradPeakAmpSigned(block.gy);
                         end
                         if isfield(block, 'gz') && ~isempty(block.gz)
-                            st(act, 6) = TruthBuilder.gradPeakAmpSigned(block.gz);
+                            st(act, 6) = testutils.TruthBuilder.gradPeakAmpSigned(block.gz);
                         end
 
                         % ADC
@@ -925,10 +925,10 @@ classdef TruthBuilder < handle
                             adc_end   = block.adc.delay + block.adc.numSamples * block.adc.dwell;
                             if obj.anyGradNonzeroInWindow(block, adc_start, adc_end)
                                 dur = block.blockDuration;
-                                gwaves = TruthBuilder.blockGradWaveformsInWindow(block, adc_start, adc_end);
+                                gwaves = testutils.TruthBuilder.blockGradWaveformsInWindow(block, adc_start, adc_end);
                                 for ki = 1:length(obj.fmod_durations)
                                     if obj.fmod_kinds(ki) == 1 && abs(obj.fmod_durations(ki) - dur) < 1e-9
-                                        if TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
+                                        if testutils.TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
                                             fmt(act) = ki;
                                             break;
                                         end
@@ -1155,7 +1155,7 @@ classdef TruthBuilder < handle
                     end
                     axn = ax_names{ch};
                     if isfield(blk, axn) && ~isempty(blk.(axn))
-                        area(ch) = area(ch) + TruthBuilder.integrateGradientInterval(blk.(axn), t0, t1);
+                        area(ch) = area(ch) + testutils.TruthBuilder.integrateGradientInterval(blk.(axn), t0, t1);
                     end
                 end
             end
@@ -1348,7 +1348,7 @@ classdef TruthBuilder < handle
                         end
                     else
                         w = grad.waveform;
-                        bd.([axn '_amp']) = TruthBuilder.gradPeakAmpSigned(grad);
+                        bd.([axn '_amp']) = testutils.TruthBuilder.gradPeakAmpSigned(grad);
                         if bd.([axn '_amp']) ~= 0
                             bd.([axn '_wave']) = w / bd.([axn '_amp']);
                         else
@@ -1414,10 +1414,10 @@ classdef TruthBuilder < handle
                     bd.has_freq_mod = true;
                     bd.num_freq_mod_samples = round(block.blockDuration / obj.sys.rfRasterTime);
                     dur = block.blockDuration;
-                    gwaves = TruthBuilder.blockGradWaveformsInWindow(block, rf_ws, rf_we);
+                    gwaves = testutils.TruthBuilder.blockGradWaveformsInWindow(block, rf_ws, rf_we);
                     for ki = 1:length(obj.fmod_durations)
                         if obj.fmod_kinds(ki) == 0 && abs(obj.fmod_durations(ki) - dur) < 1e-9
-                            if TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
+                            if testutils.TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
                                 bd.freq_mod_def_id = ki - 1;  % 0-based
                                 break;
                             end
@@ -1432,10 +1432,10 @@ classdef TruthBuilder < handle
                     bd.has_freq_mod = true;
                     bd.num_freq_mod_samples = round(block.blockDuration / obj.sys.adcRasterTime);
                     dur = block.blockDuration;
-                    gwaves = TruthBuilder.blockGradWaveformsInWindow(block, adc_ws, adc_we);
+                    gwaves = testutils.TruthBuilder.blockGradWaveformsInWindow(block, adc_ws, adc_we);
                     for ki = 1:length(obj.fmod_durations)
                         if obj.fmod_kinds(ki) == 1 && abs(obj.fmod_durations(ki) - dur) < 1e-9
-                            if TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
+                            if testutils.TruthBuilder.waveformsAlmostEqual(obj.fmod_waveforms_cell{ki}, gwaves)
                                 bd.freq_mod_def_id = ki - 1;  % 0-based
                                 break;
                             end
@@ -1531,7 +1531,7 @@ classdef TruthBuilder < handle
             for a = 1:3
                 axn = ax_names{a};
                 if isfield(block, axn) && ~isempty(block.(axn))
-                    if TruthBuilder.gradNonzeroInWindow(block.(axn), wstart, wend)
+                    if testutils.TruthBuilder.gradNonzeroInWindow(block.(axn), wstart, wend)
                         result = true;
                         return;
                     end
@@ -1828,7 +1828,7 @@ classdef TruthBuilder < handle
             for ch = 1:3
                 ax = axes{ch};
                 if isfield(block, ax) && ~isempty(block.(ax))
-                    sig(ch) = abs(TruthBuilder.gradPeakAmp(block.(ax)));
+                    sig(ch) = abs(testutils.TruthBuilder.gradPeakAmp(block.(ax)));
                 end
             end
         end
@@ -1840,7 +1840,7 @@ classdef TruthBuilder < handle
             for ch = 1:3
                 ax = axes{ch};
                 if isfield(block, ax) && ~isempty(block.(ax))
-                    [t, w] = TruthBuilder.gradToKnots(block.(ax));
+                    [t, w] = testutils.TruthBuilder.gradToKnots(block.(ax));
                     pts = [wstart; t(t > wstart & t < wend); wend];
                     vals = interp1(t, w, pts, 'linear', 0);
                     sig(ch) = max(abs(vals));
@@ -1859,7 +1859,7 @@ classdef TruthBuilder < handle
                 ax = axes{ch};
                 if isfield(block, ax) && ~isempty(block.(ax))
                     grad = block.(ax);
-                    [t, w] = TruthBuilder.gradToKnots(grad);
+                    [t, w] = testutils.TruthBuilder.gradToKnots(grad);
                     % Find indices within window
                     in_window = (t >= wstart) & (t <= wend);
                     if any(in_window)
@@ -1954,7 +1954,7 @@ classdef TruthBuilder < handle
                 return;
             end
 
-            [t, w] = TruthBuilder.gradToKnots(grad);
+            [t, w] = testutils.TruthBuilder.gradToKnots(grad);
             [t, iu] = unique(t(:), 'last');
             w = w(iu);
 
@@ -1986,7 +1986,7 @@ classdef TruthBuilder < handle
             for ch = 1:3
                 ax = axes{ch};
                 if isfield(block, ax) && ~isempty(block.(ax))
-                    [raw_t, raw_w] = TruthBuilder.gradToKnots(block.(ax));
+                    [raw_t, raw_w] = testutils.TruthBuilder.gradToKnots(block.(ax));
                     raw_t = raw_t - active_start_s;
                     if raw_t(1) > 0
                         raw_t = [0; raw_t(:)]; %#ok<AGROW>
