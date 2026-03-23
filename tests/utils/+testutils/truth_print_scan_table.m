@@ -46,7 +46,7 @@ function truth_print_scan_table(truth, varargin)
     I3_flat = I3(:)';
     
     for i = 1:n
-        rm = double(st.entries(i).rotmat);         % 1x9
+        rm = double(st.entries(i).rotmat(:)');     % ensure 1x9 row vector
         
         % Check if this is (approximately) identity
         if max(abs(rm - I3_flat)) < 1e-5
