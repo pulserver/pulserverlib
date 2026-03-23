@@ -254,7 +254,7 @@ classdef TruthBuilder < handle
             end
 
             starts = find(once_flags == 1 & [true, once_flags(1:end-1) ~= 1]);
-            if length(starts) < 2
+            if isempty(starts)
                 return;
             end
 
