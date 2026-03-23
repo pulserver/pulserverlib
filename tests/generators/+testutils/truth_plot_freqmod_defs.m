@@ -111,17 +111,19 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
 
     fig    = figure('Name', sprintf('Freqmod defs: %s', truth.base_name), 'Color', 'w');
     labels = {'Gx', 'Gy', 'Gz'};
-    fm_ax  = gobjects(1, 3);
-    ph_ax  = gobjects(1, 3);
+    
+    % Create all 4x2 subplots upfront to avoid grid conflicts
+    fm_ax  = gobjects(1, 4);
+    ph_ax  = gobjects(1, 4);
 
     for ax = 1:3
-        fm_ax(ax) = subplot(3, 2, 2*(ax-1) + 1);
+        fm_ax(ax) = subplot(4, 2, 2*(ax-1) + 1);
         hold(fm_ax(ax), 'on');
         ylabel(fm_ax(ax), sprintf('%s (Hz/m)', labels{ax}));
         grid(fm_ax(ax), 'on');
         if ax == 1, title(fm_ax(ax), 'Freq Mod'); end
 
-        ph_ax(ax) = subplot(3, 2, 2*(ax-1) + 2);
+        ph_ax(ax) = subplot(4, 2, 2*(ax-1) + 2);
         hold(ph_ax(ax), 'on');
         ylabel(ph_ax(ax), sprintf('\\phi_{%s} (rad/m)', labels{ax}));
         grid(ph_ax(ax), 'on');
@@ -130,19 +132,22 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     xlabel(fm_ax(3), 'Time (ms)');
     xlabel(ph_ax(3), 'Time (ms)');
 
-    fm_actual_ax = subplot(4, 2, 7);
-    hold(fm_actual_ax, 'on');
-    ylabel(fm_actual_ax, 'f_{proj} (Hz)');
-    xlabel(fm_actual_ax, 'Time (ms)');
-    grid(fm_actual_ax, 'on');
-    title(fm_actual_ax, 'Projected Actual Modulation');
+    fm_ax(4) = subplot(4, 2, 7);
+    hold(fm_ax(4), 'on');
+    ylabel(fm_ax(4), 'f_{proj} (Hz)');
+    xlabel(fm_ax(4), 'Time (ms)');
+    grid(fm_ax(4), 'on');
+    title(fm_ax(4), 'Projected Actual Modulation');
 
-    ph_actual_ax = subplot(4, 2, 8);
-    hold(ph_actual_ax, 'on');
-    ylabel(ph_actual_ax, '\phi_{proj} (rad)');
-    xlabel(ph_actual_ax, 'Time (ms)');
-    grid(ph_actual_ax, 'on');
-    title(ph_actual_ax, 'Projected Phase Compensation');
+    ph_ax(4) = subplot(4, 2, 8);
+    hold(ph_ax(4), 'on');
+    ylabel(ph_ax(4), '\phi_{proj} (rad)');
+    xlabel(ph_ax(4), 'Time (ms)');
+    grid(ph_ax(4), 'on');
+    title(ph_ax(4), 'Projected Phase Compensation');
+    
+    fm_actual_ax = fm_ax(4);
+    ph_actual_ax = ph_ax(4);
 
     def_lbls = cell(1, n_defs);
     for i = 1:n_defs
@@ -192,10 +197,10 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
                     ph_plot = [0; 0; ph_tot; ph_tot];
                     t_phase = [0; t0_ms + double(def.ref_time_us) * 1e-3; total_dur_ms; total_dur_ms];
 
-                    plot(fm_actual_ax, t_plot, wf_plot, ...
+                    plot(fm_ax(4), t_plot, wf_plot, ...
                         'Color', probe_colors(q, :), 'LineWidth', 1.2, ...
                         'DisplayName', sprintf('Def %d %s', d, probe_labels{q}));
-                    plot(ph_actual_ax, t_phase, ph_plot, ...
+                    plot(ph_ax(4), t_phase, ph_plot, ...
                         'Color', probe_colors(q, :), 'LineWidth', 1.2, ...
                         'DisplayName', sprintf('Def %d %s', d, probe_labels{q}));
                 end
@@ -203,7 +208,7 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
         end
     end
 
-    all_ax = [fm_ax, ph_ax, fm_actual_ax, ph_actual_ax];
+    all_ax = [reshape(fm_ax(1:3), 1, 3), reshape(ph_ax(1:3), 1, 3), fm_ax(4), ph_ax(4)];
     linkaxes(all_ax, 'x');
 
     for k = 1:8
@@ -224,8 +229,8 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     legend(lgd_ax, dummy_h, def_lbls, ...
         'Orientation', 'horizontal', 'Location', 'north', 'Box', 'off');
 
-    legend(fm_actual_ax, 'show', 'Location', 'eastoutside');
-    legend(ph_actual_ax, 'show', 'Location', 'eastoutside');
+    legend(fm_ax(4), 'show', 'Location', 'eastoutside');
+    legend(ph_ax(4), 'show', 'Location', 'eastoutside');
 
     sgtitle(fig, sprintf('Frequency Modulation Definitions (%s) seg %d', ...
         truth.base_name, s_idx - 1), 'Interpreter', 'none');
