@@ -7,34 +7,38 @@ function truth_print_label_table(truth)
 %     ADC# | ave=AVE | rot=rot_id | traj=traj_val | n_samp=NS | center=CI
 %
 %   ave      -- value of the "AVE" or "REP" label at this ADC row.
-%   rot_id   -- 1-based index of the rotation matrix at the corresponding
-%              scan-table row (first-appearance ordering).
+%   rot_id   -- 0 for identity rotation, else 1-based unique index
+%              (first-appearance ordering).
 %   traj_val -- value of the "SEG" or "SHT" label (= shot / trajectory
 %              index); 0 if the label is absent.
 %   n_samp   -- number of ADC samples for this readout (from meta).
 %   center   -- 1-based sample index corresponding to k-space centre
-%              (adc_kzero_us / dwell, rounded to nearest integer + 1).
+%              (anchor fraction * (n_samp-1), rounded + 1).
 
     lbs  = truth.label_state;
     meta = truth.meta;
     st   = truth.scan_table;
-    sdef = truth.segment_def;
 
     if lbs.adc_rows == 0
         fprintf('\n=== Label table: %s -- no ADC rows ===\n', truth.base_name);
         return;
     end
 
-    % ---- Find label columns --------------------------------------------------------------------------------------
+    % -- Find label columns ---------------------------------------------------
     col_ave  = find_label_col(lbs, 'AVE', 'REP');
     col_traj = find_label_col(lbs, 'SEG', 'SHT');
 
-    % ---- Build unique rotation-matrix index (first-appearance) ----------------
+    % -- Build unique rotation-matrix index (first-appearance) ----------------
     n_scan = st.num_entries;
     rot_ids = zeros(n_scan, 1);
     rot_list = zeros(0, 9);
+    I3 = eye(3);  I3_flat = I3(:)';
     for i = 1:n_scan
-        rm = double(st.entries(i).rotmat);
+        rm = double(st.entries(i).rotmat(:)');  % ensure 1x9 row
+        if max(abs(rm - I3_flat)) < 1e-5
+            rot_ids(i) = 0;
+            continue;
+        end
         found = false;
         for r = 1:size(rot_list, 1)
             if max(abs(rot_list(r,:) - rm)) < 1e-5
@@ -49,31 +53,15 @@ function truth_print_label_table(truth)
         end
     end
 
-    % ---- Build map: adc_def_id (0-based) -> (n_samples, center_us) --------
-    % Scan all segment blocks that have an ADC event.
-    adc_n_samples  = zeros(meta.num_unique_adcs, 1);
-    adc_center_us  = zeros(meta.num_unique_adcs, 1);
-    adc_seen       = false(meta.num_unique_adcs, 1);
-    for s = 1:sdef.num_segments
-        seg = sdef.segments(s);
-        for b = 1:seg.num_blocks
-            blk = seg.blocks(b);
-            if ~blk.has_adc
-                continue;
-            end
-            id1 = blk.adc_def_id + 1;   % 0-based -> 1-based index
-            if id1 < 1 || id1 > meta.num_unique_adcs
-                continue;
-            end
-            if ~adc_seen(id1)
-                adc_n_samples(id1) = meta.adc_samples(id1);
-                adc_center_us(id1) = blk.adc_kzero_us;
-                adc_seen(id1) = true;
-            end
-        end
+    % -- Build map: adc_def_id 1-based -> (n_samples, center_idx) ------------
+    % Anchor sample index (0-based) = round(anchor_frac * (n_samp - 1))
+    adc_n_samples  = meta.adc_samples(:);
+    adc_center_idx = zeros(meta.num_unique_adcs, 1);
+    for id1 = 1:meta.num_unique_adcs
+        adc_center_idx(id1) = round(meta.adc_anchor(id1) * (meta.adc_samples(id1) - 1));
     end
 
-    % ---- Header ------------------------------------------------------------------------------------------------------------
+    % -- Header ---------------------------------------------------------------
     fprintf('\n=== Label table: %s (%d ADC rows) ===\n', ...
         truth.base_name, lbs.adc_rows);
     fprintf('  %6s  %5s  %5s  %6s  %7s  %7s\n', ...
@@ -81,7 +69,7 @@ function truth_print_label_table(truth)
     sep = repmat('-', 1, 52);
     fprintf('%s\n', sep);
 
-    % ---- Row loop --------------------------------------------------------------------------------------------------------
+    % -- Row loop -------------------------------------------------------------
     for a = 1:lbs.adc_rows
         scan_row = lbs.adc_scan_row_idx(a) + 1;   % 0-based -> 1-based
 
@@ -104,8 +92,7 @@ function truth_print_label_table(truth)
             traj_val = 0;
         end
 
-        % ADC def id from scan table entry (0-based encoded as adc_flag > 0)
-        % adc_flag stores the 1-based ADC definition ID in the scan table; 0 = no ADC.
+        % ADC def id from scan table entry
         adc_def_id1 = 1;   % default to first ADC def
         if scan_row >= 1 && scan_row <= n_scan
             flag = double(st.entries(scan_row).adc_flag);
@@ -114,12 +101,7 @@ function truth_print_label_table(truth)
             end
         end
         n_samp = adc_n_samples(adc_def_id1);
-        dwell_us = meta.adc_dwell_ns(adc_def_id1) * 1e-3;
-        if dwell_us > 0
-            center_idx = round(adc_center_us(adc_def_id1) / dwell_us) + 1;
-        else
-            center_idx = 0;
-        end
+        center_idx = adc_center_idx(adc_def_id1) + 1;
 
         fprintf('  %6d  %5d  %5d  %6d  %7d  %7d\n', ...
             a, ave_val, rot_id, traj_val, n_samp, center_idx);
@@ -127,9 +109,8 @@ function truth_print_label_table(truth)
     fprintf('%s\n', sep);
 end
 
-% ---- Helpers ------------------------------------------------------------------------------------------------------------------------
+% -- Helpers ------------------------------------------------------------------
 function col = find_label_col(lbs, varargin)
-    % Find first matching label column (case-insensitive) from candidate names.
     col = -1;
     for k = 1:lbs.num_labels
         for j = 1:numel(varargin)

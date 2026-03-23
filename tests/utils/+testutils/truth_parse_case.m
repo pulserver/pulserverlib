@@ -80,8 +80,9 @@ function [data_dir, base_name] = normalize_case_path(base)
     base_name = in_name;
     for i = 1:numel(suffixes)
         sfx = suffixes{i};
-        if endsWith(base_name, sfx)
-            base_name = base_name(1:(length(base_name) - length(sfx)));
+        n = length(sfx);
+        if length(base_name) >= n && strcmp(base_name(end-n+1:end), sfx)
+            base_name = base_name(1:(length(base_name) - n));
             return;
         end
     end
