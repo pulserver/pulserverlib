@@ -9,7 +9,7 @@ import mr.*
 
 %% Output directory
 scriptDir = fileparts(mfilename('fullpath'));
-dataDir = fullfile(scriptDir, '..', 'data');
+dataDir = fullfile(scriptDir, '..', 'expected');
 if ~exist(dataDir, 'dir'), mkdir(dataDir); end
 
 %% ------------------------------------------------------------------------

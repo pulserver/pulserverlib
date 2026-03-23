@@ -8,9 +8,19 @@ C test suite.
 Each test sequence needs two things:
 
 1. **MATLAB generator** — builds the Pulseq sequence and uses `TruthBuilder`
-   to export ground-truth binary files into `tests/data/`.
+   to export ground-truth binary files into `tests/generators/expected/`.
 2. **C test cases** — entries in `tests/ctests/test_sequences.c` that load the
    `.seq` file and compare the library output against the exported truth.
+
+### generators/ layout
+
+```
+tests/generators/
+  +testutils/          MATLAB package: TruthBuilder + truth_* inspection utilities
+  scripts/             generate_*.m scripts (run from here or from MATLAB path)
+  expected/            ground-truth artifacts: .seq + binary truth files
+  README.md
+```
 
 ## Step 1: Write the MATLAB generator
 
@@ -161,10 +171,11 @@ All runner functions work with the unified `seq_case` struct:
 ## Step 3: Build and run
 
 ```bash
-# Regenerate ground-truth (MATLAB, from tests/generators/)
-matlab -batch "generate_test_sequences"
+# Regenerate ground-truth (MATLAB — run from tests/generators/)
+cd tests/generators
+matlab -batch "run('scripts/generate_test_sequences.m')"
 
-# Build and run C tests
+# Build and run C tests (from repo root)
 cd tests/ctests
 cmake -S . -B build && cmake --build build
 ./build/bin/run_tests
@@ -175,7 +186,7 @@ cmake -S . -B build && cmake --build build
 - [ ] MATLAB generator builds valid sequence (`seq.checkTiming` passes)
 - [ ] ONCE labels placed on first dummy block and first imaging block
 - [ ] `TruthBuilder` hints match sequence structure (blocks/TR, segment defs, segment order, averages, ADC anchors when needed)
-- [ ] `.seq` + truth artifact files appear in `tests/data/`
+- [ ] `.seq` + truth artifact files appear in `tests/generators/expected/`
 - [ ] Case struct entry added to `test_sequences.c`
 - [ ] 5 MU_TEST wrappers + suite registrations added
 - [ ] All tests pass (`run_tests` exits 0)
@@ -186,6 +197,9 @@ The `+testutils` package in `tests/generators/` provides functions to parse,
 report, and plot the ground-truth artifacts exported by `TruthBuilder`.  All
 functions accept either a base-name string (e.g. `'gre_2d_1sl_1avg'`) or a
 pre-parsed truth struct, so you can parse once and reuse.
+
+To use these utilities interactively, add `tests/generators/` to the MATLAB
+path (`addpath`) or `cd` into it before calling them:
 
 ### Parse all artifacts for one case
 
@@ -274,9 +288,11 @@ check of the running integral.
 testutils.truth_plot_case('gre_2d_1sl_1avg');
 testutils.truth_plot_case('gre_2d_1sl_1avg', 'show_report', true);
 testutils.truth_plot_case('gre_2d_1sl_1avg', 'plot_freqmod', false);
+testutils.truth_plot_case('fse_2d_1sl_1avg', 'scan_shift', [0.01 0 0]);
 ```
 
-Convenience entrypoint that parses once, then runs report + all three plotters.
+Convenience entrypoint that parses once, then runs report + all plotters and
+prints the terminal inspection tables.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -284,6 +300,83 @@ Convenience entrypoint that parses once, then runs report + all three plotters.
 | `'plot_tr'` | `true` | Plot canonical TR waveforms. |
 | `'plot_segments'` | `true` | Plot segment block waveforms. |
 | `'plot_freqmod'` | `true` | Plot frequency-modulation definitions (skipped if none exist). |
+| `'print_scan_table'` | `true` | Print the full scan-table terminal listing. |
+| `'print_label_table'` | `true` | Print the ADC label-sequence terminal listing. |
+| `'plot_kspace_traj'` | `true` | Plot non-Cartesian k-space trajectories (no-op if all are straight lines). |
+| `'scan_shift'` | `[0 0 0]` | Isocenter shift in metres forwarded to `truth_print_scan_table`. |
+
+### Print the scan table
+
+```matlab
+testutils.truth_print_scan_table(truth);
+testutils.truth_print_scan_table(truth, 'adc_only', true);
+testutils.truth_print_scan_table(truth, 'shift', [0.01 0 0]);
+```
+
+Prints a formatted scan-table listing to the terminal, one line per scan row.
+Each row shows:
+
+- RF frequency (Hz), phase (rad), and amplitude (normalised).
+- Gradient amplitudes Gx / Gy / Gz (Hz/m).
+- Shot index (value of the `SEG` sticky label at that row).
+- ADC frequency (Hz) and ADC phase (rad).
+- Rotation-matrix ID (1-based first-appearance ordering).
+- Freq-mod plan ID (0 = no freq-mod).
+- When freq-mod is active: per-probe projected phase totals (x / y / z /
+  oblique, in rad).
+- When freq-mod is active and `shift` is provided: per-axis shift (mm),
+  reference gradient scale factors (rad/m), and resulting projected phase
+  contribution (rad).
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `'shift'` | `[0 0 0]` | Isocenter shift in metres used for phase-product columns. |
+| `'adc_only'` | `false` | When `true`, only rows with an active ADC are listed. |
+
+### Print the ADC label sequence
+
+```matlab
+testutils.truth_print_label_table(truth);
+```
+
+Prints a compact listing of every ADC readout row to the terminal:
+
+```
+ADC#  |  ave  |  rot  |  traj  |  n_samp  |  center
+```
+
+- `ave` — value of the `AVE` (or `REP`) sticky label at this ADC row.
+- `rot` — rotation-matrix ID (1-based, first-appearance ordering) from the
+  corresponding scan-table entry.
+- `traj` — value of the `SEG` (or `SHT`) sticky label (shot/trajectory index).
+- `n_samp` — number of ADC samples for this readout (from `_meta.txt`).
+- `center` — 1-based sample index of the k-space centre (`adc_kzero_us /
+  dwell_us`, rounded to nearest integer, plus 1).
+
+Prints a "no ADC rows" notice if the sequence has no ADC events.
+
+### Plot k-space trajectories
+
+```matlab
+testutils.truth_plot_kspace_traj(truth);
+```
+
+Reconstructs the k-space trajectory for each unique (ADC-definition,
+gradient-amplitude) block in the segment definitions by integrating the
+piecewise-linear gradient waveforms onto the ADC dwell grid.  K-space values
+are in cycles/m (Hz·s/m convention) with the k-space centre at sample index 0.
+
+Straight-line trajectories — where every sample lies within a relative
+tolerance of the chord between the first and last k-space points — are
+automatically detected and excluded.  This covers standard Cartesian readout
+lines, radial spokes, and any other constant-gradient readout.
+
+If every unique trajectory is a straight line, no figure is created and an
+informational message is printed.  Otherwise a figure with three stacked
+subplots (kx / ky / kz vs sample index) is produced, one curve per
+non-trivial trajectory.
+
+No parameters.  Requires MATLAB R2017b+ (`vecnorm`) and R2018b+ (`sgtitle`).
 
 ### Label-state export note (future MRD converters)
 

@@ -8,6 +8,7 @@
 
 clear; clc;
 import mr.*
+addpath(fullfile(fileparts(mfilename('fullpath')), '..'));
 
 write_bssfp(true, 1, 1);
 write_bssfp(true, 3, 1);
@@ -174,9 +175,9 @@ function seq = write_bssfp(write, num_slices, num_averages)
         return;
     end
 
-    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'expected');
 
-    tb = TruthBuilder(seq, sys);
+    tb = testutils.TruthBuilder(seq, sys);
     tb.setBlocksPerTR(3 + 2*Ny);
     tb.setSegments([3 + 2*Ny]);
     tb.setSegmentOrder([1]);
@@ -311,9 +312,9 @@ function seq = write_gre(write, num_slices, num_averages)
         return;
     end
 
-    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'expected');
 
-    tb = TruthBuilder(seq, sys);
+    tb = testutils.TruthBuilder(seq, sys);
     tb.setBlocksPerTR(4);
     tb.setSegments([4]);
     tb.setSegmentOrder([1]);
@@ -532,9 +533,9 @@ function seq = write_fse(write, num_slices, num_averages)
         return;
     end
 
-    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'expected');
 
-    tb = TruthBuilder(seq, sys);
+    tb = testutils.TruthBuilder(seq, sys);
     tb.setBlocksPerTR(3 + 4 * necho + 3);
     tb.setSegments([3 + 4 * necho + 3]);
     tb.setSegmentOrder([1]);
@@ -798,9 +799,9 @@ function seq = write_epi(write, num_slices, num_averages)
         return;
     end
 
-    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'expected');
 
-    tb = TruthBuilder(seq, sys);
+    tb = testutils.TruthBuilder(seq, sys);
     tb.setBlocksPerTR(5 + Nnav + Ny_meas);
     tb.setSegments([1, 3 + Nnav + Ny_meas, 1]);
     tb.setSegmentOrder([1, 2, 3]);
@@ -917,9 +918,9 @@ function seq = write_mprage(write, num_slices, num_averages)
         return;
     end
 
-    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'expected');
 
-    tb = TruthBuilder(seq, sys);
+    tb = testutils.TruthBuilder(seq, sys);
     tb.setBlocksPerTR(2 + 1 + 4 * Ny + 1);
     tb.setSegments([2, 1, 4]);
     tb.setSegmentOrder([1, 2, 3 * ones(1, Ny), 2]);
@@ -1089,9 +1090,9 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
         return;
     end
 
-    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'expected');
 
-    tb = TruthBuilder(seq, sys);
+    tb = testutils.TruthBuilder(seq, sys);
     tb.setBlocksPerTR(2 + 1 + 4 * Ny + 3 * 3 + 1);
     tb.setSegments([2, 1, 4, 3, 3, 3]);
     tb.setSegmentOrder([1, 2, 3 * ones(1, Ny), 4, 5, 6, 2]);
@@ -1225,9 +1226,9 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
         return;
     end
 
-    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'expected');
 
-    tb = TruthBuilder(seq, sys);
+    tb = testutils.TruthBuilder(seq, sys);
     tb.setBlocksPerTR(2 + 1 + 3 * num_shots + 1);
     tb.setSegments([2, 1, 3]);
     tb.setSegmentOrder([1, 2, 3 * ones(1, num_shots), 2]);
@@ -1408,9 +1409,9 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
         return;
     end
 
-    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'data');
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'expected');
 
-    tb = TruthBuilder(seq, sys);
+    tb = testutils.TruthBuilder(seq, sys);
     tb.setBlocksPerTR(6 + 3 + 2 + 1 + 3 * num_shots + 1);
     tb.setSegments([6, 3, 2, 1]);
     tb.setSegmentOrder([1, 2, 3, 4, 2 * ones(1, num_shots), 4]);

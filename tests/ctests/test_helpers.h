@@ -33,7 +33,7 @@
 /* ------------------------------------------------------------------ */
 /*  Path helpers -- TEST_ROOT_DIR is set by CMakeLists.txt            */
 /* ------------------------------------------------------------------ */
-#define TEST_DATA_DIR TEST_ROOT_DIR "/tests/data/"
+#define TEST_DATA_DIR TEST_ROOT_DIR "/tests/utils/expected/"
 
 /* ------------------------------------------------------------------ */
 /*  Physical constants                                                */
