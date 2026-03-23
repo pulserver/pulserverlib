@@ -9,7 +9,7 @@ function truth_plot_kspace_traj(truth)
 %   automatically and excluded.  If every trajectory is a straight line, no
 %   figure is created and an informational message is printed.
 %
-%   K-space is expressed in cycles/m (Hz·s/m, standard Pulseq convention).
+%   K-space is expressed in cycles/m (Hzs/m, standard Pulseq convention).
 %   Sample axis is centred at 0 (= k-space centre, i.e. adc_kzero_us).
 %
 %   Requires MATLAB R2017b or later (vecnorm) and R2018b or later (sgtitle).
@@ -21,7 +21,7 @@ function truth_plot_kspace_traj(truth)
         return;
     end
 
-    % ── Collect unique (adc_def_id 0-based, grad_amp[3]) blocks ─────
+    % ---- Collect unique (adc_def_id 0-based, grad_amp[3]) blocks ----------
     % Two blocks are considered identical when they have the same ADC
     % definition ID and identical (bitwise, after double conversion)
     % gradient-amplitude triple.  This matches the library's keying.
@@ -55,7 +55,7 @@ function truth_plot_kspace_traj(truth)
         return;
     end
 
-    % ── Compute k-space trajectory per unique block ──────────────────
+    % ---- Compute k-space trajectory per unique block ------------------------------------
     n_keys      = size(key_list, 1);
     kspace      = cell(n_keys, 3);   % kspace{i, ax}: n_samp x 1 (cycles/m)
     n_samp_arr  = zeros(n_keys, 1);  % sample count per key
@@ -119,14 +119,14 @@ function truth_plot_kspace_traj(truth)
         end
     end
 
-    % ── If everything is straight-line, skip ─────────────────────────
+    % ---- If everything is straight-line, skip --------------------------------------------------
     if all(is_trivial)
         fprintf('truth_plot_kspace_traj: all %d trajectory(ies) are straight lines ' ...
                 '(Cartesian/radial) - no figure created.\n', n_keys);
         return;
     end
 
-    % ── Plot non-trivial trajectories ────────────────────────────────
+    % ---- Plot non-trivial trajectories ----------------------------------------------------------------
     non_trivial = find(~is_trivial);
     n_plot      = numel(non_trivial);
 
