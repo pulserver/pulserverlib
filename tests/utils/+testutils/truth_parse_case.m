@@ -66,7 +66,7 @@ function [data_dir, base_name] = normalize_case_path(base)
 
     [in_dir, in_name, in_ext] = fileparts(base);
     if isempty(in_dir)
-        data_dir = fullfile(fileparts(mfilename('fullpath')), '..', '..', 'data');
+        data_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'expected');
     else
         data_dir = in_dir;
     end
