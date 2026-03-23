@@ -5,9 +5,11 @@ function truth_plot_kspace_traj(truth)
 %
 %   Computes the k-space trajectory for each unique (ADC-def, gradient-
 %   amplitude) combination found in the segment definitions.  Straight-line
-%   trajectories (Cartesian readout lines, radial spokes) are detected
-%   automatically and excluded.  If every trajectory is a straight line, no
-%   figure is created and an informational message is printed.
+%   trajectories (Cartesian readout lines, radial spokes) are detected and
+%   excluded by default.  Exception: if a readout block carries an explicit
+%   rotation extension event, its trajectory is shown even when straight.
+%   If every trajectory is suppressed, no figure is created and an
+%   informational message is printed.
 %
 %   K-space is expressed in cycles/m (Hzs/m, standard Pulseq convention).
 %   Sample axis is centred at 0 (= k-space centre, i.e. adc_kzero_us).
@@ -27,6 +29,7 @@ function truth_plot_kspace_traj(truth)
     % gradient-amplitude triple.  This matches the library's keying.
     key_list = zeros(0, 4);   % rows: [adc_def_id0, amp_x, amp_y, amp_z]
     blk_list = {};
+    key_has_rotation = false(0, 1);
 
     for s = 1:sdef.num_segments
         seg = sdef.segments(s);
@@ -47,6 +50,10 @@ function truth_plot_kspace_traj(truth)
             if ~is_dup
                 key_list(end+1, :) = key; %#ok<AGROW>
                 blk_list{end+1}    = blk; %#ok<AGROW>
+                key_has_rotation(end+1, 1) = logical(blk.has_rotation); %#ok<AGROW>
+            elseif logical(blk.has_rotation)
+                % Preserve explicit rotation-extension presence for this key.
+                key_has_rotation(ki, 1) = true;
             end
         end
     end
@@ -129,8 +136,14 @@ function truth_plot_kspace_traj(truth)
             k_traj(:, ax)  = k_ax;
         end
 
-        % If all three gradients are Cartesian (constant within ADC window), skip
-        if is_cartesian
+        has_rotation_evt = false;
+        if i <= numel(key_has_rotation)
+            has_rotation_evt = key_has_rotation(i);
+        end
+
+        % Keep straight-line trajectories when they come from explicit
+        % rotation-extension events (even if the effective matrix is identity).
+        if is_cartesian && ~has_rotation_evt
             is_trivial(i) = true;
         else
             is_trivial(i) = false;
@@ -139,7 +152,8 @@ function truth_plot_kspace_traj(truth)
 
     % ---- If everything is straight-line, skip --------------------------------------------------
     if all(is_trivial)
-        fprintf('truth_plot_kspace_traj: all %d trajectory(ies) are straight lines (Cartesian/radial) - no figure created.\n', n_keys);
+        fprintf(['truth_plot_kspace_traj: all %d trajectory(ies) were suppressed ' ...
+                 '(straight-line without explicit rotation event) - no figure created.\n'], n_keys);
         return;
     end
 

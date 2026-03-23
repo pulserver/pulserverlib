@@ -34,13 +34,15 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     seg      = truth.segment_def.segments(s_idx);
     n_blocks = seg.num_blocks;
 
+    blk_fmod_ids = zeros(1, n_blocks);  % 1-based freq_mod_id per block
+
     % --- Filter defs to those actually used by this segment -----------
     if isempty(p.Results.def_idx)
         % Use segment_order + segment_num_blocks to find which scan-table
         % entries belong to this segment, then collect their freq_mod_id.
         seg_order  = truth.meta.segment_order;   % 0-based segment IDs
         seg_nblk   = truth.meta.segment_num_blocks;  % blocks per segment def
-        blk_fmod_ids = zeros(1, n_blocks);  % per-block freq_mod_id (OR-merged across all TRs)
+        % Per-block freq_mod_id (OR-merged across all TRs)
         blocks_per_tr = sum(arrayfun(@(s) seg_nblk(s + 1), seg_order));
         n_scan = numel(truth.scan_table.entries);
         st_pos = 1;  % current position in scan table
@@ -61,6 +63,13 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
         if isempty(ids)
             fig = [];
             return;
+        end
+    else
+        for b = 1:n_blocks
+            fid0 = double(seg.blocks(b).freq_mod_def_id);
+            if fid0 >= 0
+                blk_fmod_ids(b) = fid0 + 1;  % 0-based -> 1-based
+            end
         end
     end
 
@@ -90,20 +99,20 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
     total_dur_ms   = block_start_ms(end);
 
     % --- Match each def to its source block via blk_fmod_ids -----------
-    def_t0_ms = zeros(1, numel(ids));   % active-window start (ms)
+    def_t0_ms_list = cell(1, numel(ids));   % active-window start list per def (ms)
     for i = 1:numel(ids)
         def = truth.freqmod_def.defs(ids(i));
+        t0_vals = [];
         for b = 1:n_blocks
             if blk_fmod_ids(b) ~= ids(i), continue; end
             blk = seg.blocks(b);
             if def.type == 0 && blk.has_rf
-                def_t0_ms(i) = block_start_ms(b) + double(blk.rf_delay) * 1e3;
-                break;
+                t0_vals(end+1) = block_start_ms(b) + double(blk.rf_delay) * 1e3; %#ok<AGROW>
             elseif def.type == 1 && blk.has_adc
-                def_t0_ms(i) = block_start_ms(b) + double(blk.adc_delay) * 1e3;
-                break;
+                t0_vals(end+1) = block_start_ms(b) + double(blk.adc_delay) * 1e3; %#ok<AGROW>
             end
         end
+        def_t0_ms_list{i} = t0_vals;
     end
 
     % --- Plot (4 rows x 2 cols: col1=freq mod, col2=phase) -------------
@@ -162,29 +171,34 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
         if def.type == 1, kind = 'ADC'; end
         def_lbls{i} = sprintf('Def %d (%s)', d, kind);
 
-        t0_ms    = def_t0_ms(i);
+        t0_list_ms = def_t0_ms_list{i};
+        if isempty(t0_list_ms)
+            continue;
+        end
         dur_ms   = double(def.duration_us) * 1e-3;
         t_win_ms = (0:double(def.num_samples)-1).' * double(def.raster_us) * 1e-3;
 
         for ax = 1:3
             fm = double(def.waveform(:, ax));
             ph = cumsum(fm * 2 * pi * dt_s);
+            for occ = 1:numel(t0_list_ms)
+                t0_ms = t0_list_ms(occ);
 
-            % Zero-padded envelope: 0 -> step up at t0 -> waveform ->
-            % step down at t0+duration -> 0 until end of segment.
-            t_plot  = [0;  t0_ms;  t0_ms + t_win_ms;  t0_ms + dur_ms;  total_dur_ms];
-            fm_plot = [0;  0;      fm;                 0;               0            ];
-            ph_plot = [0;  0;      ph;                 ph(end);         ph(end)      ];
+                % Zero-padded envelope around each active window.
+                t_plot  = [0;  t0_ms;  t0_ms + t_win_ms;  t0_ms + dur_ms;  total_dur_ms];
+                fm_plot = [0;  0;      fm;                 0;               0            ];
+                ph_plot = [0;  0;      ph;                 ph(end);         ph(end)      ];
 
-            plot(fm_ax(ax), t_plot, fm_plot, 'Color', cmap(i,:), 'LineWidth', 1.2);
-            plot(ph_ax(ax), t_plot, ph_plot, 'Color', cmap(i,:), 'LineWidth', 1.2);
+                plot(fm_ax(ax), t_plot, fm_plot, 'Color', cmap(i,:), 'LineWidth', 1.2);
+                plot(ph_ax(ax), t_plot, ph_plot, 'Color', cmap(i,:), 'LineWidth', 1.2);
 
-            % Diamond at the interpolated cumulative phase at ref_time.
-            ref_t_ms = double(def.ref_time_us) * 1e-3;
-            ref_ph_interp = interp1(t_win_ms, ph, ref_t_ms, 'linear', ph(end));
-            plot(ph_ax(ax), t0_ms + ref_t_ms, ref_ph_interp, 'd', ...
-                'Color', cmap(i,:), 'MarkerSize', 7, 'MarkerFaceColor', cmap(i,:), ...
-                'HandleVisibility', 'off');
+                % Diamond at the interpolated cumulative phase at ref_time.
+                ref_t_ms = double(def.ref_time_us) * 1e-3;
+                ref_ph_interp = interp1(t_win_ms, ph, ref_t_ms, 'linear', ph(end));
+                plot(ph_ax(ax), t0_ms + ref_t_ms, ref_ph_interp, 'd', ...
+                    'Color', cmap(i,:), 'MarkerSize', 7, 'MarkerFaceColor', cmap(i,:), ...
+                    'HandleVisibility', 'off');
+            end
         end
 
         if isfield(truth, 'freqmod_plan') && truth.freqmod_plan.num_plans > 0
@@ -195,24 +209,33 @@ function fig = truth_plot_freqmod_defs(base_or_truth, varargin)
                 dur_ms = double(def.duration_us) * 1e-3;
                 for q = 1:min(4, truth.freqmod_plan.num_probes)
                     wf = pe.waveforms(q, 1:pe.num_samples).';
-                    t_plot  = [0;  t0_ms;  t0_ms + t_win_ms;  t0_ms + dur_ms;  total_dur_ms];
-                    wf_plot = [0;  0;      wf;                 0;               0            ];
                     ph_tot = pe.phase_total(q);
-                    ph_plot = [0; 0; ph_tot; ph_tot];
-                    t_phase = [0; t0_ms + double(def.ref_time_us) * 1e-3; total_dur_ms; total_dur_ms];
+                    for occ = 1:numel(t0_list_ms)
+                        t0_ms = t0_list_ms(occ);
+                        t_plot  = [0;  t0_ms;  t0_ms + t_win_ms;  t0_ms + dur_ms;  total_dur_ms];
+                        wf_plot = [0;  0;      wf;                 0;               0            ];
+                        ph_plot = [0; 0; ph_tot; ph_tot];
+                        t_phase = [0; t0_ms + double(def.ref_time_us) * 1e-3; total_dur_ms; total_dur_ms];
 
-                    plot(fm_ax(4), t_plot, wf_plot, ...
-                        'Color', probe_colors(q, :), 'LineWidth', 1.2, ...
-                        'DisplayName', sprintf('Def %d %s', d, probe_labels{q}));
-                    plot(ph_ax(4), t_phase, ph_plot, ...
-                        'Color', probe_colors(q, :), 'LineWidth', 1.2, ...
-                        'DisplayName', sprintf('Def %d %s', d, probe_labels{q}));
-                    
-                    % Diamond at the reference timepoint on phase subplot
-                    ref_t_ms = double(def.ref_time_us) * 1e-3;
-                    plot(ph_ax(4), t0_ms + ref_t_ms, ph_tot, 'd', ...
-                        'Color', probe_colors(q, :), 'MarkerSize', 7, ...
-                        'MarkerFaceColor', probe_colors(q, :), 'HandleVisibility', 'off');
+                        if occ == 1
+                            dname = sprintf('Def %d %s', d, probe_labels{q});
+                        else
+                            dname = '';
+                        end
+
+                        plot(fm_ax(4), t_plot, wf_plot, ...
+                            'Color', probe_colors(q, :), 'LineWidth', 1.2, ...
+                            'DisplayName', dname);
+                        plot(ph_ax(4), t_phase, ph_plot, ...
+                            'Color', probe_colors(q, :), 'LineWidth', 1.2, ...
+                            'DisplayName', dname);
+
+                        % Diamond at the reference timepoint on phase subplot.
+                        ref_t_ms = double(def.ref_time_us) * 1e-3;
+                        plot(ph_ax(4), t0_ms + ref_t_ms, ph_tot, 'd', ...
+                            'Color', probe_colors(q, :), 'MarkerSize', 7, ...
+                            'MarkerFaceColor', probe_colors(q, :), 'HandleVisibility', 'off');
+                    end
                 end
             end
         end

@@ -679,6 +679,33 @@ classdef TruthBuilder < handle
             obj.segment_data.num_segments = num_seg;
             obj.segment_data.segments = cell(1, num_seg);
 
+            % In pass-expanded mode, canonical TR already includes ONCE filtering
+            % over all averages; reuse it so segment blocks match exported TR.
+            if obj.multipass_info.enabled && obj.num_averages > 1 && ...
+               num_seg == 1 && all(seg_order == 1)
+                cseq = obj.canonical_seqs{1};
+                n_canon_blocks = length(cseq.blockEvents);
+
+                obj.segment_sizes(1) = n_canon_blocks;
+
+                seg_blocks = cell(1, n_canon_blocks);
+                block_start = 0.0;
+                for b = 1:n_canon_blocks
+                    block = cseq.getBlock(b);
+                    seg_blocks{b} = obj.extractBlockData(block, block_start);
+                    block_start = block_start + block.blockDuration;
+                end
+
+                [rf_adc_gap, adc_adc_gap] = obj.computeSegmentGaps(seg_blocks);
+
+                seg = struct();
+                seg.blocks = seg_blocks;
+                seg.rf_adc_gap_us = rf_adc_gap;
+                seg.adc_adc_gap_us = adc_adc_gap;
+                obj.segment_data.segments{1} = seg;
+                return;
+            end
+
             % Compute start offsets of each segment instance in one TR.
             num_inst = length(seg_order);
             inst_start = zeros(1, num_inst);
@@ -994,8 +1021,9 @@ classdef TruthBuilder < handle
                 end
             else
                 obj.label_states_per_scan = zeros(n, 0, 'int32');
-                obj.label_states_per_adc = zeros(0, 0, 'int32');
-                obj.label_adc_scan_rows = zeros(0, 1, 'int32');
+                adc_rows = find(obj.scan_table(:, 7) ~= 0);
+                obj.label_states_per_adc = zeros(length(adc_rows), 0, 'int32');
+                obj.label_adc_scan_rows = int32(adc_rows(:) - 1);  % 0-based rows
                 obj.label_adc_value_min = zeros(1, 0, 'int32');
                 obj.label_adc_value_max = zeros(1, 0, 'int32');
             end
@@ -1850,9 +1878,8 @@ classdef TruthBuilder < handle
 
         function waveforms = blockGradWaveformsInWindow(block, wstart, wend)
         % BLOCKGRADWAVEFORMSINWINDOW  Extract gradient waveforms in active window.
-        %   For each gradient with fixed raster, finds samples between wstart and wend,
-        %   extracts them, and pads to common length for comparison.
-        %   Returns cell array {gx_samples, gy_samples, gz_samples} or empty if no grads.
+        %   Uses knot interpolation so windows fully inside flat segments are preserved.
+        %   Returns cell array {gx_samples, gy_samples, gz_samples}.
             waveforms = {};
             axes = {'gx', 'gy', 'gz'};
             for ch = 1:3
@@ -1860,10 +1887,20 @@ classdef TruthBuilder < handle
                 if isfield(block, ax) && ~isempty(block.(ax))
                     grad = block.(ax);
                     [t, w] = testutils.TruthBuilder.gradToKnots(grad);
-                    % Find indices within window
-                    in_window = (t >= wstart) & (t <= wend);
-                    if any(in_window)
-                        waveforms{ch} = w(in_window);
+                    [t, iu] = unique(t(:), 'last');
+                    w = w(iu);
+
+                    if wend <= wstart || numel(t) < 2
+                        waveforms{ch} = [];
+                        continue;
+                    end
+
+                    tk = t(t > wstart & t < wend);
+                    pts = [wstart; tk; wend];
+                    vals = interp1(t, w, pts, 'linear', 0);
+
+                    if any(abs(vals) > 0)
+                        waveforms{ch} = vals;
                     else
                         waveforms{ch} = [];
                     end
@@ -1912,18 +1949,21 @@ classdef TruthBuilder < handle
             result = false;
             if isempty(grad), return; end
 
-            if strcmp(grad.type, 'trap') || strcmp(grad.type, 'trapezoid')
-                flat_start = grad.delay + grad.riseTime;
-                flat_end   = grad.delay + grad.riseTime + grad.flatTime;
-                result = (flat_start < wend) && (flat_end > wstart);
-            else
-                local_start = wstart - grad.delay;
-                local_end   = wend   - grad.delay;
-                in_window = (grad.tt >= local_start) & (grad.tt <= local_end);
-                if any(in_window)
-                    result = any(abs(grad.waveform(in_window)) > 0);
-                end
+            if wend <= wstart
+                return;
             end
+
+            [t, w] = testutils.TruthBuilder.gradToKnots(grad);
+            [t, iu] = unique(t(:), 'last');
+            w = w(iu);
+            if numel(t) < 2
+                return;
+            end
+
+            tk = t(t > wstart & t < wend);
+            pts = [wstart; tk; wend];
+            vals = interp1(t, w, pts, 'linear', 0);
+            result = any(abs(vals) > 0);
         end
 
         function [t, w] = gradToKnots(grad)

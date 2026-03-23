@@ -52,7 +52,41 @@ function truth = truth_parse_case(base)
             'max_samples', 0, 'plans', [], 'scan_len', 0, 'scan_to_plan', []);
     end
 
+    truth = local_backfill_label_adc_rows(truth);
+
     truth.validation = local_validate(truth);
+end
+
+function truth = local_backfill_label_adc_rows(truth)
+% Backfill legacy artifacts that stored no ADC rows when num_labels == 0.
+    if ~isfield(truth, 'label_state') || ~isfield(truth, 'scan_table')
+        return;
+    end
+
+    if truth.label_state.num_labels ~= 0
+        return;
+    end
+
+    if truth.label_state.adc_rows > 0
+        return;
+    end
+
+    adc_idx = zeros(0, 1);
+    for i = 1:truth.scan_table.num_entries
+        if truth.scan_table.entries(i).adc_flag ~= 0
+            adc_idx(end+1, 1) = i - 1; %#ok<AGROW>
+        end
+    end
+
+    truth.label_state.adc_rows = size(adc_idx, 1);
+    truth.label_state.adc_scan_row_idx = adc_idx;
+    truth.label_state.adc_states = zeros(truth.label_state.adc_rows, 0);
+    truth.label_state.adc_value_min = zeros(1, 0);
+    truth.label_state.adc_value_max = zeros(1, 0);
+
+    if isfield(truth, 'meta') && truth.meta.num_label_adc_rows == 0
+        truth.meta.num_label_adc_rows = truth.label_state.adc_rows;
+    end
 end
 
 function [data_dir, base_name] = normalize_case_path(base)

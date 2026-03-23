@@ -20,6 +20,20 @@ function truth_print_label_table(truth)
     st   = truth.scan_table;
 
     if lbs.adc_rows == 0
+        adc_scan_idx = [];
+        for i = 1:st.num_entries
+            if double(st.entries(i).adc_flag) ~= 0
+                adc_scan_idx(end+1, 1) = i - 1; %#ok<AGROW>
+            end
+        end
+        if ~isempty(adc_scan_idx)
+            lbs.adc_rows = numel(adc_scan_idx);
+            lbs.adc_scan_row_idx = adc_scan_idx;
+            lbs.adc_states = zeros(lbs.adc_rows, lbs.num_labels);
+        end
+    end
+
+    if lbs.adc_rows == 0
         fprintf('\n=== Label table: %s -- no ADC rows ===\n', truth.base_name);
         return;
     end
