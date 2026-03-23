@@ -15,5 +15,5 @@ num_freqmod_plan_probes 4
 num_freqmod_plan_entries 2
 num_labels 0
 num_label_scan_rows 108
-num_label_adc_rows 0
+num_label_adc_rows 24
 segment_order 0 1 2 2 2 2 2 2 2 2 1
