@@ -36,11 +36,25 @@ function truth_print_scan_table(truth, varargin)
 
     n = st.num_entries;
 
-    % ---- Unique rotation matrices (first-appearance) ----------------------------------------
+    % ── Unique rotation matrices (first-appearance) ────────────────────
+    % rot_id=0 means identity (no rotation); others are 1-based unique rotations
     rot_ids = zeros(n, 1);
     rot_list = zeros(0, 9);
+    
+    % Identity matrix (tolerance 1e-5)
+    I3 = eye(3);
+    I3_flat = I3(:)';
+    
     for i = 1:n
         rm = double(st.entries(i).rotmat);         % 1x9
+        
+        % Check if this is (approximately) identity
+        if max(abs(rm - I3_flat)) < 1e-5
+            rot_ids(i) = 0;  % rot_id=0 means identity/no rotation
+            continue;
+        end
+        
+        % Otherwise, find or create unique rotation ID
         found = false;
         for r = 1:size(rot_list, 1)
             if max(abs(rot_list(r,:) - rm)) < 1e-5
@@ -55,19 +69,19 @@ function truth_print_scan_table(truth, varargin)
         end
     end
 
-    % ---- Shot ID from label_state ("SEG" label, case-insensitive) --------------
+    % ── Shot ID from label_state ("SEG" label, case-insensitive) ───────
     shot_ids = ones(n, 1);
     seg_col = find_label_col(lbs, 'SEG');
     if seg_col > 0 && lbs.scan_rows == n
         shot_ids = lbs.scan_states(:, seg_col) + 1;   % store 0-based, print 1-based
     end
 
-    % ---- Check freqmod_plan coverage ------------------------------------------------------------------------
+    % ── Check freqmod_plan coverage ────────────────────────────────────
     has_plan = (fp.num_plans > 0) && ~isempty(fp.scan_to_plan) && ...
                (numel(fp.scan_to_plan) == n);
     print_shift = has_plan && (norm(shift) > 0) && (fd.num_defs > 0);
 
-    % ---- Header ------------------------------------------------------------------------------------------------------------------
+    % ── Header ─────────────────────────────────────────────────────────
     fprintf('\n=== Scan table: %s (%d rows%s) ===\n', ...
         truth.base_name, n, iif(adc_only, ', ADC only', ''));
 
@@ -91,7 +105,7 @@ function truth_print_scan_table(truth, varargin)
     sep = repmat('-', 1, 90 + iif(has_plan, 48, 0) + iif(print_shift, 108, 0));
     fprintf('%s\n', sep);
 
-    % ---- Row loop --------------------------------------------------------------------------------------------------------------
+    % ── Row loop ───────────────────────────────────────────────────────
     for i = 1:n
         e = st.entries(i);
         if adc_only && (e.adc_flag == 0)
@@ -107,7 +121,7 @@ function truth_print_scan_table(truth, varargin)
             rot_ids(i), e.freq_mod_id);
 
         if has_plan && (e.freq_mod_id > 0)
-            pi_idx = fp.scan_to_plan(i) + 1;   % scan_to_plan is 0-based -> 1-based
+            pi_idx = fp.scan_to_plan(i) + 1;   % scan_to_plan is 0-based → 1-based
             if pi_idx >= 1 && pi_idx <= fp.num_plans
                 pt = fp.plans(pi_idx).phase_total;   % 1 × num_probes
                 % Pad to 4 columns in case num_probes < 4
@@ -134,7 +148,7 @@ function truth_print_scan_table(truth, varargin)
     fprintf('%s\n', sep);
 end
 
-% ---- Helpers ------------------------------------------------------------------------------------------------------------------------
+% ── Helpers ────────────────────────────────────────────────────────────
 function col = find_label_col(lbs, name)
     col = -1;
     for k = 1:lbs.num_labels
