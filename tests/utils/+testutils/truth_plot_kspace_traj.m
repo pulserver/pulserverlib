@@ -121,8 +121,7 @@ function truth_plot_kspace_traj(truth)
 
     % ---- If everything is straight-line, skip --------------------------------------------------
     if all(is_trivial)
-        fprintf('truth_plot_kspace_traj: all %d trajectory(ies) are straight lines ' ...
-                '(Cartesian/radial) - no figure created.\n', n_keys);
+        fprintf('truth_plot_kspace_traj: all %d trajectory(ies) are straight lines (Cartesian/radial) - no figure created.\n', n_keys);
         return;
     end
 
