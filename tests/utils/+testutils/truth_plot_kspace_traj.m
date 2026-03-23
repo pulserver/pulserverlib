@@ -59,10 +59,10 @@ function truth_plot_kspace_traj(truth)
     n_keys      = size(key_list, 1);
     kspace      = cell(n_keys, 3);   % kspace{i, ax}: n_samp x 1 (cycles/m)
     n_samp_arr  = zeros(n_keys, 1);  % sample count per key
-    center_samp_arr = zeros(n_keys, 1); % 0-based centre sample per key
+    anchor_idx_arr = zeros(n_keys, 1); % 0-based sample index of anchor point
     is_trivial  = true(n_keys, 1);   % straight-line flag
 
-    K_TOL_REL = 1e-3;   % relative deviation threshold for straight-line test
+    G_TOL = 1e-3;   % Hz/m tolerance for gradient constancy check (Cartesian detection)
 
     for i = 1:n_keys
         blk     = blk_list{i};
@@ -76,45 +76,63 @@ function truth_plot_kspace_traj(truth)
         if n_samp < 2 || dwell_s <= 0
             continue;
         end
-        dwell_us     = dwell_s * 1e6;
-        center_samp0 = max(0, min(n_samp-1, ...
-            round(double(blk.adc_kzero_us) / dwell_us)));   % 0-based
 
+        % ADC window bounds (in seconds, within the block)
+        adc_start_s = double(blk.adc_delay);
+        adc_end_s   = adc_start_s + n_samp * dwell_s;
+        
+        % Anchor point (k-space center) time and its sample index
+        anchor_time_s = double(blk.adc_kzero_us) * 1e-6;
+        anchor_idx    = round((anchor_time_s - adc_start_s) / dwell_s);
+        anchor_idx    = max(0, min(n_samp - 1, anchor_idx));  % clamp to valid range
+        
         n_samp_arr(i)      = n_samp;
-        center_samp_arr(i) = center_samp0;
+        anchor_idx_arr(i) = anchor_idx;
 
-        % Absolute time (within the block, seconds) of each ADC sample.
-        % Sample 0-based index j is at:
-        %   t_j = adc_kzero_us*1e-6 + (j - center_samp0) * dwell_s
+        % Time of each ADC sample within the ADC window (absolute time in block)
         j_vec = (0:n_samp-1)';
-        t_s   = double(blk.adc_kzero_us)*1e-6 + (j_vec - center_samp0) * dwell_s;
+        t_s   = adc_start_s + j_vec * dwell_s;
 
         k_traj = zeros(n_samp, 3);
+        is_cartesian = true;
+        
         for ax = 1:3
             gt = double(blk.grad_time_s{ax}(:));
-            if numel(gt) < 2
+            gw = double(blk.grad_wave{ax}(:));
+            
+            if numel(gt) < 1 || numel(gw) < 1
                 kspace{i, ax} = zeros(n_samp, 1);
                 continue;
             end
-            gw     = double(blk.grad_wave{ax}(:)) .* double(blk.grad_amp(ax));
+            
+            % Apply gradient amplitude
+            gw = gw .* double(blk.grad_amp(ax));
+            
+            % Resample gradient onto ADC dwell grid (within ADC window)
             g_at_t = interp1(gt, gw, t_s, 'linear', 0);
-            k_ax   = cumsum(g_at_t) * dwell_s;           % cycles/m
-            k_ax   = k_ax - k_ax(center_samp0 + 1);      % zero at k-centre
+            
+            % Check Cartesian: is gradient constant within ADC window?
+            g_min = min(g_at_t);
+            g_max = max(g_at_t);
+            if (g_max - g_min) > G_TOL
+                is_cartesian = false;
+            end
+            
+            % Integrate to get k-space (cumsum of gradient * dwell)
+            k_ax = cumsum(g_at_t) * dwell_s;           % cycles/m
+            
+            % Center at anchor point: subtract k at anchor index
+            k_at_anchor = k_ax(anchor_idx + 1);        % +1 for 1-based indexing
+            k_ax = k_ax - k_at_anchor;
+            
             kspace{i, ax}  = k_ax;
             k_traj(:, ax)  = k_ax;
         end
 
-        % Straight-line detection in 3-D k-space.
-        % A trajectory is a straight line when every sample lies on the
-        % chord from the first to the last k-space point within a relative
-        % tolerance K_TOL_REL.
-        k_first = k_traj(1, :);
-        k_last  = k_traj(end, :);
-        t_lin   = j_vec / max(n_samp-1, 1);
-        k_line  = k_first + t_lin .* (k_last - k_first);
-        deviation = max(vecnorm(k_traj - k_line, 2, 2));
-        k_scale   = max(vecnorm(k_traj, 2, 2)) + eps;
-        if deviation > K_TOL_REL * k_scale
+        % If all three gradients are Cartesian (constant within ADC window), skip
+        if is_cartesian
+            is_trivial(i) = true;
+        else
             is_trivial(i) = false;
         end
     end
@@ -142,18 +160,18 @@ function truth_plot_kspace_traj(truth)
             blk      = blk_list{i};
             adc_id1  = double(blk.adc_def_id) + 1;
             n_samp   = n_samp_arr(i);
-            center_s = center_samp_arr(i);
-            samp_ax  = (0:n_samp-1) - center_s;   % centre at 0
+            anchor_idx = anchor_idx_arr(i);
+            samp_ax  = (0:n_samp-1) - anchor_idx;   % center at anchor
 
             k_ax = kspace{i, row};
-            if isempty(k_ax)
-                k_ax = zeros(1, n_samp);
+            if isempty(k_ax) || numel(k_ax) ~= n_samp
+                k_ax = zeros(n_samp, 1);
             end
             plot(samp_ax, k_ax(:)', ...
                 'DisplayName', sprintf('traj %d  (adc=%d)', jj, adc_id1-1));
         end
         hold off;
-        xlabel('Sample (0 = k-centre)');
+        xlabel('Sample (0 = k-anchor)');
         ylabel('cycles/m');
         title(ax_names{row});
         if n_plot > 1
