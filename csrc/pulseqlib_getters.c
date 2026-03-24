@@ -959,7 +959,23 @@ static int pulseqlib__block_rf_has_uniform_raster(
     if (bdef->rf_id == -1) return -1;
 
     rdef = &desc->rf_definitions[bdef->rf_id];
-    return (rdef->time_shape_id != 0) ? 1 : 0;
+    return (rdef->time_shape_id == 0) ? 1 : 0;
+}
+
+static float* pulseqlib__alloc_uniform_time_us(int num_samples, float raster_us)
+{
+    float* t;
+    int i;
+
+    if (num_samples <= 0 || raster_us <= 0.0f) return NULL;
+
+    t = (float*)PULSEQLIB_ALLOC((size_t)num_samples * sizeof(float));
+    if (!t) return NULL;
+
+    for (i = 0; i < num_samples; ++i)
+        t[i] = ((float)i + 0.5f) * raster_us;
+
+    return t;
 }
 
 static int pulseqlib__block_rf_is_complex(
@@ -1219,7 +1235,10 @@ float* pulseqlib_get_rf_time_us(
     if (bdef->rf_id == -1) return NULL;
 
     rdef = &desc->rf_definitions[bdef->rf_id];
-    if (rdef->time_shape_id <= 0) return NULL;
+    if (rdef->time_shape_id <= 0) {
+        npts = pulseqlib__get_rf_num_samples(coll, seg_idx, blk_idx);
+        return pulseqlib__alloc_uniform_time_us(npts, desc->rf_raster_us);
+    }
 
     shape_idx = rdef->time_shape_id - 1;
     if (shape_idx < 0 || shape_idx >= desc->num_shapes) return NULL;
@@ -1637,7 +1656,10 @@ float* pulseqlib_get_grad_time_us(
     }
 
     /* arbitrary: decompress time shape */
-    if (gdef->unused_or_time_shape_id <= 0) return NULL;
+    if (gdef->unused_or_time_shape_id <= 0) {
+        ns = pulseqlib__get_grad_num_samples(coll, seg_idx, blk_idx, axis);
+        return pulseqlib__alloc_uniform_time_us(ns, desc->grad_raster_us);
+    }
 
     shape_idx = gdef->unused_or_time_shape_id - 1;
     if (shape_idx < 0 || shape_idx >= desc->num_shapes) return NULL;

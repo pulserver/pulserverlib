@@ -153,12 +153,35 @@ static TEST_MAYBE_UNUSED int load_seq_with_averages(
                           num_averages);
 }
 
+/**
+ * Load a .seq file from TEST_DATA_DIR with signature verification enabled.
+ *
+ * Identical to load_seq_with_averages(num_averages=1) but passes
+ * verify_signature=1, so an MD5 mismatch returns
+ * PULSEQLIB_ERR_SIGNATURE_MISMATCH instead of loading successfully.
+ */
+static TEST_MAYBE_UNUSED int load_seq_with_signature_check(
+    pulseqlib_collection** coll,
+    const char* filename,
+    const pulseqlib_opts* opts)
+{
+    pulseqlib_diagnostic diag = PULSEQLIB_DIAGNOSTIC_INIT;
+    char path[512];
+
+    (void)snprintf(path, sizeof(path), "%s%s", TEST_DATA_DIR, filename);
+    return pulseqlib_read(coll, &diag, path, opts,
+                          0,   /* cache_binary     */
+                          1,   /* verify_signature — enabled */
+                          0,   /* parse_labels     */
+                          1);  /* num_averages     */
+}
+
 /* ------------------------------------------------------------------ */
 /*  Forward declarations for suite entry points                       */
 /* ------------------------------------------------------------------ */
 
 int test_safety_grad_main(void);
 int test_rf_stats_main(void);
-int test_segmentation_main(void);
+int test_sequences_main(void);
 
 #endif /* TEST_HELPERS_H */

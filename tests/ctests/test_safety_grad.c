@@ -281,6 +281,77 @@ MU_TEST_SUITE(suite_grad_continuity)
 }
 
 /* ================================================================== */
+/*  Suite C — Acoustic forbidden-frequency safety tests              */
+/* ================================================================== */
+
+/**
+ * Load a sequence, run check_safety with the given forbidden bands,
+ * compare return code to expected_code.
+ *
+ * expected_code > 0 means a passing (success) result is expected.
+ * expected_code <= 0 means that specific error code is expected.
+ */
+static void run_acoustic_check(const char* filename, int num_bands,
+                                const pulseqlib_forbidden_band* bands,
+                                int expected_code)
+{
+    pulseqlib_collection* coll = NULL;
+    int rc;
+
+    rc = load_seq(&coll, filename, &s_opts);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "load_seq failed for acoustic test");
+
+    pulseqlib_diagnostic_init(&s_diag);
+    rc = pulseqlib_check_safety(coll, &s_diag, &s_opts,
+                                num_bands, bands,
+                                NULL, 0.0f /* no PNS */);
+
+    if (expected_code > 0) {
+        mu_assert(PULSEQLIB_SUCCEEDED(rc), "expected acoustic safety pass");
+    } else {
+        mu_assert_int_eq(expected_code, rc);
+    }
+
+    pulseqlib_collection_free(coll);
+}
+
+/*
+ * EPI readout produces a peaked acoustic spectrum at 1/ESP and harmonics.
+ * For this EPI sequence: readoutTime = 580 us, ESP ~ 640 us,
+ * giving a fundamental at ~1560 Hz.  Forbid a band spanning
+ * 800–2500 Hz (covers 1/ESP for ESP in 400–1250 us range) at zero
+ * amplitude and expect an acoustic violation.
+ */
+MU_TEST(test_epi_forbidden_readout_peak)
+{
+    pulseqlib_forbidden_band bands[2];
+
+    /* Band 1: 800–2500 Hz — covers 1/ESP fundamental */
+    bands[0].freq_min_hz           = 800.0f;
+    bands[0].freq_max_hz           = 2500.0f;
+    bands[0].max_amplitude_hz_per_m = 0.0f;
+
+    /* Band 2: 2500–4500 Hz — covers 2nd harmonic */
+    bands[1].freq_min_hz           = 2500.0f;
+    bands[1].freq_max_hz           = 4500.0f;
+    bands[1].max_amplitude_hz_per_m = 0.0f;
+
+    run_acoustic_check("epi_2d_1sl_1avg.seq", 2, bands,
+                       PULSEQLIB_ERR_ACOUSTIC_VIOLATION);
+}
+
+static void acoustic_setup(void)
+{
+    gre_opts_init(&s_opts);
+}
+
+MU_TEST_SUITE(suite_acoustic_safety)
+{
+    MU_SUITE_CONFIGURE(acoustic_setup, NULL);
+    MU_RUN_TEST(test_epi_forbidden_readout_peak);
+}
+
+/* ================================================================== */
 /*  Entry point                                                       */
 /* ================================================================== */
 
@@ -295,6 +366,7 @@ int test_safety_grad_main(void)
 
     MU_RUN_SUITE(suite_grad_limits);
     MU_RUN_SUITE(suite_grad_continuity);
+    MU_RUN_SUITE(suite_acoustic_safety);
     MU_REPORT();
     return MU_EXIT_CODE;
 }

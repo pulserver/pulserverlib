@@ -141,6 +141,80 @@ MU_TEST_SUITE(suite_rf_consistency)
 }
 
 /* ================================================================== */
+/*  Suite C — RF prep/cooldown structural failures                    */
+/* ================================================================== */
+
+/* test case 05: single-pass sequence whose cooldown block exceeds the
+ * 100 ms non-degenerate-cooldown threshold.  The library rejects the
+ * sequence during pulseqlib_read(), before consistency checking. */
+MU_TEST(test_rf_prep_cooldown_too_long)
+{
+    run_consistency_check("05_rfprep_fail_cooldown_too_long.seq",
+                          PULSEQLIB_ERR_TR_COOLDOWN_TOO_LONG);
+}
+
+/* test case 06: two-pass sequence where pass-2 uses a different RF
+ * amplitude than pass-1.  The cross-pass RF consistency check fires
+ * when pulseqlib_check_consistency() is called. */
+MU_TEST(test_rf_multipass_variable_structure)
+{
+    run_consistency_check("06_rfprep_fail_multipass_variable.seq",
+                          PULSEQLIB_ERR_TR_PATTERN_MISMATCH);
+}
+
+MU_TEST_SUITE(suite_rf_prep_cooldown)
+{
+    MU_SUITE_CONFIGURE(rf_consistency_setup, NULL);
+    MU_RUN_TEST(test_rf_prep_cooldown_too_long);
+    MU_RUN_TEST(test_rf_multipass_variable_structure);
+}
+
+/* ================================================================== */
+/*  Suite D — 8-channel CP quadrature target                          */
+/* ================================================================== */
+
+/* Assertion target for future quadrature (RSS) channel combination:
+ * 8-channel CP shim with per-channel weight 1/sqrt(8) should yield
+ * the same RF stats as the single-channel 1 ms 180-degree baseline.
+ *
+ * NOTE: This assertion tests the desired *post-update* behaviour.
+ * Under the current complex-sum combination the combined amplitude
+ * will be ~1414 Hz (8 coherent phasors), so this test is expected
+ * to FAIL at runtime until the library is updated.  Compilation
+ * must succeed. */
+MU_TEST(test_cp_8ch_matches_1ch_180deg)
+{
+    pulseqlib_opts opts;
+    pulseqlib_collection* coll = NULL;
+    pulseqlib_rf_stats stats8 = PULSEQLIB_RF_STATS_INIT;
+    int rc;
+
+    default_opts_init(&opts);
+    rc = load_seq(&coll, "07_rfstat_cp_8ch_180.seq", &opts);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "load_seq failed for 8ch CP case");
+
+    rc = pulseqlib_get_rf_stats(coll, &stats8, 0, 0);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "get_rf_stats failed for 8ch CP");
+
+    /* Under quadrature (RSS) aggregation across 8 channels each at
+     * 500/sqrt(8) Hz, the combined base amplitude must match the
+     * single-channel 1 ms 180-degree reference (500 Hz). */
+    mu_assert_float_near("8ch CP base_amp_hz",
+        500.0f, stats8.base_amplitude_hz, 5.0f);
+    mu_assert_float_near("8ch CP flip_angle",
+        (float)M_PI, stats8.flip_angle_deg, 0.01f);
+    mu_assert_float_near("8ch CP duration_us",
+        999.0f, stats8.duration_us, 2.0f);
+
+    pulseqlib_collection_free(coll);
+}
+
+MU_TEST_SUITE(suite_rf_cp_8ch)
+{
+    MU_RUN_TEST(test_cp_8ch_matches_1ch_180deg);
+}
+
+/* ================================================================== */
 /*  Entry point                                                       */
 /* ================================================================== */
 
@@ -155,6 +229,8 @@ int test_rf_stats_main(void)
 
     MU_RUN_SUITE(suite_rf_stats);
     MU_RUN_SUITE(suite_rf_consistency);
+    MU_RUN_SUITE(suite_rf_prep_cooldown);
+    MU_RUN_SUITE(suite_rf_cp_8ch);
     MU_REPORT();
     return MU_EXIT_CODE;
 }

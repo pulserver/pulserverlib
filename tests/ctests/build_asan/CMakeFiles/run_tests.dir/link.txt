@@ -1,0 +1,1 @@
+/usr/bin/cc -fsanitize=address -fno-omit-frame-pointer -g -fsanitize=address CMakeFiles/run_tests.dir/test_rf_stats.c.o CMakeFiles/run_tests.dir/test_runner.c.o CMakeFiles/run_tests.dir/test_safety_grad.c.o CMakeFiles/run_tests.dir/test_sequences.c.o -o bin/run_tests  csrc_build/libpulseqlib.a -lm 

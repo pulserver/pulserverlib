@@ -335,7 +335,7 @@ static TSEG_MAYBE_UNUSED int parse_block_meta(const char* path, block_meta* out)
  *       int32   freq_mod_num_samples;  int32 freq_mod_def_id
  */
 
-#define SEG_DEF_MAX_BLOCKS   8
+#define SEG_DEF_MAX_BLOCKS   80
 #define SEG_DEF_MAX_WAVE     4096   /* generous upper bound per axis */
 
 typedef struct seg_block_def {
@@ -406,11 +406,19 @@ static TSEG_MAYBE_UNUSED int parse_seg_def(const char* path, seg_def_file* out)
 #define RDFN(arr,n) if ((n) > 0) { if (fread((arr), sizeof(float), (size_t)(n), f) != (size_t)(n)) { fclose(f); return 0; } }
 
     RD4(out->num_segments);
-    if (out->num_segments < 0 || out->num_segments > MAX_SEGMENTS) { fclose(f); return 0; }
+    if (out->num_segments < 0 || out->num_segments > MAX_SEGMENTS) {
+        fprintf(stderr, "[parse_seg_def] %s: num_segments=%d exceeds MAX_SEGMENTS=%d\n",
+                path, out->num_segments, MAX_SEGMENTS);
+        fclose(f); return 0;
+    }
 
     for (s = 0; s < out->num_segments; ++s) {
         RD4(out->num_blocks[s]);
-        if (out->num_blocks[s] < 0 || out->num_blocks[s] > SEG_DEF_MAX_BLOCKS) { fclose(f); return 0; }
+        if (out->num_blocks[s] < 0 || out->num_blocks[s] > SEG_DEF_MAX_BLOCKS) {
+            fprintf(stderr, "[parse_seg_def] %s: segment %d num_blocks=%d exceeds SEG_DEF_MAX_BLOCKS=%d\n",
+                path, s, out->num_blocks[s], SEG_DEF_MAX_BLOCKS);
+            fclose(f); return 0;
+        }
 
         for (b = 0; b < out->num_blocks[s]; ++b) {
             seg_block_def* blk = &out->blocks[s][b];
@@ -431,7 +439,11 @@ static TSEG_MAYBE_UNUSED int parse_seg_def(const char* path, seg_def_file* out)
             RDF(blk->rf_raster_us);   /* new: rfRasterTime in us */
             RD4(n);
             blk->rf_n = n;
-            if (n > SEG_DEF_MAX_WAVE) { fclose(f); return 0; }
+            if (n > SEG_DEF_MAX_WAVE) {
+                fprintf(stderr, "[parse_seg_def] %s: segment %d block %d rf_n=%d exceeds SEG_DEF_MAX_WAVE=%d\n",
+                        path, s, b, n, SEG_DEF_MAX_WAVE);
+                fclose(f); return 0;
+            }
             RDFN(blk->rf_rho, n);
             RDFN(blk->rf_time_s, n);
 
@@ -441,7 +453,11 @@ static TSEG_MAYBE_UNUSED int parse_seg_def(const char* path, seg_def_file* out)
                 RDF(blk->grad_amp[ax]);
                 RD4(n);
                 blk->grad_n[ax] = n;
-                if (n > SEG_DEF_MAX_WAVE) { fclose(f); return 0; }
+                if (n > SEG_DEF_MAX_WAVE) {
+                    fprintf(stderr, "[parse_seg_def] %s: segment %d block %d axis %d grad_n=%d exceeds SEG_DEF_MAX_WAVE=%d\n",
+                            path, s, b, ax, n, SEG_DEF_MAX_WAVE);
+                    fclose(f); return 0;
+                }
                 RDFN(blk->grad_wave[ax], n);
                 RDFN(blk->grad_time_s[ax], n);
             }
@@ -582,7 +598,7 @@ static TSEG_MAYBE_UNUSED int parse_arb_grad(const char* path, arb_grad_waveform*
 /* ------------------------------------------------------------------ */
 
 #define MAX_FMOD_DEFS   8
-#define MAX_FMOD_SAMPLES 2048
+#define MAX_FMOD_SAMPLES 4096
 
 typedef struct fmod_def {
     int   type;           /* 0=RF, 1=ADC */
@@ -607,24 +623,28 @@ static TSEG_MAYBE_UNUSED int parse_fmod_defs(const char* path, fmod_def_file* ou
 {
     FILE* f;
     int d, ns;
-    fmod_def_file res;
-
-    memset(&res, 0, sizeof(res));
+    memset(out, 0, sizeof(*out));
 
     f = fopen(path, "rb");
     if (!f) return 0;
 
-    if (fread(&res.num_defs, sizeof(int), 1, f) != 1 ||
-        res.num_defs < 0 || res.num_defs > MAX_FMOD_DEFS) {
+    if (fread(&out->num_defs, sizeof(int), 1, f) != 1 ||
+        out->num_defs < 0 || out->num_defs > MAX_FMOD_DEFS) {
+        fprintf(stderr, "[parse_fmod_defs] num_defs=%d (max=%d) file=%s\n",
+                out->num_defs, MAX_FMOD_DEFS, path);
         fclose(f); return 0;
     }
 
-    for (d = 0; d < res.num_defs; ++d) {
-        fmod_def* fd = &res.defs[d];
+    for (d = 0; d < out->num_defs; ++d) {
+        fmod_def* fd = &out->defs[d];
         if (fread(&fd->type, sizeof(int), 1, f) != 1) { fclose(f); return 0; }
         if (fread(&fd->num_samples, sizeof(int), 1, f) != 1) { fclose(f); return 0; }
         ns = fd->num_samples;
-        if (ns <= 0 || ns > MAX_FMOD_SAMPLES) { fclose(f); return 0; }
+        if (ns <= 0 || ns > MAX_FMOD_SAMPLES) {
+            fprintf(stderr, "[parse_fmod_defs] def[%d] ns=%d (max=%d) file=%s\n",
+                    d, ns, MAX_FMOD_SAMPLES, path);
+            fclose(f); return 0;
+        }
         if (fread(&fd->raster_us, sizeof(float), 1, f) != 1) { fclose(f); return 0; }
         if (fread(&fd->duration_us, sizeof(float), 1, f) != 1) { fclose(f); return 0; }
         if (fread(&fd->ref_time_us, sizeof(float), 1, f) != 1) { fclose(f); return 0; }
@@ -635,7 +655,6 @@ static TSEG_MAYBE_UNUSED int parse_fmod_defs(const char* path, fmod_def_file* ou
     }
 
     fclose(f);
-    *out = res;
     return 1;
 }
 
@@ -672,20 +691,18 @@ static TSEG_MAYBE_UNUSED int parse_scan_table(const char* path, scan_table_file*
 {
     FILE* f;
     int i;
-    scan_table_file res;
-
-    memset(&res, 0, sizeof(res));
+    memset(out, 0, sizeof(*out));
 
     f = fopen(path, "rb");
     if (!f) return 0;
 
-    if (fread(&res.num_entries, sizeof(int), 1, f) != 1 ||
-        res.num_entries < 0 || res.num_entries > MAX_SCAN_TABLE_ENTRIES) {
+    if (fread(&out->num_entries, sizeof(int), 1, f) != 1 ||
+        out->num_entries < 0 || out->num_entries > MAX_SCAN_TABLE_ENTRIES) {
         fclose(f); return 0;
     }
 
-    for (i = 0; i < res.num_entries; ++i) {
-        scan_table_entry* e = &res.entries[i];
+    for (i = 0; i < out->num_entries; ++i) {
+        scan_table_entry* e = &out->entries[i];
         if (fread(&e->rf_amp_hz,       sizeof(float), 1, f) != 1) { fclose(f); return 0; }
         if (fread(&e->rf_phase_rad,     sizeof(float), 1, f) != 1) { fclose(f); return 0; }
         if (fread(&e->rf_freq_hz,       sizeof(float), 1, f) != 1) { fclose(f); return 0; }
@@ -702,7 +719,6 @@ static TSEG_MAYBE_UNUSED int parse_scan_table(const char* path, scan_table_file*
     }
 
     fclose(f);
-    *out = res;
     return 1;
 }
 
@@ -735,64 +751,61 @@ static TSEG_MAYBE_UNUSED int parse_fmod_plan(const char* path, fmod_plan_file* o
 {
     FILE* f;
     int i, q;
-    fmod_plan_file res;
-
-    memset(&res, 0, sizeof(res));
+    memset(out, 0, sizeof(*out));
 
     f = fopen(path, "rb");
     if (!f) return 0;
 
-    if (fread(&res.num_probes, sizeof(int), 1, f) != 1 ||
-        res.num_probes < 0 || res.num_probes > MAX_FMOD_PLAN_PROBES) {
+    if (fread(&out->num_probes, sizeof(int), 1, f) != 1 ||
+        out->num_probes < 0 || out->num_probes > MAX_FMOD_PLAN_PROBES) {
         fclose(f); return 0;
     }
-    if (res.num_probes > 0) {
-        if (fread(res.probes, sizeof(float), (size_t)res.num_probes * 3, f)
-            != (size_t)res.num_probes * 3) {
+    if (out->num_probes > 0) {
+        if (fread(out->probes, sizeof(float), (size_t)out->num_probes * 3, f)
+            != (size_t)out->num_probes * 3) {
             fclose(f); return 0;
         }
     }
 
-    if (fread(&res.num_plans, sizeof(int), 1, f) != 1 ||
-        res.num_plans < 0 || res.num_plans > MAX_FMOD_PLAN_ENTRIES) {
+    if (fread(&out->num_plans, sizeof(int), 1, f) != 1 ||
+        out->num_plans < 0 || out->num_plans > MAX_FMOD_PLAN_ENTRIES) {
         fclose(f); return 0;
     }
-    if (fread(&res.max_samples, sizeof(int), 1, f) != 1 ||
-        res.max_samples < 0 || res.max_samples > MAX_FMOD_SAMPLES) {
+    if (fread(&out->max_samples, sizeof(int), 1, f) != 1 ||
+        out->max_samples < 0 || out->max_samples > MAX_FMOD_SAMPLES) {
         fclose(f); return 0;
     }
 
-    for (i = 0; i < res.num_plans; ++i) {
-        fmod_plan_entry* e = &res.plans[i];
+    for (i = 0; i < out->num_plans; ++i) {
+        fmod_plan_entry* e = &out->plans[i];
         if (fread(&e->def_id, sizeof(int), 1, f) != 1) { fclose(f); return 0; }
         if (fread(&e->num_samples, sizeof(int), 1, f) != 1) { fclose(f); return 0; }
-        if (e->num_samples < 0 || e->num_samples > res.max_samples) { fclose(f); return 0; }
+        if (e->num_samples < 0 || e->num_samples > out->max_samples) { fclose(f); return 0; }
         if (fread(e->rotmat, sizeof(float), 9, f) != 9) { fclose(f); return 0; }
-        if (fread(e->phase_active, sizeof(float), (size_t)res.num_probes, f)
-            != (size_t)res.num_probes) { fclose(f); return 0; }
-        if (fread(e->phase_extra, sizeof(float), (size_t)res.num_probes, f)
-            != (size_t)res.num_probes) { fclose(f); return 0; }
-        if (fread(e->phase_total, sizeof(float), (size_t)res.num_probes, f)
-            != (size_t)res.num_probes) { fclose(f); return 0; }
-        for (q = 0; q < res.num_probes; ++q) {
-            if (fread(e->waveforms[q], sizeof(float), (size_t)res.max_samples, f)
-                != (size_t)res.max_samples) { fclose(f); return 0; }
+        if (fread(e->phase_active, sizeof(float), (size_t)out->num_probes, f)
+            != (size_t)out->num_probes) { fclose(f); return 0; }
+        if (fread(e->phase_extra, sizeof(float), (size_t)out->num_probes, f)
+            != (size_t)out->num_probes) { fclose(f); return 0; }
+        if (fread(e->phase_total, sizeof(float), (size_t)out->num_probes, f)
+            != (size_t)out->num_probes) { fclose(f); return 0; }
+        for (q = 0; q < out->num_probes; ++q) {
+            if (fread(e->waveforms[q], sizeof(float), (size_t)out->max_samples, f)
+                != (size_t)out->max_samples) { fclose(f); return 0; }
         }
     }
 
-    if (fread(&res.scan_len, sizeof(int), 1, f) != 1 ||
-        res.scan_len < 0 || res.scan_len > MAX_SCAN_TABLE_ENTRIES) {
+    if (fread(&out->scan_len, sizeof(int), 1, f) != 1 ||
+        out->scan_len < 0 || out->scan_len > MAX_SCAN_TABLE_ENTRIES) {
         fclose(f); return 0;
     }
-    if (res.scan_len > 0) {
-        if (fread(res.scan_to_plan, sizeof(int), (size_t)res.scan_len, f)
-            != (size_t)res.scan_len) {
+    if (out->scan_len > 0) {
+        if (fread(out->scan_to_plan, sizeof(int), (size_t)out->scan_len, f)
+            != (size_t)out->scan_len) {
             fclose(f); return 0;
         }
     }
 
     fclose(f);
-    *out = res;
     return 1;
 }
 

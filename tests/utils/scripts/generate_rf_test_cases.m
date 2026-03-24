@@ -117,5 +117,119 @@ for n = 1:10
 end
 seq.write(fullfile(dataDir, '04_rfshim_fail_gre.seq'));
 
+%% ------------------------------------------------------------------------
+% Invalid sequence: single-pass cooldown exceeds 100 ms threshold
+%   - Prep  (ONCE=1): 1 ms delay
+%   - Main  (ONCE=0): 4x RF90 + gradient, ~2 ms each
+%   - Cooldown (ONCE=2): 110 ms delay — exceeds PREP_COOLDOWN_THRESHOLD_US
+% Expected error: PULSEQLIB_ERR_TR_COOLDOWN_TOO_LONG (-105)
+% ------------------------------------------------------------------------
+lbl_once1 = mr.makeLabel('SET', 'ONCE', 1);
+lbl_once0 = mr.makeLabel('SET', 'ONCE', 0);
+lbl_once2 = mr.makeLabel('SET', 'ONCE', 2);
+
+rf90_prep = mr.makeBlockPulse(pi/2, 'Duration', 1e-3, 'use', 'excitation');
+delay_prep  = mr.makeDelay(1e-3);    % 1 ms prep
+delay_cool  = mr.makeDelay(110e-3);  % 110 ms cooldown > 100 ms threshold
+
+seq = mr.Sequence();
+seq.addBlock(delay_prep, lbl_once1);
+seq.addBlock(rf90_prep, gx_trap, lbl_once0);  % first main block clears ONCE flag
+seq.addBlock(rf90_prep, gx_trap);
+seq.addBlock(rf90_prep, gx_trap);
+seq.addBlock(rf90_prep, gx_trap);
+seq.addBlock(delay_cool, lbl_once2);
+seq.write(fullfile(dataDir, '05_rfprep_fail_cooldown_too_long.seq'));
+
+%% ------------------------------------------------------------------------
+% Invalid sequence: multipass with variable (non-periodic) RF across passes
+%   Two complete prep→main→cooldown passes — different RF amplitude each.
+% Expected error: PULSEQLIB_ERR_TR_PATTERN_MISMATCH (-103)
+% ------------------------------------------------------------------------
+rf_pass1 = mr.makeBlockPulse(0.30 * pi, 'Duration', 1e-3, 'use', 'excitation');
+rf_pass2 = mr.makeBlockPulse(0.45 * pi, 'Duration', 1e-3, 'use', 'excitation');
+delay_cool_short = mr.makeDelay(10e-3);  % 10 ms cooldown — within threshold
+
+seq = mr.Sequence();
+% --- Pass 1 ---
+seq.addBlock(delay_prep, lbl_once1);
+seq.addBlock(rf_pass1, gx_trap, lbl_once0);
+seq.addBlock(rf_pass1, gx_trap);
+seq.addBlock(rf_pass1, gx_trap);
+seq.addBlock(rf_pass1, gx_trap);
+seq.addBlock(delay_cool_short, lbl_once2);
+% --- Pass 2 (different RF amplitude) ---
+seq.addBlock(delay_prep, lbl_once1);
+seq.addBlock(rf_pass2, gx_trap, lbl_once0);
+seq.addBlock(rf_pass2, gx_trap);
+seq.addBlock(rf_pass2, gx_trap);
+seq.addBlock(rf_pass2, gx_trap);
+seq.addBlock(delay_cool_short, lbl_once2);
+seq.write(fullfile(dataDir, '06_rfprep_fail_multipass_variable.seq'));
+
+%% ------------------------------------------------------------------------
+% 8-channel CP mode block pulse: target for quadrature channel combination.
+%   Per-channel shim weight magnitude = 1/sqrt(8), phases = CP spacing.
+%   Under quadrature (RSS) combination: sqrt(sum(A_ch^2)) = 500 Hz,
+%   matching the single-channel 1 ms 180-degree baseline (case 00).
+%   Base pulse: pi rad, 1 ms — same geometry as case 00.
+% ------------------------------------------------------------------------
+rf_8ch_base = mr.makeBlockPulse(pi, 'Duration', 1e-3, 'use', 'excitation');
+dalpha_8ch  = 2 * pi / 8;
+shimWeights = (1 / sqrt(8)) * exp(-1i * (0:7) * dalpha_8ch);
+mode_8ch    = mr.makeRfShim(shimWeights);
+seq = mr.Sequence();
+seq.addBlock(rf_8ch_base, mode_8ch);
+seq.write(fullfile(dataDir, '07_rfstat_cp_8ch_180.seq'));
+
+%% ------------------------------------------------------------------------
+% Checksum corruption fixture:
+%   Copy gre_2d_1sl_1avg.seq, corrupt a numeric data line in the body,
+%   leave [SIGNATURE] section unchanged → MD5 mismatch on verification.
+%   Expected error when loaded with verify_signature=1:
+%     PULSEQLIB_ERR_SIGNATURE_MISMATCH (-54)
+% ------------------------------------------------------------------------
+srcFile = fullfile(dataDir, 'gre_2d_1sl_1avg.seq');
+dstFile = fullfile(dataDir, 'gre_2d_1sl_1avg_corrupted.seq');
+
+if exist(srcFile, 'file')
+    fid_in  = fopen(srcFile, 'r');
+    content = {};
+    raw = fgetl(fid_in);
+    while ischar(raw)
+        content{end + 1} = raw; %#ok<AGROW>
+        raw = fgetl(fid_in);
+    end
+    fclose(fid_in);
+
+    in_sig    = false;
+    corrupted = false;
+    for k = 1 : numel(content)
+        if strcmp(strtrim(content{k}), '[SIGNATURE]')
+            in_sig = true;
+        end
+        if ~in_sig && ~corrupted
+            % First line that begins with a digit (numeric data row)
+            if ~isempty(regexp(content{k}, '^\s*\d', 'once'))
+                content{k} = [content{k}, '1'];  % append '1' to corrupt value
+                corrupted   = true;
+            end
+        end
+    end
+
+    if corrupted
+        fid_out = fopen(dstFile, 'w');
+        for k = 1 : numel(content)
+            fprintf(fid_out, '%s\n', content{k});
+        end
+        fclose(fid_out);
+        fprintf('Generated corrupted signature fixture: %s\n', dstFile);
+    else
+        fprintf('WARNING: No corruptible line found in %s\n', srcFile);
+    end
+else
+    fprintf('NOTE: %s not found; skipping checksum fixture.\n', srcFile);
+    fprintf('      Run generate_test_sequences.m first, then re-run this script.\n');
+end
 
 fprintf('All sequences generated.\n');

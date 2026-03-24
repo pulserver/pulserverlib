@@ -617,6 +617,12 @@ int pulseqlib__get_collection_descriptors(
         result = pulseqlib__get_scan_table_segments(&desc, diag, &raw->sequences[i].opts);
         if (PULSEQLIB_FAILED(diag->code)) goto fail;
 
+        /* get_scan_table_segments may adjust TR topology (e.g. sparse
+         * multipass patterns can update tr_descriptor.tr_size). Refresh
+         * variable-gradient flags so ZERO_VAR indexing matches final TR size. */
+        result = pulseqlib__compute_variable_grad_flags(&desc);
+        if (PULSEQLIB_FAILED(result)) { diag->code = result; goto fail; }
+
         result = pulseqlib__calc_segment_timing(&desc, diag);
         if (PULSEQLIB_FAILED(result)) { diag->code = result; goto fail; }
 

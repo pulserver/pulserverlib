@@ -560,13 +560,23 @@ static void read_definitions_library(pulseqlib__seq_file* seq, FILE* f)
 static void read_definitions(pulseqlib__seq_file* seq)
 {
     int i;
+    int nvals;
     char* key;
     char* value;
     float temp[3];
 
     for (i = 0; i < seq->num_definitions; i++) {
         key   = seq->definitions_library[i].name;
-        value = seq->definitions_library[i].value[0];
+        nvals = seq->definitions_library[i].value_size;
+        value = (nvals > 0 && seq->definitions_library[i].value != NULL)
+            ? seq->definitions_library[i].value[0]
+            : NULL;
+
+        /* Some definition lines may intentionally carry no value
+         * (for example optional extensions fields). */
+        if (value == NULL) {
+            continue;
+        }
 
         if (strcmp(key, "GradientRasterTime") == 0) {
             seq->reserved_definitions_library.gradient_raster_time = (float)(atof(value) * 1e6);
@@ -581,7 +591,10 @@ static void read_definitions(pulseqlib__seq_file* seq)
                     sizeof(seq->reserved_definitions_library.name) - 1);
             seq->reserved_definitions_library.name[sizeof(seq->reserved_definitions_library.name) - 1] = '\0';
         } else if (strcmp(key, "FOV") == 0) {
-            if (sscanf(value, "%f %f %f", &temp[0], &temp[1], &temp[2]) == 3) {
+            if (nvals >= 3) {
+                temp[0] = (float)atof(seq->definitions_library[i].value[0]);
+                temp[1] = (float)atof(seq->definitions_library[i].value[1]);
+                temp[2] = (float)atof(seq->definitions_library[i].value[2]);
                 seq->reserved_definitions_library.fov[0] = temp[0] * 100.0f;
                 seq->reserved_definitions_library.fov[1] = temp[1] * 100.0f;
                 seq->reserved_definitions_library.fov[2] = temp[2] * 100.0f;

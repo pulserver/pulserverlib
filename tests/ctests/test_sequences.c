@@ -46,8 +46,36 @@ static const seq_case kMprageCases[] = {
     {"mprage_2d_3sl_3avg", "mprage_2d_3sl_3avg.seq", "mprage_2d_3sl_3avg", 3},
 };
 
+static const seq_case kBssfpCases[] = {
+    {"bssfp_2d_1sl_1avg", "bssfp_2d_1sl_1avg.seq", "bssfp_2d_1sl_1avg", 1},
+    {"bssfp_2d_1sl_3avg", "bssfp_2d_1sl_3avg.seq", "bssfp_2d_1sl_3avg", 3},
+    {"bssfp_2d_3sl_1avg", "bssfp_2d_3sl_1avg.seq", "bssfp_2d_3sl_1avg", 1},
+    {"bssfp_2d_3sl_3avg", "bssfp_2d_3sl_3avg.seq", "bssfp_2d_3sl_3avg", 3},
+};
+
+static const seq_case kFseCases[] = {
+    {"fse_2d_1sl_1avg", "fse_2d_1sl_1avg.seq", "fse_2d_1sl_1avg", 1},
+    {"fse_2d_1sl_3avg", "fse_2d_1sl_3avg.seq", "fse_2d_1sl_3avg", 3},
+    {"fse_2d_3sl_1avg", "fse_2d_3sl_1avg.seq", "fse_2d_3sl_1avg", 1},
+    {"fse_2d_3sl_3avg", "fse_2d_3sl_3avg.seq", "fse_2d_3sl_3avg", 3},
+};
+
 static const seq_case kMprageNoncartCases[] = {
     {"mprage_noncart_3d_1sl_1avg_userotext0", "mprage_noncart_3d_1sl_1avg_userotext0.seq", "mprage_noncart_3d_1sl_1avg_userotext0", 1},
+    {"mprage_noncart_3d_1sl_3avg_userotext0", "mprage_noncart_3d_1sl_3avg_userotext0.seq", "mprage_noncart_3d_1sl_3avg_userotext0", 3},
+    {"mprage_noncart_3d_3sl_1avg_userotext0", "mprage_noncart_3d_3sl_1avg_userotext0.seq", "mprage_noncart_3d_3sl_1avg_userotext0", 1},
+    {"mprage_noncart_3d_3sl_3avg_userotext0", "mprage_noncart_3d_3sl_3avg_userotext0.seq", "mprage_noncart_3d_3sl_3avg_userotext0", 3},
+    {"mprage_noncart_3d_1sl_1avg_userotext1", "mprage_noncart_3d_1sl_1avg_userotext1.seq", "mprage_noncart_3d_1sl_1avg_userotext1", 1},
+    {"mprage_noncart_3d_1sl_3avg_userotext1", "mprage_noncart_3d_1sl_3avg_userotext1.seq", "mprage_noncart_3d_1sl_3avg_userotext1", 3},
+    {"mprage_noncart_3d_3sl_1avg_userotext1", "mprage_noncart_3d_3sl_1avg_userotext1.seq", "mprage_noncart_3d_3sl_1avg_userotext1", 1},
+    {"mprage_noncart_3d_3sl_3avg_userotext1", "mprage_noncart_3d_3sl_3avg_userotext1.seq", "mprage_noncart_3d_3sl_3avg_userotext1", 3},
+};
+
+static const seq_case kQalasNoncartCases[] = {
+    {"qalas_noncart_3d_1sl_1avg_userotext1", "qalas_noncart_3d_1sl_1avg_userotext1.seq", "qalas_noncart_3d_1sl_1avg_userotext1", 1},
+    {"qalas_noncart_3d_1sl_3avg_userotext1", "qalas_noncart_3d_1sl_3avg_userotext1.seq", "qalas_noncart_3d_1sl_3avg_userotext1", 3},
+    {"qalas_noncart_3d_3sl_1avg_userotext1", "qalas_noncart_3d_3sl_1avg_userotext1.seq", "qalas_noncart_3d_3sl_1avg_userotext1", 1},
+    {"qalas_noncart_3d_3sl_3avg_userotext1", "qalas_noncart_3d_3sl_3avg_userotext1.seq", "qalas_noncart_3d_3sl_3avg_userotext1", 3},
 };
 
 static const seq_case kMprageNavCases[] = {
@@ -141,6 +169,28 @@ MU_TEST(test_check_mprage_2d_1sl_3avg) { run_check_case(&kMprageCases[1]); }
 MU_TEST(test_check_mprage_2d_3sl_1avg) { run_check_case(&kMprageCases[2]); }
 MU_TEST(test_check_mprage_2d_3sl_3avg) { run_check_case(&kMprageCases[3]); }
 MU_TEST(test_check_mprage_nc_1sl_1avg) { run_check_case(&kMprageNoncartCases[0]); }
+MU_TEST(test_check_mprage_nc_1sl_3avg_userotext0) { run_check_case(&kMprageNoncartCases[1]); }
+MU_TEST(test_check_mprage_nc_3sl_1avg_userotext0) { run_check_case(&kMprageNoncartCases[2]); }
+MU_TEST(test_check_mprage_nc_3sl_3avg_userotext0) { run_check_case(&kMprageNoncartCases[3]); }
+MU_TEST(test_check_mprage_nc_1sl_1avg_userotext1) { run_check_case(&kMprageNoncartCases[4]); }
+MU_TEST(test_check_mprage_nc_1sl_3avg_userotext1) { run_check_case(&kMprageNoncartCases[5]); }
+MU_TEST(test_check_mprage_nc_3sl_1avg_userotext1) { run_check_case(&kMprageNoncartCases[6]); }
+MU_TEST(test_check_mprage_nc_3sl_3avg_userotext1) { run_check_case(&kMprageNoncartCases[7]); }
+
+MU_TEST(test_check_bssfp_2d_1sl_1avg) { run_check_case(&kBssfpCases[0]); }
+MU_TEST(test_check_bssfp_2d_1sl_3avg) { run_check_case(&kBssfpCases[1]); }
+MU_TEST(test_check_bssfp_2d_3sl_1avg) { run_check_case(&kBssfpCases[2]); }
+MU_TEST(test_check_bssfp_2d_3sl_3avg) { run_check_case(&kBssfpCases[3]); }
+
+MU_TEST(test_check_fse_2d_1sl_1avg) { run_check_case(&kFseCases[0]); }
+MU_TEST(test_check_fse_2d_1sl_3avg) { run_check_case(&kFseCases[1]); }
+MU_TEST(test_check_fse_2d_3sl_1avg) { run_check_case(&kFseCases[2]); }
+MU_TEST(test_check_fse_2d_3sl_3avg) { run_check_case(&kFseCases[3]); }
+
+MU_TEST(test_check_qalas_nc_3d_1sl_1avg_userotext1) { run_check_case(&kQalasNoncartCases[0]); }
+MU_TEST(test_check_qalas_nc_3d_1sl_3avg_userotext1) { run_check_case(&kQalasNoncartCases[1]); }
+MU_TEST(test_check_qalas_nc_3d_3sl_1avg_userotext1) { run_check_case(&kQalasNoncartCases[2]); }
+MU_TEST(test_check_qalas_nc_3d_3sl_3avg_userotext1) { run_check_case(&kQalasNoncartCases[3]); }
 
 MU_TEST(test_check_mprage_nav_2d_1sl_1avg) { run_check_case(&kMprageNavCases[0]); }
 MU_TEST(test_check_mprage_nav_2d_1sl_3avg) { run_check_case(&kMprageNavCases[1]); }
@@ -158,6 +208,25 @@ MU_TEST_SUITE(suite_sequences_check)
     MU_RUN_TEST(test_check_mprage_2d_3sl_1avg);
     MU_RUN_TEST(test_check_mprage_2d_3sl_3avg);
     MU_RUN_TEST(test_check_mprage_nc_1sl_1avg);
+    MU_RUN_TEST(test_check_mprage_nc_1sl_3avg_userotext0);
+    MU_RUN_TEST(test_check_mprage_nc_3sl_1avg_userotext0);
+    MU_RUN_TEST(test_check_mprage_nc_3sl_3avg_userotext0);
+    MU_RUN_TEST(test_check_mprage_nc_1sl_1avg_userotext1);
+    MU_RUN_TEST(test_check_mprage_nc_1sl_3avg_userotext1);
+    MU_RUN_TEST(test_check_mprage_nc_3sl_1avg_userotext1);
+    MU_RUN_TEST(test_check_mprage_nc_3sl_3avg_userotext1);
+    MU_RUN_TEST(test_check_bssfp_2d_1sl_1avg);
+    MU_RUN_TEST(test_check_bssfp_2d_1sl_3avg);
+    MU_RUN_TEST(test_check_bssfp_2d_3sl_1avg);
+    MU_RUN_TEST(test_check_bssfp_2d_3sl_3avg);
+    MU_RUN_TEST(test_check_fse_2d_1sl_1avg);
+    MU_RUN_TEST(test_check_fse_2d_1sl_3avg);
+    MU_RUN_TEST(test_check_fse_2d_3sl_1avg);
+    MU_RUN_TEST(test_check_fse_2d_3sl_3avg);
+    MU_RUN_TEST(test_check_qalas_nc_3d_1sl_1avg_userotext1);
+    MU_RUN_TEST(test_check_qalas_nc_3d_1sl_3avg_userotext1);
+    MU_RUN_TEST(test_check_qalas_nc_3d_3sl_1avg_userotext1);
+    MU_RUN_TEST(test_check_qalas_nc_3d_3sl_3avg_userotext1);
     MU_RUN_TEST(test_check_mprage_nav_2d_1sl_1avg);
     MU_RUN_TEST(test_check_mprage_nav_2d_1sl_3avg);
     MU_RUN_TEST(test_check_mprage_nav_2d_3sl_1avg);
@@ -291,6 +360,28 @@ MU_TEST(test_sequences_uieval_mprage_2d_1sl_3avg) { run_sequences_uieval_case(&k
 MU_TEST(test_sequences_uieval_mprage_2d_3sl_1avg) { run_sequences_uieval_case(&kMprageCases[2]); }
 MU_TEST(test_sequences_uieval_mprage_2d_3sl_3avg) { run_sequences_uieval_case(&kMprageCases[3]); }
 MU_TEST(test_sequences_uieval_mprage_nc_1sl_1avg) { run_sequences_uieval_case(&kMprageNoncartCases[0]); }
+MU_TEST(test_sequences_uieval_mprage_nc_1sl_3avg_userotext0) { run_sequences_uieval_case(&kMprageNoncartCases[1]); }
+MU_TEST(test_sequences_uieval_mprage_nc_3sl_1avg_userotext0) { run_sequences_uieval_case(&kMprageNoncartCases[2]); }
+MU_TEST(test_sequences_uieval_mprage_nc_3sl_3avg_userotext0) { run_sequences_uieval_case(&kMprageNoncartCases[3]); }
+MU_TEST(test_sequences_uieval_mprage_nc_1sl_1avg_userotext1) { run_sequences_uieval_case(&kMprageNoncartCases[4]); }
+MU_TEST(test_sequences_uieval_mprage_nc_1sl_3avg_userotext1) { run_sequences_uieval_case(&kMprageNoncartCases[5]); }
+MU_TEST(test_sequences_uieval_mprage_nc_3sl_1avg_userotext1) { run_sequences_uieval_case(&kMprageNoncartCases[6]); }
+MU_TEST(test_sequences_uieval_mprage_nc_3sl_3avg_userotext1) { run_sequences_uieval_case(&kMprageNoncartCases[7]); }
+
+MU_TEST(test_sequences_uieval_bssfp_2d_1sl_1avg) { run_sequences_uieval_case(&kBssfpCases[0]); }
+MU_TEST(test_sequences_uieval_bssfp_2d_1sl_3avg) { run_sequences_uieval_case(&kBssfpCases[1]); }
+MU_TEST(test_sequences_uieval_bssfp_2d_3sl_1avg) { run_sequences_uieval_case(&kBssfpCases[2]); }
+MU_TEST(test_sequences_uieval_bssfp_2d_3sl_3avg) { run_sequences_uieval_case(&kBssfpCases[3]); }
+
+MU_TEST(test_sequences_uieval_fse_2d_1sl_1avg) { run_sequences_uieval_case(&kFseCases[0]); }
+MU_TEST(test_sequences_uieval_fse_2d_1sl_3avg) { run_sequences_uieval_case(&kFseCases[1]); }
+MU_TEST(test_sequences_uieval_fse_2d_3sl_1avg) { run_sequences_uieval_case(&kFseCases[2]); }
+MU_TEST(test_sequences_uieval_fse_2d_3sl_3avg) { run_sequences_uieval_case(&kFseCases[3]); }
+
+MU_TEST(test_sequences_uieval_qalas_nc_3d_1sl_1avg_userotext1) { run_sequences_uieval_case(&kQalasNoncartCases[0]); }
+MU_TEST(test_sequences_uieval_qalas_nc_3d_1sl_3avg_userotext1) { run_sequences_uieval_case(&kQalasNoncartCases[1]); }
+MU_TEST(test_sequences_uieval_qalas_nc_3d_3sl_1avg_userotext1) { run_sequences_uieval_case(&kQalasNoncartCases[2]); }
+MU_TEST(test_sequences_uieval_qalas_nc_3d_3sl_3avg_userotext1) { run_sequences_uieval_case(&kQalasNoncartCases[3]); }
 
 MU_TEST(test_sequences_uieval_mprage_nav_2d_1sl_1avg) { run_sequences_uieval_case(&kMprageNavCases[0]); }
 MU_TEST(test_sequences_uieval_mprage_nav_2d_1sl_3avg) { run_sequences_uieval_case(&kMprageNavCases[1]); }
@@ -308,6 +399,25 @@ MU_TEST_SUITE(suite_sequences_uieval)
     MU_RUN_TEST(test_sequences_uieval_mprage_2d_3sl_1avg);
     MU_RUN_TEST(test_sequences_uieval_mprage_2d_3sl_3avg);
     MU_RUN_TEST(test_sequences_uieval_mprage_nc_1sl_1avg);
+    MU_RUN_TEST(test_sequences_uieval_mprage_nc_1sl_3avg_userotext0);
+    MU_RUN_TEST(test_sequences_uieval_mprage_nc_3sl_1avg_userotext0);
+    MU_RUN_TEST(test_sequences_uieval_mprage_nc_3sl_3avg_userotext0);
+    MU_RUN_TEST(test_sequences_uieval_mprage_nc_1sl_1avg_userotext1);
+    MU_RUN_TEST(test_sequences_uieval_mprage_nc_1sl_3avg_userotext1);
+    MU_RUN_TEST(test_sequences_uieval_mprage_nc_3sl_1avg_userotext1);
+    MU_RUN_TEST(test_sequences_uieval_mprage_nc_3sl_3avg_userotext1);
+    MU_RUN_TEST(test_sequences_uieval_bssfp_2d_1sl_1avg);
+    MU_RUN_TEST(test_sequences_uieval_bssfp_2d_1sl_3avg);
+    MU_RUN_TEST(test_sequences_uieval_bssfp_2d_3sl_1avg);
+    MU_RUN_TEST(test_sequences_uieval_bssfp_2d_3sl_3avg);
+    MU_RUN_TEST(test_sequences_uieval_fse_2d_1sl_1avg);
+    MU_RUN_TEST(test_sequences_uieval_fse_2d_1sl_3avg);
+    MU_RUN_TEST(test_sequences_uieval_fse_2d_3sl_1avg);
+    MU_RUN_TEST(test_sequences_uieval_fse_2d_3sl_3avg);
+    MU_RUN_TEST(test_sequences_uieval_qalas_nc_3d_1sl_1avg_userotext1);
+    MU_RUN_TEST(test_sequences_uieval_qalas_nc_3d_1sl_3avg_userotext1);
+    MU_RUN_TEST(test_sequences_uieval_qalas_nc_3d_3sl_1avg_userotext1);
+    MU_RUN_TEST(test_sequences_uieval_qalas_nc_3d_3sl_3avg_userotext1);
     MU_RUN_TEST(test_sequences_uieval_mprage_nav_2d_1sl_1avg);
     MU_RUN_TEST(test_sequences_uieval_mprage_nav_2d_1sl_3avg);
     MU_RUN_TEST(test_sequences_uieval_mprage_nav_2d_3sl_1avg);
@@ -738,6 +848,28 @@ MU_TEST(test_sequences_geninstructions_mprage_2d_1sl_3avg) { run_sequences_genin
 MU_TEST(test_sequences_geninstructions_mprage_2d_3sl_1avg) { run_sequences_geninstructions_case(&kMprageCases[2]); }
 MU_TEST(test_sequences_geninstructions_mprage_2d_3sl_3avg) { run_sequences_geninstructions_case(&kMprageCases[3]); }
 MU_TEST(test_sequences_geninstructions_mprage_nc_1sl_1avg) { run_sequences_geninstructions_case(&kMprageNoncartCases[0]); }
+MU_TEST(test_sequences_geninstructions_mprage_nc_1sl_3avg_userotext0) { run_sequences_geninstructions_case(&kMprageNoncartCases[1]); }
+MU_TEST(test_sequences_geninstructions_mprage_nc_3sl_1avg_userotext0) { run_sequences_geninstructions_case(&kMprageNoncartCases[2]); }
+MU_TEST(test_sequences_geninstructions_mprage_nc_3sl_3avg_userotext0) { run_sequences_geninstructions_case(&kMprageNoncartCases[3]); }
+MU_TEST(test_sequences_geninstructions_mprage_nc_1sl_1avg_userotext1) { run_sequences_geninstructions_case(&kMprageNoncartCases[4]); }
+MU_TEST(test_sequences_geninstructions_mprage_nc_1sl_3avg_userotext1) { run_sequences_geninstructions_case(&kMprageNoncartCases[5]); }
+MU_TEST(test_sequences_geninstructions_mprage_nc_3sl_1avg_userotext1) { run_sequences_geninstructions_case(&kMprageNoncartCases[6]); }
+MU_TEST(test_sequences_geninstructions_mprage_nc_3sl_3avg_userotext1) { run_sequences_geninstructions_case(&kMprageNoncartCases[7]); }
+
+MU_TEST(test_sequences_geninstructions_bssfp_2d_1sl_1avg) { run_sequences_geninstructions_case(&kBssfpCases[0]); }
+MU_TEST(test_sequences_geninstructions_bssfp_2d_1sl_3avg) { run_sequences_geninstructions_case(&kBssfpCases[1]); }
+MU_TEST(test_sequences_geninstructions_bssfp_2d_3sl_1avg) { run_sequences_geninstructions_case(&kBssfpCases[2]); }
+MU_TEST(test_sequences_geninstructions_bssfp_2d_3sl_3avg) { run_sequences_geninstructions_case(&kBssfpCases[3]); }
+
+MU_TEST(test_sequences_geninstructions_fse_2d_1sl_1avg) { run_sequences_geninstructions_case(&kFseCases[0]); }
+MU_TEST(test_sequences_geninstructions_fse_2d_1sl_3avg) { run_sequences_geninstructions_case(&kFseCases[1]); }
+MU_TEST(test_sequences_geninstructions_fse_2d_3sl_1avg) { run_sequences_geninstructions_case(&kFseCases[2]); }
+MU_TEST(test_sequences_geninstructions_fse_2d_3sl_3avg) { run_sequences_geninstructions_case(&kFseCases[3]); }
+
+MU_TEST(test_sequences_geninstructions_qalas_nc_3d_1sl_1avg_userotext1) { run_sequences_geninstructions_case(&kQalasNoncartCases[0]); }
+MU_TEST(test_sequences_geninstructions_qalas_nc_3d_1sl_3avg_userotext1) { run_sequences_geninstructions_case(&kQalasNoncartCases[1]); }
+MU_TEST(test_sequences_geninstructions_qalas_nc_3d_3sl_1avg_userotext1) { run_sequences_geninstructions_case(&kQalasNoncartCases[2]); }
+MU_TEST(test_sequences_geninstructions_qalas_nc_3d_3sl_3avg_userotext1) { run_sequences_geninstructions_case(&kQalasNoncartCases[3]); }
 
 MU_TEST(test_sequences_geninstructions_mprage_nav_2d_1sl_1avg) { run_sequences_geninstructions_case(&kMprageNavCases[0]); }
 MU_TEST(test_sequences_geninstructions_mprage_nav_2d_1sl_3avg) { run_sequences_geninstructions_case(&kMprageNavCases[1]); }
@@ -885,10 +1017,10 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
 {
     pulseqlib_opts opts;
     pulseqlib_collection* coll = NULL;
-    seg_meta meta = SEG_META_INIT;
-    fmod_def_file ref = FMOD_DEF_FILE_INIT;
-    fmod_plan_file plan = FMOD_PLAN_FILE_INIT;
-    scan_table_file scan = SCAN_TABLE_FILE_INIT;
+    static seg_meta meta = SEG_META_INIT;
+    static fmod_def_file ref = FMOD_DEF_FILE_INIT;
+    static fmod_plan_file plan = FMOD_PLAN_FILE_INIT;
+    static scan_table_file scan = SCAN_TABLE_FILE_INIT;
     char meta_path[512];
     char fmod_path[512];
     char fmod_plan_path[512];
@@ -966,6 +1098,28 @@ MU_TEST(test_freq_mod_definitions_mprage_2d_1sl_3avg) { run_freq_mod_definitions
 MU_TEST(test_freq_mod_definitions_mprage_2d_3sl_1avg) { run_freq_mod_definitions_case(&kMprageCases[2]); }
 MU_TEST(test_freq_mod_definitions_mprage_2d_3sl_3avg) { run_freq_mod_definitions_case(&kMprageCases[3]); }
 MU_TEST(test_freq_mod_definitions_mprage_nc_1sl_1avg) { run_freq_mod_definitions_case(&kMprageNoncartCases[0]); }
+MU_TEST(test_freq_mod_definitions_mprage_nc_1sl_3avg_userotext0) { run_freq_mod_definitions_case(&kMprageNoncartCases[1]); }
+MU_TEST(test_freq_mod_definitions_mprage_nc_3sl_1avg_userotext0) { run_freq_mod_definitions_case(&kMprageNoncartCases[2]); }
+MU_TEST(test_freq_mod_definitions_mprage_nc_3sl_3avg_userotext0) { run_freq_mod_definitions_case(&kMprageNoncartCases[3]); }
+MU_TEST(test_freq_mod_definitions_mprage_nc_1sl_1avg_userotext1) { run_freq_mod_definitions_case(&kMprageNoncartCases[4]); }
+MU_TEST(test_freq_mod_definitions_mprage_nc_1sl_3avg_userotext1) { run_freq_mod_definitions_case(&kMprageNoncartCases[5]); }
+MU_TEST(test_freq_mod_definitions_mprage_nc_3sl_1avg_userotext1) { run_freq_mod_definitions_case(&kMprageNoncartCases[6]); }
+MU_TEST(test_freq_mod_definitions_mprage_nc_3sl_3avg_userotext1) { run_freq_mod_definitions_case(&kMprageNoncartCases[7]); }
+
+MU_TEST(test_freq_mod_definitions_bssfp_2d_1sl_1avg) { run_freq_mod_definitions_case(&kBssfpCases[0]); }
+MU_TEST(test_freq_mod_definitions_bssfp_2d_1sl_3avg) { run_freq_mod_definitions_case(&kBssfpCases[1]); }
+MU_TEST(test_freq_mod_definitions_bssfp_2d_3sl_1avg) { run_freq_mod_definitions_case(&kBssfpCases[2]); }
+MU_TEST(test_freq_mod_definitions_bssfp_2d_3sl_3avg) { run_freq_mod_definitions_case(&kBssfpCases[3]); }
+
+MU_TEST(test_freq_mod_definitions_fse_2d_1sl_1avg) { run_freq_mod_definitions_case(&kFseCases[0]); }
+MU_TEST(test_freq_mod_definitions_fse_2d_1sl_3avg) { run_freq_mod_definitions_case(&kFseCases[1]); }
+MU_TEST(test_freq_mod_definitions_fse_2d_3sl_1avg) { run_freq_mod_definitions_case(&kFseCases[2]); }
+MU_TEST(test_freq_mod_definitions_fse_2d_3sl_3avg) { run_freq_mod_definitions_case(&kFseCases[3]); }
+
+MU_TEST(test_freq_mod_definitions_qalas_nc_3d_1sl_1avg_userotext1) { run_freq_mod_definitions_case(&kQalasNoncartCases[0]); }
+MU_TEST(test_freq_mod_definitions_qalas_nc_3d_1sl_3avg_userotext1) { run_freq_mod_definitions_case(&kQalasNoncartCases[1]); }
+MU_TEST(test_freq_mod_definitions_qalas_nc_3d_3sl_1avg_userotext1) { run_freq_mod_definitions_case(&kQalasNoncartCases[2]); }
+MU_TEST(test_freq_mod_definitions_qalas_nc_3d_3sl_3avg_userotext1) { run_freq_mod_definitions_case(&kQalasNoncartCases[3]); }
 
 MU_TEST(test_freq_mod_definitions_mprage_nav_2d_1sl_1avg) { run_freq_mod_definitions_case(&kMprageNavCases[0]); }
 MU_TEST(test_freq_mod_definitions_mprage_nav_2d_1sl_3avg) { run_freq_mod_definitions_case(&kMprageNavCases[1]); }
@@ -983,6 +1137,25 @@ MU_TEST_SUITE(suite_sequences_geninstructions)
     MU_RUN_TEST(test_sequences_geninstructions_mprage_2d_3sl_1avg);
     MU_RUN_TEST(test_sequences_geninstructions_mprage_2d_3sl_3avg);
     MU_RUN_TEST(test_sequences_geninstructions_mprage_nc_1sl_1avg);
+    MU_RUN_TEST(test_sequences_geninstructions_mprage_nc_1sl_3avg_userotext0);
+    MU_RUN_TEST(test_sequences_geninstructions_mprage_nc_3sl_1avg_userotext0);
+    MU_RUN_TEST(test_sequences_geninstructions_mprage_nc_3sl_3avg_userotext0);
+    MU_RUN_TEST(test_sequences_geninstructions_mprage_nc_1sl_1avg_userotext1);
+    MU_RUN_TEST(test_sequences_geninstructions_mprage_nc_1sl_3avg_userotext1);
+    MU_RUN_TEST(test_sequences_geninstructions_mprage_nc_3sl_1avg_userotext1);
+    MU_RUN_TEST(test_sequences_geninstructions_mprage_nc_3sl_3avg_userotext1);
+    MU_RUN_TEST(test_sequences_geninstructions_bssfp_2d_1sl_1avg);
+    MU_RUN_TEST(test_sequences_geninstructions_bssfp_2d_1sl_3avg);
+    MU_RUN_TEST(test_sequences_geninstructions_bssfp_2d_3sl_1avg);
+    MU_RUN_TEST(test_sequences_geninstructions_bssfp_2d_3sl_3avg);
+    MU_RUN_TEST(test_sequences_geninstructions_fse_2d_1sl_1avg);
+    MU_RUN_TEST(test_sequences_geninstructions_fse_2d_1sl_3avg);
+    MU_RUN_TEST(test_sequences_geninstructions_fse_2d_3sl_1avg);
+    MU_RUN_TEST(test_sequences_geninstructions_fse_2d_3sl_3avg);
+    MU_RUN_TEST(test_sequences_geninstructions_qalas_nc_3d_1sl_1avg_userotext1);
+    MU_RUN_TEST(test_sequences_geninstructions_qalas_nc_3d_1sl_3avg_userotext1);
+    MU_RUN_TEST(test_sequences_geninstructions_qalas_nc_3d_3sl_1avg_userotext1);
+    MU_RUN_TEST(test_sequences_geninstructions_qalas_nc_3d_3sl_3avg_userotext1);
     MU_RUN_TEST(test_sequences_geninstructions_mprage_nav_2d_1sl_1avg);
     MU_RUN_TEST(test_sequences_geninstructions_mprage_nav_2d_1sl_3avg);
     MU_RUN_TEST(test_sequences_geninstructions_mprage_nav_2d_3sl_1avg);
@@ -996,6 +1169,25 @@ MU_TEST_SUITE(suite_sequences_geninstructions)
     MU_RUN_TEST(test_freq_mod_definitions_mprage_2d_3sl_1avg);
     MU_RUN_TEST(test_freq_mod_definitions_mprage_2d_3sl_3avg);
     MU_RUN_TEST(test_freq_mod_definitions_mprage_nc_1sl_1avg);
+    MU_RUN_TEST(test_freq_mod_definitions_mprage_nc_1sl_3avg_userotext0);
+    MU_RUN_TEST(test_freq_mod_definitions_mprage_nc_3sl_1avg_userotext0);
+    MU_RUN_TEST(test_freq_mod_definitions_mprage_nc_3sl_3avg_userotext0);
+    MU_RUN_TEST(test_freq_mod_definitions_mprage_nc_1sl_1avg_userotext1);
+    MU_RUN_TEST(test_freq_mod_definitions_mprage_nc_1sl_3avg_userotext1);
+    MU_RUN_TEST(test_freq_mod_definitions_mprage_nc_3sl_1avg_userotext1);
+    MU_RUN_TEST(test_freq_mod_definitions_mprage_nc_3sl_3avg_userotext1);
+    MU_RUN_TEST(test_freq_mod_definitions_bssfp_2d_1sl_1avg);
+    MU_RUN_TEST(test_freq_mod_definitions_bssfp_2d_1sl_3avg);
+    MU_RUN_TEST(test_freq_mod_definitions_bssfp_2d_3sl_1avg);
+    MU_RUN_TEST(test_freq_mod_definitions_bssfp_2d_3sl_3avg);
+    MU_RUN_TEST(test_freq_mod_definitions_fse_2d_1sl_1avg);
+    MU_RUN_TEST(test_freq_mod_definitions_fse_2d_1sl_3avg);
+    MU_RUN_TEST(test_freq_mod_definitions_fse_2d_3sl_1avg);
+    MU_RUN_TEST(test_freq_mod_definitions_fse_2d_3sl_3avg);
+    MU_RUN_TEST(test_freq_mod_definitions_qalas_nc_3d_1sl_1avg_userotext1);
+    MU_RUN_TEST(test_freq_mod_definitions_qalas_nc_3d_1sl_3avg_userotext1);
+    MU_RUN_TEST(test_freq_mod_definitions_qalas_nc_3d_3sl_1avg_userotext1);
+    MU_RUN_TEST(test_freq_mod_definitions_qalas_nc_3d_3sl_3avg_userotext1);
     MU_RUN_TEST(test_freq_mod_definitions_mprage_nav_2d_1sl_1avg);
     MU_RUN_TEST(test_freq_mod_definitions_mprage_nav_2d_1sl_3avg);
     MU_RUN_TEST(test_freq_mod_definitions_mprage_nav_2d_3sl_1avg);
@@ -1400,6 +1592,28 @@ MU_TEST(test_scan_table_mprage_2d_1sl_3avg) { run_scan_table_case(&kMprageCases[
 MU_TEST(test_scan_table_mprage_2d_3sl_1avg) { run_scan_table_case(&kMprageCases[2]); }
 MU_TEST(test_scan_table_mprage_2d_3sl_3avg) { run_scan_table_case(&kMprageCases[3]); }
 MU_TEST(test_scan_table_mprage_nc_1sl_1avg) { run_scan_table_case(&kMprageNoncartCases[0]); }
+MU_TEST(test_scan_table_mprage_nc_1sl_3avg_userotext0) { run_scan_table_case(&kMprageNoncartCases[1]); }
+MU_TEST(test_scan_table_mprage_nc_3sl_1avg_userotext0) { run_scan_table_case(&kMprageNoncartCases[2]); }
+MU_TEST(test_scan_table_mprage_nc_3sl_3avg_userotext0) { run_scan_table_case(&kMprageNoncartCases[3]); }
+MU_TEST(test_scan_table_mprage_nc_1sl_1avg_userotext1) { run_scan_table_case(&kMprageNoncartCases[4]); }
+MU_TEST(test_scan_table_mprage_nc_1sl_3avg_userotext1) { run_scan_table_case(&kMprageNoncartCases[5]); }
+MU_TEST(test_scan_table_mprage_nc_3sl_1avg_userotext1) { run_scan_table_case(&kMprageNoncartCases[6]); }
+MU_TEST(test_scan_table_mprage_nc_3sl_3avg_userotext1) { run_scan_table_case(&kMprageNoncartCases[7]); }
+
+MU_TEST(test_scan_table_bssfp_2d_1sl_1avg) { run_scan_table_case(&kBssfpCases[0]); }
+MU_TEST(test_scan_table_bssfp_2d_1sl_3avg) { run_scan_table_case(&kBssfpCases[1]); }
+MU_TEST(test_scan_table_bssfp_2d_3sl_1avg) { run_scan_table_case(&kBssfpCases[2]); }
+MU_TEST(test_scan_table_bssfp_2d_3sl_3avg) { run_scan_table_case(&kBssfpCases[3]); }
+
+MU_TEST(test_scan_table_fse_2d_1sl_1avg) { run_scan_table_case(&kFseCases[0]); }
+MU_TEST(test_scan_table_fse_2d_1sl_3avg) { run_scan_table_case(&kFseCases[1]); }
+MU_TEST(test_scan_table_fse_2d_3sl_1avg) { run_scan_table_case(&kFseCases[2]); }
+MU_TEST(test_scan_table_fse_2d_3sl_3avg) { run_scan_table_case(&kFseCases[3]); }
+
+MU_TEST(test_scan_table_qalas_nc_3d_1sl_1avg_userotext1) { run_scan_table_case(&kQalasNoncartCases[0]); }
+MU_TEST(test_scan_table_qalas_nc_3d_1sl_3avg_userotext1) { run_scan_table_case(&kQalasNoncartCases[1]); }
+MU_TEST(test_scan_table_qalas_nc_3d_3sl_1avg_userotext1) { run_scan_table_case(&kQalasNoncartCases[2]); }
+MU_TEST(test_scan_table_qalas_nc_3d_3sl_3avg_userotext1) { run_scan_table_case(&kQalasNoncartCases[3]); }
 
 MU_TEST(test_scan_table_mprage_nav_2d_1sl_1avg) { run_scan_table_case(&kMprageNavCases[0]); }
 MU_TEST(test_scan_table_mprage_nav_2d_1sl_3avg) { run_scan_table_case(&kMprageNavCases[1]); }
@@ -1419,12 +1633,58 @@ MU_TEST_SUITE(suite_sequences_scanloop)
     MU_RUN_TEST(test_scan_table_mprage_2d_3sl_1avg);
     MU_RUN_TEST(test_scan_table_mprage_2d_3sl_3avg);
     MU_RUN_TEST(test_scan_table_mprage_nc_1sl_1avg);
+    MU_RUN_TEST(test_scan_table_mprage_nc_1sl_3avg_userotext0);
+    MU_RUN_TEST(test_scan_table_mprage_nc_3sl_1avg_userotext0);
+    MU_RUN_TEST(test_scan_table_mprage_nc_3sl_3avg_userotext0);
+    MU_RUN_TEST(test_scan_table_mprage_nc_1sl_1avg_userotext1);
+    MU_RUN_TEST(test_scan_table_mprage_nc_1sl_3avg_userotext1);
+    MU_RUN_TEST(test_scan_table_mprage_nc_3sl_1avg_userotext1);
+    MU_RUN_TEST(test_scan_table_mprage_nc_3sl_3avg_userotext1);
+    MU_RUN_TEST(test_scan_table_bssfp_2d_1sl_1avg);
+    MU_RUN_TEST(test_scan_table_bssfp_2d_1sl_3avg);
+    MU_RUN_TEST(test_scan_table_bssfp_2d_3sl_1avg);
+    MU_RUN_TEST(test_scan_table_bssfp_2d_3sl_3avg);
+    MU_RUN_TEST(test_scan_table_fse_2d_1sl_1avg);
+    MU_RUN_TEST(test_scan_table_fse_2d_1sl_3avg);
+    MU_RUN_TEST(test_scan_table_fse_2d_3sl_1avg);
+    MU_RUN_TEST(test_scan_table_fse_2d_3sl_3avg);
+    MU_RUN_TEST(test_scan_table_qalas_nc_3d_1sl_1avg_userotext1);
+    MU_RUN_TEST(test_scan_table_qalas_nc_3d_1sl_3avg_userotext1);
+    MU_RUN_TEST(test_scan_table_qalas_nc_3d_3sl_1avg_userotext1);
+    MU_RUN_TEST(test_scan_table_qalas_nc_3d_3sl_3avg_userotext1);
     MU_RUN_TEST(test_scan_table_mprage_nav_2d_1sl_1avg);
     MU_RUN_TEST(test_scan_table_mprage_nav_2d_1sl_3avg);
     MU_RUN_TEST(test_scan_table_mprage_nav_2d_3sl_1avg);
     MU_RUN_TEST(test_scan_table_mprage_nav_2d_3sl_3avg);
 }
 
+
+/* ================================================================== */
+/*  Suite: Signature verification                                     */
+/* ================================================================== */
+
+/*
+ * Load a GRE sequence whose content has been corrupted (one numeric
+ * line modified) while leaving the [SIGNATURE] hash unchanged.
+ * With verify_signature=1 this must produce SIGNATURE_MISMATCH.
+ */
+MU_TEST(test_signature_mismatch_gre)
+{
+    pulseqlib_opts opts;
+    pulseqlib_collection* coll = NULL;
+    int rc;
+
+    gre_opts_init(&opts);
+    rc = load_seq_with_signature_check(
+             &coll, "gre_2d_1sl_1avg_corrupted.seq", &opts);
+    mu_assert_int_eq(PULSEQLIB_ERR_SIGNATURE_MISMATCH, rc);
+    /* coll should be NULL on mismatch — no free needed */
+}
+
+MU_TEST_SUITE(suite_sequences_signature)
+{
+    MU_RUN_TEST(test_signature_mismatch_gre);
+}
 
 int test_sequences_main(void)
 {
@@ -1440,6 +1700,7 @@ int test_sequences_main(void)
     MU_RUN_SUITE(suite_sequences_geninstructions);
     MU_RUN_SUITE(suite_sequences_collection);
     MU_RUN_SUITE(suite_sequences_scanloop);
+    MU_RUN_SUITE(suite_sequences_signature);
     MU_REPORT();
     return MU_EXIT_CODE;
 }

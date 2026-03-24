@@ -540,8 +540,8 @@ function seq = write_fse(write, num_slices, num_averages)
 
     tb = testutils.TruthBuilder(seq, sys);
     tb.setBlocksPerTR(3 + 4 * necho + 3);
-    tb.setSegments([3 + 4 * necho + 3]);
-    tb.setSegmentOrder([1]);
+    tb.setSegments([3 + 4 * necho + 2, 1]);
+    tb.setSegmentOrder([1, 2]);
     tb.setNumAverages(num_averages);
     tb.export(out_dir, base);
 end
@@ -556,7 +556,7 @@ function seq = write_epi(write, num_slices, num_averages)
     % Basic EPI geometry intentionally small for fast iteration.
     fov = 0.22;
     Nx = 64;
-    Ny = 8;
+    Ny = 128;
     slice_thickness = 5e-3;
     slice_gap  = 1.5e-3;
     TR        = 3000e-3;
@@ -838,8 +838,10 @@ function seqs = write_epi_gre(write, num_averages)
     gre_tb.export(tmp_dir, [base '_gre_part']);
 
     epi_tb = testutils.TruthBuilder(epi_seq, make_system());
-    epi_tb.setBlocksPerTR(16);
-    epi_tb.setSegments([1, 14, 1]);
+    Nnav_epi = 3; Ny_meas_epi = 128;
+    nbt_epi = 5 + Nnav_epi + Ny_meas_epi;  % 136
+    epi_tb.setBlocksPerTR(nbt_epi);
+    epi_tb.setSegments([1, 3 + Nnav_epi + Ny_meas_epi, 1]);
     epi_tb.setSegmentOrder([1, 2, 3]);
     epi_tb.setNumAverages(num_averages);
     epi_tb.export(tmp_dir, [base '_epi_part']);
