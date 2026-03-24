@@ -919,11 +919,23 @@ int pulseqlib_get_tr_gradient_waveforms(
         return PULSEQLIB_ERR_INVALID_ARGUMENT;
     }
     desc = &coll->descriptors[subseq_idx];
-    rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
-        desc->tr_descriptor.num_prep_blocks
-            + desc->tr_descriptor.imaging_tr_start,
-        desc->tr_descriptor.tr_size,
-        PULSEQLIB_AMP_MAX_POS, NULL, 0);
+    if (!desc->tr_descriptor.degenerate_prep ||
+        !desc->tr_descriptor.degenerate_cooldown) {
+        /* Non-degenerate: render the full single pass (prep + imaging loop +
+         * cooldown) from block_table[0 .. pass_len-1].  This mirrors the
+         * canonical TR waveform exported by TruthBuilder for pass_expanded
+         * sequences and is invariant to num_averages (gradients don't change
+         * between averages; only RF phase does). */
+        rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
+            0, desc->pass_len,
+            PULSEQLIB_AMP_MAX_POS, NULL, 0);
+    } else {
+        rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
+            desc->tr_descriptor.num_prep_blocks
+                + desc->tr_descriptor.imaging_tr_start,
+            desc->tr_descriptor.tr_size,
+            PULSEQLIB_AMP_MAX_POS, NULL, 0);
+    }
     if (PULSEQLIB_FAILED(rc)) return rc;
     if (!waveforms) { pulseqlib__uniform_grad_waveforms_free(&uw); return PULSEQLIB_ERR_NULL_POINTER; }
     memset(waveforms, 0, sizeof(*waveforms));

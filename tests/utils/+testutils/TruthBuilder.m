@@ -268,15 +268,19 @@ classdef TruthBuilder < handle
         function determineCanonicalMode(obj)
         % DETERMINECANONICALMODE  Choose TR-based or pass-expanded canonical mode.
         %
-        %   Three cases:
-        %   1) No prep/cooldown or degenerate prep/cooldown (prep only, e.g. GRE):
-        %      canonical_mode = 'tr', multipass_info.enabled = false.
-        %   2) Non-degenerate prep/cooldown (both once==1 AND once==2), single pass:
-        %      canonical_mode = 'tr', multipass_info.enabled = true (single pass).
-        %      Canonical TR = main repeating imaging unit (once==0 blocks).
-        %   3) Non-degenerate prep/cooldown, multi-pass (e.g. multislice bSSFP):
-        %      canonical_mode = 'pass_expanded', multipass_info.enabled = true.
-        %      Canonical TR duration = full per-slice pass (prep + N_avg*imaging + cooldown).
+        %   Two modes:
+        %   1) Degenerate / standard TR: canonical_mode = 'tr', multipass_info disabled.
+        %      Used when: no once flags, pass_len != nbt, or every pass is purely
+        %      imaging (no once!=0 blocks).
+        %   2) Non-degenerate (pass_expanded): canonical_mode = 'pass_expanded',
+        %      multipass_info enabled. Used when: each pass is exactly nbt blocks AND
+        %      at least one block has once==1 OR once==2 (structurally different from
+        %      the main imaging TR). Applies to both single-pass (e.g. bSSFP 1sl) and
+        %      multi-pass (e.g. bSSFP 3sl) sequences.
+        %      Canonical TR duration = seg_cseq.duration (full expanded pass including
+        %      all averages).  Canonical TR waveform = full single pass (one per-slice
+        %      pass from the block table, without average expansion).
+            nbt    = obj.num_blocks_in_tr;
             nblocks = length(obj.seq.blockEvents);
             once_flags = obj.getOnceFlags();
 
@@ -300,9 +304,14 @@ classdef TruthBuilder < handle
 
             pass_len = pass_lens(1);
 
-            has_main = true;
-            has_prep = false;
-            has_cooldown = false;
+            % Pass must be exactly one TR unit.  Sequences whose "pass" spans many
+            % TR-unit widths (e.g. GRE with dummy TRs) are left in standard 'tr' mode.
+            if pass_len ~= nbt
+                return;
+            end
+
+            has_main    = true;
+            has_nonmain = false;
             for p = 1:length(starts)
                 i0 = starts(p);
                 i1 = i0 + pass_len - 1;
@@ -311,28 +320,18 @@ classdef TruthBuilder < handle
                     has_main = false;
                     break;
                 end
-                if any(st == 1)
-                    has_prep = true;
-                end
-                if any(st == 2)
-                    has_cooldown = true;
+                if any(st == 1) || any(st == 2)
+                    has_nonmain = true;
                 end
             end
 
-            % Require both prep (once==1) and cooldown (once==2) to be non-degenerate.
-            % Sequences with only a prep region (e.g. GRE dummy TRs) are left in
-            % standard 'tr' mode with multipass_info disabled.
-            if ~has_main || ~has_prep || ~has_cooldown
+            if ~has_main || ~has_nonmain
                 return;
             end
 
-            % Non-degenerate prep+cooldown detected.
-            % Multi-pass (case 3): canonical_mode = 'pass_expanded'.
-            % Single-pass (case 2): canonical_mode = 'tr' but multipass_info still
-            % enabled so that buildCanonicalTRs uses the pass-aware path.
-            if length(starts) > 1
-                obj.canonical_mode = 'pass_expanded';
-            end
+            % Non-degenerate detected: use pass_expanded for both single and
+            % multi-pass sequences.
+            obj.canonical_mode = 'pass_expanded';
             obj.multipass_info = struct('enabled', true, ...
                 'pass_starts', starts(:)', ...
                 'pass_len', pass_len, ...
@@ -549,10 +548,10 @@ classdef TruthBuilder < handle
                 pass_len   = obj.multipass_info.pass_len;
                 once_flags = obj.multipass_info.once_flags;
                 pass_start = obj.segment_data.first_group_indices(1);
-                num_passes = length(obj.multipass_info.pass_starts);
 
                 % ---- Build segment canonical sequence (full pass, all averages) ----
-                % Used by buildSegmentData shortcut (num_averages > 1 case).
+                % Used by buildSegmentData (segment block count, timing, etc.).
+                % Includes prep on first avg, imaging on all avgs, cooldown on last avg.
                 seg_cseq = mr.Sequence(obj.sys);
                 for avg = 1:obj.num_averages
                     for pos = 1:pass_len
@@ -593,68 +592,57 @@ classdef TruthBuilder < handle
                 end
                 obj.canonical_seqs{1} = seg_cseq;
 
-                % ---- Find imaging TR (once==0 blocks, fundamental repeating unit) ----
-                % The canonical TR *waveform* mirrors pulseqlib_get_tr_gradient_waveforms,
-                % which renders only the imaging TR (prep and cooldown excluded).
-                img_period = obj.findImagingTRPeriod(pass_start, pass_len);
-
-                % Compute imaging TR start time (in seg_cseq, prep blocks come first).
-                img_time_offset = 0;
+                % ---- Build canonical waveform: full SINGLE pass (not avg-expanded) ----
+                % Mirrors pulseqlib_get_tr_gradient_waveforms which renders block_table
+                % [0 .. pass_len-1] for non-degenerate sequences — i.e. the prep,
+                % one imaging loop, and cooldown, all in one slice-execution.
+                % This is the same for all avg counts since gradients are invariant
+                % to RF phase (which is the only thing that changes between averages).
+                wf_cseq = mr.Sequence(obj.sys);
                 for pos = 1:pass_len
-                    blk_idx = pass_start + pos - 1;
-                    if once_flags(blk_idx) == 0
-                        break;
+                    block = obj.seq.getBlock(pass_start + pos - 1);
+                    args = {};
+                    if isfield(block, 'rf') && ~isempty(block.rf)
+                        args{end+1} = block.rf; %#ok<AGROW>
                     end
-                    img_time_offset = img_time_offset + ...
-                        obj.seq.getBlock(blk_idx).blockDuration;
-                end
-
-                % Compute imaging TR period duration.
-                img_period_dur = 0;
-                img_count = 0;
-                for pos = 1:pass_len
-                    blk_idx = pass_start + pos - 1;
-                    if once_flags(blk_idx) == 0
-                        img_period_dur = img_period_dur + ...
-                            obj.seq.getBlock(blk_idx).blockDuration;
-                        img_count = img_count + 1;
-                        if img_count >= img_period
-                            break;
+                    ax_names = {'gx', 'gy', 'gz'};
+                    for a = 1:3
+                        axn = ax_names{a};
+                        if isfield(block, axn) && ~isempty(block.(axn))
+                            args{end+1} = block.(axn); %#ok<AGROW>
                         end
                     end
+                    if isfield(block, 'adc') && ~isempty(block.adc)
+                        args{end+1} = block.adc; %#ok<AGROW>
+                    end
+                    if isempty(args)
+                        wf_cseq.addBlock(mr.makeDelay(block.blockDuration));
+                    else
+                        wf_cseq.addBlock(args{:});
+                    end
                 end
-                img_time_end = img_time_offset + img_period_dur;
 
-                % ---- Extract imaging TR waveform from seg_cseq time window ----
-                % Sampling from the full-pass sequence preserves gradient
-                % continuity across block boundaries (no non-zero-start issues).
-                wave_data = seg_cseq.waveforms_and_times(false);
+                wave_data = wf_cseq.waveforms_and_times(false);
                 raster = 0.5 * obj.sys.gradRasterTime;
-                times_abs = img_time_offset : raster : img_time_end;
-                samples = zeros(length(times_abs), 3);
+                times = 0.0 : raster : wf_cseq.duration;
+                samples = zeros(length(times), 3);
                 for c = 1:3
                     if c <= length(wave_data) && ~isempty(wave_data{c})
                         t_raw = wave_data{c}(1, :);
                         w_raw = wave_data{c}(2, :);
                         [t_u, iu] = unique(t_raw, 'last');
                         w_u = w_raw(iu);
-                        samples(:, c) = interp1(t_u, w_u, times_abs, 'linear', 0);
+                        samples(:, c) = interp1(t_u, w_u, times, 'linear', 0);
                     end
                 end
 
-                % Store with time axis shifted to start at 0 (waveform convention).
-                obj.tr_times_list{1} = (times_abs(:) - img_time_offset) * 1e6;
+                obj.tr_times_list{1} = times(:) * 1e6;
                 obj.tr_waveforms{1}  = samples;
 
-                % ---- Compute obj.TR (written to tr_duration_us in meta) ----
-                % Case 3 (multi-pass): TR = full per-slice pass duration (prep +
-                %   N_avg*imaging + cooldown), so total_scan / num_passes.
-                % Case 2 (single-pass non-degenerate): TR = imaging TR duration.
-                if num_passes > 1
-                    obj.TR = seg_cseq.duration;
-                else
-                    obj.TR = img_period_dur;
-                end
+                % ---- obj.TR = canonical TR duration (written to tr_duration_us) ----
+                % Full expanded pass (prep + N_avg*imaging + cooldown) regardless of
+                % num_passes. Matches C library: total_scan_dur / num_passes.
+                obj.TR = seg_cseq.duration;
                 return;
             end
 

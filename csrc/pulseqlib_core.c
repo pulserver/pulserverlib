@@ -613,15 +613,15 @@ int pulseqlib__get_collection_descriptors(
         result = pulseqlib__build_scan_table(&desc, num_averages, diag);
         if (PULSEQLIB_FAILED(diag->code)) goto fail;
 
-        /* Pass-expanded TR duration (multi-pass only):
-         * - single pass, degenerate prep/cooldown:   canonical TR = repeating imaging unit
-         * - single pass, non-degenerate prep/cooldown: canonical TR = repeating imaging unit
-         * - multi-pass, non-degenerate prep/cooldown:  canonical TR = one full pass
-         *   (prep + all averages of imaging + cooldown for one slice), computed as
-         *   total scan-table duration divided by num_passes. */
-        if (desc.num_passes > 1 &&
-            (!desc.tr_descriptor.degenerate_prep ||
-             !desc.tr_descriptor.degenerate_cooldown)) {
+        /* Non-degenerate pass TR duration:
+         * For any sequence with non-degenerate prep or cooldown (once==1 / once==2
+         * blocks that are structurally distinct from the imaging TR), the canonical
+         * TR equals one full per-slice pass (prep + all averages of imaging +
+         * cooldown), computed as total scan-table duration divided by num_passes.
+         * This applies to both single-pass (e.g. bSSFP 1sl) and multi-pass
+         * (e.g. bSSFP 3sl) sequences. */
+        if (!desc.tr_descriptor.degenerate_prep ||
+            !desc.tr_descriptor.degenerate_cooldown) {
             float total_dur = 0.0f;
             int n;
             for (n = 0; n < desc.scan_table_len; ++n) {
