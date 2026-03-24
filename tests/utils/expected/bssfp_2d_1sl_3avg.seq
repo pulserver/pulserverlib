@@ -15,7 +15,7 @@ NumSlices 1
 PeakRF 0.545317315 
 RadiofrequencyRasterTime 2e-06 
 RequiredExtensions  
-TR 0.00322 
+TR 0.08072 
 TotalDuration 0.0292 
 
 # Format of blocks:
@@ -1198,4 +1198,4 @@ num_samples 6
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash b35c0662867a521bf15ae88e9f14a210
+Hash ef30f0fd347ba486a03dda8fe82e4172
