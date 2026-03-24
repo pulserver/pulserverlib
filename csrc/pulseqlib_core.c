@@ -613,6 +613,30 @@ int pulseqlib__get_collection_descriptors(
         result = pulseqlib__build_scan_table(&desc, num_averages, diag);
         if (PULSEQLIB_FAILED(diag->code)) goto fail;
 
+        /* Pass-expanded TR duration: when prep and/or cooldown are
+         * non-degenerate, the canonical TR spans one complete pass
+         * (one slice, all averages).  For multi-pass sequences each
+         * pass is one slice, so divide the total scan-table duration
+         * by num_passes to get the per-pass (per-slice) TR. */
+        if (!desc.tr_descriptor.degenerate_prep ||
+            !desc.tr_descriptor.degenerate_cooldown) {
+            float total_dur = 0.0f;
+            int n;
+            for (n = 0; n < desc.scan_table_len; ++n) {
+                int bt_idx = desc.scan_table_block_idx[n];
+                const pulseqlib_block_table_element* bte =
+                    &desc.block_table[bt_idx];
+                const pulseqlib_block_definition* bdef =
+                    &desc.block_definitions[bte->id];
+                total_dur += (bte->duration_us >= 0)
+                    ? (float)bte->duration_us
+                    : (float)bdef->duration_us;
+            }
+            if (desc.num_passes > 1)
+                total_dur /= (float)desc.num_passes;
+            desc.tr_descriptor.tr_duration_us = total_dur;
+        }
+
         /* Scan-table-only segmentation (prep / main / cooldown) */
         result = pulseqlib__get_scan_table_segments(&desc, diag, &raw->sequences[i].opts);
         if (PULSEQLIB_FAILED(diag->code)) goto fail;
