@@ -11,13 +11,14 @@ AdcRasterTime 2e-06
 BlockDurationRaster 2e-05 
 FOV 0.22 0.22 0.005 
 GradientRasterTime 2e-05 
+IgnoreAverages 1 
+NextSequence gre_epi_collection_2d_1sl_1avg_epi.seq 
 NumSlices 1 
 PeakRF 54.8581773 
 RadiofrequencyRasterTime 2e-06 
+RequiredExtensions  
 TR 0.0067 
 TotalDuration 0.0871 
-IgnoreAverages 1 
-NextSequence gre_epi_collection_2d_1sl_1avg_epi.seq 
 
 # Format of blocks:
 # NUM DUR RF  GX  GY  GZ  ADC  EXT
@@ -1179,7 +1180,7 @@ num_samples 3
 
 shape_id 5
 num_samples 4
-0.0961262554
+0.0961260724
 1
 1
 0
@@ -1199,4 +1200,4 @@ num_samples 4
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash 0fc15b2349b49da9d4d886863cf75316
+Hash e6fd3c251cb1c61cabe9a4d432b69b66

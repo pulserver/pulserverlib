@@ -12,6 +12,7 @@ BlockDurationRaster 2e-05
 GradientRasterTime 2e-05 
 PeakRF 658.301437 
 RadiofrequencyRasterTime 2e-06 
+RequiredExtensions  
 TR 0.20276 
 TotalDuration 1.21656 
 
@@ -3387,4 +3388,4 @@ num_samples 4
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash 6bc7f4081e3e429300e328e640f2c5dd
+Hash 4a92be04cb9fc214d59c4e0ae1ce75bb

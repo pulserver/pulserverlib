@@ -134,10 +134,14 @@ classdef TruthBuilder < handle
         function setFreqModBuildMode(obj, mode)
         % SETFREQMODBUILDMODE  Select freq-mod deduplication scope.
         %   mode: 'full_collection' (default) or 'tr_scoped'
-            if ~ischar(mode) && ~isstring(mode)
+            is_string_scalar = false;
+            if exist('isstring', 'builtin') || exist('isstring', 'file')
+                is_string_scalar = isstring(mode) && isscalar(mode);
+            end
+            if ~ischar(mode) && ~is_string_scalar
                 error('freq-mod build mode must be a string');
             end
-            mode = char(string(mode));
+            mode = strtrim(char(mode));
             if ~strcmp(mode, 'full_collection') && ~strcmp(mode, 'tr_scoped')
                 error('Unsupported freq-mod build mode: %s', mode);
             end
@@ -157,6 +161,11 @@ classdef TruthBuilder < handle
             end
 
             % Write .seq file
+            % Ensure RequiredExtensions is a char so Pulseq write() strfind
+            % does not fail on empty [] in Octave.
+            if isempty(obj.seq.getDefinition('RequiredExtensions'))
+                obj.seq.setDefinition('RequiredExtensions', '');
+            end
             obj.seq.write(fullfile(out_dir, [base_name '.seq']));
 
             % Meta text
@@ -362,8 +371,6 @@ classdef TruthBuilder < handle
 
         % ---- Phase 1: peak RF + per-group canonical scale + segment energy ----
         function computePeakRFAndCanonicalScales(obj)
-            import mr.*
-
             obj.discoverTRGroups();
 
             if obj.multipass_info.enabled
@@ -515,8 +522,6 @@ classdef TruthBuilder < handle
 
         % ---- Phase 2: canonical TR waveforms (one per group) ----
         function buildCanonicalTRs(obj)
-            import mr.*
-
             if obj.multipass_info.enabled
                 obj.canonical_seqs = cell(1, 1);
                 obj.tr_waveforms   = cell(1, 1);
@@ -674,8 +679,6 @@ classdef TruthBuilder < handle
 
         % ---- Phase 3: segment definition ----
         function buildSegmentData(obj)
-            import mr.*
-
             nbt = obj.num_blocks_in_tr;
             if obj.multipass_info.enabled
                 tr_starts = obj.multipass_info.pass_starts;
@@ -792,8 +795,6 @@ classdef TruthBuilder < handle
 
         % ---- Phase 4: frequency modulation definitions ----
         function buildFreqModDefs(obj)
-            import mr.*
-
             num_total_blocks = length(obj.seq.blockEvents);
             num_dummy_blocks = obj.findNumDummyBlocks();
 
@@ -885,8 +886,6 @@ classdef TruthBuilder < handle
 
         % ---- Phase 5: scan table ----
         function buildScanTableData(obj)
-            import mr.*
-
             num_blocks_per_pass = length(obj.seq.blockEvents);
             num_cols = 11;
             max_entries = obj.num_averages * num_blocks_per_pass;
@@ -1337,8 +1336,6 @@ classdef TruthBuilder < handle
 
         % ---- helper: extract block data for segment def ----
         function bd = extractBlockData(obj, block, block_start)
-            import mr.*
-
             bd = struct();
 
             % RF

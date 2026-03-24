@@ -5,7 +5,6 @@
 %
 
 clear; clc;
-import mr.*
 
 %% Output directory
 scriptDir = fileparts(mfilename('fullpath'));
@@ -19,10 +18,9 @@ if ~exist(dataDir, 'dir'), mkdir(dataDir); end
 sys = mr.opts('maxGrad', inf);   % 10 T/m limit
 
 seq = mr.Sequence(sys);
-gx = makeTrapezoid('x', ...
+gx = mr.makeTrapezoid('x', ...
     'Amplitude', 20, ...        % exceeds limit
-    'Duration', 1e-3, ...
-    'System', sys);
+    'Duration', 1e-3);
 
 seq.addBlock(gx);
 seq.write(fullfile(dataDir, '01_grad_amplitude_violation.seq'));
@@ -39,12 +37,11 @@ rise = 1e-3;
 amp  = 200 * rise;   % slew = 200 T/m/s > 100
 
 seq = mr.Sequence(sys);
-gx = makeTrapezoid('x', ...
+gx = mr.makeTrapezoid('x', ...
     'Amplitude', amp, ...
     'RiseTime', rise, ...
     'FlatTime', 1e-3, ...
-    'FallTime', rise, ...
-    'System', sys);
+    'FallTime', rise);
 
 seq.addBlock(gx);
 seq.write(fullfile(dataDir, '02_slew_violation.seq'));
@@ -61,8 +58,8 @@ seq = mr.Sequence(sys);
 
 g = 8;   % 8 < 10 individually
 
-gx = makeTrapezoid('x', 'Amplitude', g, 'Duration', 1e-3, 'System', sys);
-gy = makeTrapezoid('y', 'Amplitude', g, 'Duration', 1e-3, 'System', sys);
+gx = mr.makeTrapezoid('x', 'Amplitude', g, 'Duration', 1e-3);
+gy = mr.makeTrapezoid('y', 'Amplitude', g, 'Duration', 1e-3);
 
 % sqrt(8^2 + 8^2) ≈ 11.3 > 10
 seq.addBlock(gx, gy);
@@ -81,19 +78,17 @@ amp  = 80 * rise;   % individual slew = 80 < 100
 
 seq = mr.Sequence(sys);
 
-gx = makeTrapezoid('x', ...
+gx = mr.makeTrapezoid('x', ...
     'Amplitude', amp, ...
     'RiseTime', rise, ...
     'FlatTime', 1e-3, ...
-    'FallTime', rise, ...
-    'System', sys);
+    'FallTime', rise);
 
-gy = makeTrapezoid('y', ...
+gy = mr.makeTrapezoid('y', ...
     'Amplitude', amp, ...
     'RiseTime', rise, ...
     'FlatTime', 1e-3, ...
-    'FallTime', rise, ...
-    'System', sys);
+    'FallTime', rise);
 
 % sqrt(80^2 + 80^2) ≈ 113 > 100
 seq.addBlock(gx, gy);

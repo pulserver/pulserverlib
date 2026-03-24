@@ -14,6 +14,7 @@ Name epi
 PeakRF 502.44644 
 RadiofrequencyRasterTime 2e-06 
 ReadoutOversamplingFactor 2 
+RequiredExtensions  
 SliceGap 0.0015 
 SlicePositions -0.0065 0.0065 0 
 SliceThickness 0.005 
@@ -5304,4 +5305,4 @@ num_samples 3
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash d766c1e5cb1e8ca7748fb4f091f26797
+Hash 0310c0a0cb810fa45ec47daf7e9cb7c2

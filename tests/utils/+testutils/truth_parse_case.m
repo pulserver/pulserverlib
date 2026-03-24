@@ -94,7 +94,7 @@ function [data_dir, base_name] = normalize_case_path(base)
         error('truth:input', 'A base case name or path is required.');
     end
 
-    if isstring(base)
+    if (exist('isstring', 'builtin') || exist('isstring', 'file')) && isstring(base)
         base = char(base);
     end
 

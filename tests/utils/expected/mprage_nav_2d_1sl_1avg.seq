@@ -14,6 +14,7 @@ GradientRasterTime 2e-05
 NumSlices 1 
 PeakRF 219.402932 
 RadiofrequencyRasterTime 2e-06 
+RequiredExtensions  
 TR 0.08426 
 TotalDuration 0.08426 
 
@@ -91,8 +92,8 @@ TotalDuration 0.08426
 7  1.18216e+06       113636            0 8 9 0
 18      12811.8            0      1495.82 12 0 0
 19      14268.1            0     -14268.1 13 0 0
-20      53180.4      1495.82            0 14 15 0
-21     -38064.5     -14268.1            0 16 15 0
+20      53179.7      1495.82            0 14 15 0
+21       -38065     -14268.1            0 16 15 0
 
 # Format of trapezoid gradients:
 # id amplitude rise flat fall delay
@@ -1190,7 +1191,7 @@ num_samples 3
 
 shape_id 8
 num_samples 4
-0.0961262554
+0.0961260724
 1
 1
 0
@@ -1610,7 +1611,7 @@ num_samples 66
 
 shape_id 14
 num_samples 3
-0.0281272975
+0.0281276341
 1
 0
 
@@ -1622,7 +1623,7 @@ num_samples 3
 
 shape_id 16
 num_samples 3
-0.374841234
+0.374835948
 -1
 -0
 
@@ -1634,4 +1635,4 @@ num_samples 3
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash c1b28e16fa802e234cb43ba7aedfd125
+Hash 531ed9933b848118f7b5350165c8a9fe

@@ -51,7 +51,7 @@ function [gxCells, gyCells, adc, k] = makeTestSpiral(sys, interleaves, nSamples,
         grot = R * g;
         gx = [0, grot(1, :), grot(1, end)];
         gy = [0, grot(2, :), grot(2, end)];
-        gxCells{i} = mr.makeArbitraryGrad('x', gx, 'system', sys, 'first', 0, 'last', gx(end));
-        gyCells{i} = mr.makeArbitraryGrad('y', gy, 'system', sys, 'first', 0, 'last', gy(end));
+        gxCells{i} = mr.makeArbitraryGrad('x', gx, sys, 'first', 0, 'last', gx(end));
+        gyCells{i} = mr.makeArbitraryGrad('y', gy, sys, 'first', 0, 'last', gy(end));
     end
 end

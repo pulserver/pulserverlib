@@ -4,7 +4,6 @@
 %
 
 clear; clc;
-import mr.*
 
 %% Output directory
 scriptDir = fileparts(mfilename('fullpath'));
@@ -15,12 +14,12 @@ if ~exist(dataDir, 'dir'), mkdir(dataDir); end
 % Gradient definitions
 % ------------------------------------------------------------------------
 
-gx_trap = makeTrapezoid('x', 'Area', 1000, 'Duration', 1e-3);
+gx_trap = mr.makeTrapezoid('x', 'Area', 1000, 'Duration', 1e-3);
 
 %% ------------------------------------------------------------------------
 % Basic rf parameters calculation
 % ------------------------------------------------------------------------
-rf180 = makeBlockPulse(pi,'Duration', 1e-3, 'use', 'excitation');
+rf180 = mr.makeBlockPulse(pi,'Duration', 1e-3, 'use', 'excitation');
 seq = mr.Sequence();
 seq.addBlock(rf180);
 seq.write(fullfile(dataDir, '00_basic_rfstat.seq'));
@@ -28,8 +27,8 @@ seq.write(fullfile(dataDir, '00_basic_rfstat.seq'));
 %% ------------------------------------------------------------------------
 % Periodic rf amplitude sequence (e.g., MRF)
 % ------------------------------------------------------------------------
-rf180 = makeBlockPulse(pi,'Duration', 1e-3, 'use', 'inversion');
-rf90 = makeBlockPulse(0.5 * pi,'Duration', 1e-3, 'use', 'excitation');
+rf180 = mr.makeBlockPulse(pi,'Duration', 1e-3, 'use', 'inversion');
+rf90 = mr.makeBlockPulse(0.5 * pi,'Duration', 1e-3, 'use', 'excitation');
 signal = rf90.signal;
 seq = mr.Sequence();
 seq.addBlock(rf180);
@@ -49,7 +48,7 @@ seq.write(fullfile(dataDir, '01_rfamp_ok_mrfingerprinting.seq'));
 %% ------------------------------------------------------------------------
 % Nonperiodic rf amplitude sequence (VFA) - error (must be splitted in multiple SPGR subsequences)
 % ------------------------------------------------------------------------
-rf90 = makeBlockPulse(0.5 * pi,'Duration', 1e-3, 'use', 'excitation');
+rf90 = mr.makeBlockPulse(0.5 * pi,'Duration', 1e-3, 'use', 'excitation');
 signal = rf90.signal;
 seq = mr.Sequence();
 for n = 1:10
@@ -68,12 +67,12 @@ seq.write(fullfile(dataDir, '02_rfamp_fail_vfa.seq'));
 %% ------------------------------------------------------------------------
 % Periodic rf shim sequence (e.g., PnP-MRF)
 % ------------------------------------------------------------------------
-rf180 = makeBlockPulse(pi,'Duration', 1e-3, 'use', 'excitation');
-rf90 = makeBlockPulse(0.5 * pi,'Duration', 1e-3, 'use', 'excitation');
+rf180 = mr.makeBlockPulse(pi,'Duration', 1e-3, 'use', 'excitation');
+rf90 = mr.makeBlockPulse(0.5 * pi,'Duration', 1e-3, 'use', 'excitation');
 
 dalpha = 2 * pi / 16; % 16-TxCh coil
-cpMode = makeRfShim(exp(-1i * (0:15) * dalpha));
-gradMode = makeRfShim(exp(-1i * 2 * (0:15) * dalpha));
+cpMode = mr.makeRfShim(exp(-1i * (0:15) * dalpha));
+gradMode = mr.makeRfShim(exp(-1i * 2 * (0:15) * dalpha));
 
 seq = mr.Sequence();
 seq.addBlock(rf180);
@@ -101,11 +100,11 @@ seq.write(fullfile(dataDir, '03_rfshim_ok_pnpmrfingerprinting.seq'));
 %% ------------------------------------------------------------------------
 % Nonperiodic rf shim sequence - error (must be splitted in multiple Shimmed subsequences)
 % ------------------------------------------------------------------------
-rf90 = makeBlockPulse(0.5 * pi,'Duration', 1e-3, 'use', 'excitation');
+rf90 = mr.makeBlockPulse(0.5 * pi,'Duration', 1e-3, 'use', 'excitation');
 
 dalpha = 2 * pi / 16; % 16-TxCh coil
-cpMode = makeRfShim(exp(-1i * (0:15) * dalpha));
-gradMode = makeRfShim(exp(-1i * 2 * (0:15) * dalpha));
+cpMode = mr.makeRfShim(exp(-1i * (0:15) * dalpha));
+gradMode = mr.makeRfShim(exp(-1i * 2 * (0:15) * dalpha));
 
 seq = mr.Sequence();
 for n = 1:10

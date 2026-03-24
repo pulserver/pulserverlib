@@ -14,6 +14,7 @@ GradientRasterTime 2e-05
 NumSlices 3 
 PeakRF 54.8581773 
 RadiofrequencyRasterTime 2e-06 
+RequiredExtensions  
 TR 0.0067 
 TotalDuration 0.1943 
 
@@ -1258,7 +1259,7 @@ num_samples 3
 
 shape_id 5
 num_samples 4
-0.0961262554
+0.0961260724
 1
 1
 0
@@ -1278,4 +1279,4 @@ num_samples 4
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash 062fc28d30d67f767104a1fd815a2628
+Hash eb104b800c7fbb8f1c19e1c9a885305a

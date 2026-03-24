@@ -74,7 +74,7 @@ TotalDuration 0.11376
 2       550994            0      -493239 5 0 0
 3       566952            0       297827 6 0 0
 5      -493239      -493239            0 7 8 0
-6       664230       297827            0 9 10 0
+6       553521       297827            0 9 10 0
 
 # Format of trapezoid gradients:
 # id amplitude rise flat fall delay
@@ -656,7 +656,7 @@ num_samples 258
 shape_id 7
 num_samples 3
 1
--0.474527683
+-0.474529101
 -0
 
 shape_id 8
@@ -666,16 +666,18 @@ num_samples 3
 7
 
 shape_id 9
-num_samples 3
-0.448378799
+num_samples 4
+0.538058038
+-1
 -1
 0
 
 shape_id 10
-num_samples 3
+num_samples 4
 0
 6
-10
+7
+11
 
 
 [SIGNATURE]
@@ -685,4 +687,4 @@ num_samples 3
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash 69cddcd7f207219e245886b21043af3b
+Hash 24159f94eef79073ef21c610b5b87264

@@ -77,40 +77,38 @@ function seq = write_bssfp(write, num_slices, num_averages)
     alpha = 10 * pi / 180;
 
     % --- create events ---
-    [rf, gz, gz_reph] = mr.makeSincPulse(alpha * pi / 180, ...
+    [rf, gz, gz_reph] = mr.makeSincPulse(alpha * pi / 180, sys, ...
         'Duration', 2.0e-3, 'SliceThickness', slice_thickness, ...
         'apodization', 0.5, 'timeBwProduct', 1.5, ...
-        'system', sys, 'use', 'excitation');
+        'use', 'excitation');
 
     deltak = 1 / fov;
-    gx = mr.makeTrapezoid('x', ...
+    gx = mr.makeTrapezoid('x', sys, ...
         'FlatArea', Nx * deltak, ...
-        'FlatTime', Nx * 4e-6, ...
-        'system', sys);
-    adc = mr.makeAdc(Nx, ...
+        'FlatTime', Nx * 4e-6);
+    adc = mr.makeAdc(Nx, sys, ...
         'Duration', gx.flatTime, ...
-        'Delay', gx.riseTime, ...
-        'system', sys);
-    gx_pre = mr.makeTrapezoid('x', 'Area', -gx.area / 2, 'system', sys);
+        'Delay', gx.riseTime);
+    gx_pre = mr.makeTrapezoid('x', sys, 'Area', -gx.area / 2);
     phase_areas = ((0:Ny-1) - Ny/2) * deltak;
 
     % --- split & combine for bSSFP optimal timing ---
-    gz_parts = mr.splitGradientAt(gz, mr.calcDuration(rf));
+    gz_parts = testutils.splitGradientAt(gz, mr.calcDuration(rf));
     gz_parts(1).delay = mr.calcDuration(gz_reph);
-    gz_1 = mr.addGradients({gz_reph, gz_parts(1)}, 'system', sys);
+    gz_1 = testutils.addGradients({gz_reph, gz_parts(1)}, sys);
     [rf, ~] = mr.align('right', rf, gz_1);
     gz_parts(2).delay = 0;
     gz_reph.delay = mr.calcDuration(gz_parts(2));
-    gz_2 = mr.addGradients({gz_parts(2), gz_reph}, 'system', sys);
+    gz_2 = testutils.addGradients({gz_parts(2), gz_reph}, sys);
 
-    gx_parts = mr.splitGradientAt(gx, ...
+    gx_parts = testutils.splitGradientAt(gx, ...
         ceil(mr.calcDuration(adc) / sys.gradRasterTime) * sys.gradRasterTime);
     gx_parts(1).delay = mr.calcDuration(gx_pre);
-    gx_1 = mr.addGradients({gx_pre, gx_parts(1)}, 'system', sys);
+    gx_1 = testutils.addGradients({gx_pre, gx_parts(1)}, sys);
     adc.delay = adc.delay + mr.calcDuration(gx_pre);
     gx_parts(2).delay = 0;
     gx_pre.delay = mr.calcDuration(gx_parts(2));
-    gx_2 = mr.addGradients({gx_parts(2), gx_pre}, 'system', sys);
+    gx_2 = testutils.addGradients({gx_parts(2), gx_pre}, sys);
 
     pe_dur = mr.calcDuration(gx_2);
 
@@ -121,7 +119,7 @@ function seq = write_bssfp(write, num_slices, num_averages)
 
     % --- phase-encode template (max area, will be scaled) ---
     max_pe_area = max(abs(phase_areas));
-    gyMax = mr.makeTrapezoid('y', 'Area', max_pe_area, 'Duration', pe_dur, 'system', sys);
+    gyMax = mr.makeTrapezoid('y', sys, 'Area', max_pe_area, 'Duration', pe_dur);
 
     % --- pre-create labels ---
     lblOnce1 = mr.makeLabel('SET', 'ONCE', 1);
@@ -135,7 +133,7 @@ function seq = write_bssfp(write, num_slices, num_averages)
     % --- prep delay to center main acquisition around TR/2 ---
     prep_delay = mr.makeDelay(0.0);
 %     prep_delay = mr.makeDelay( round((TR/2 - mr.calcDuration(gz_1)) / sys.gradRasterTime) * sys.gradRasterTime);
-    gx_1_1 = mr.makeExtendedTrapezoidArea('x', 0, gx_2.first, -gx_2.area, sys);
+    gx_1_1 = testutils.makeExtendedTrapezoidArea('x', 0, gx_2.first, -gx_2.area, sys);
     gy_pre_2 = mr.scaleGrad(gyMax, phase_areas(end) / max_pe_area);
     [prep_delay, gz_2, gy_pre_2, gx_1_1] = mr.align('left', prep_delay, gz_2, gy_pre_2, 'right', gx_1_1);
 
@@ -209,34 +207,33 @@ function seq = write_gre(write, num_slices, num_averages)
     rf_spoil_inc = 84.0; % degrees
 
     % RF and slice-select
-    [rf, gz] = mr.makeSincPulse(alpha, ...
+    [rf, gz] = mr.makeSincPulse(alpha, sys, ...
         'Duration', 2.0e-3, ...
         'SliceThickness', slice_thickness, ...
         'timeBwProduct', 4, ...
         'apodization', 0.5, ...
-        'use', 'excitation', ...
-        'system', sys);
-    gz_reph = mr.makeTrapezoid('z', 'Area', -gz.area/2, 'Duration', 1.0e-3, 'system', sys);
-    gz_spoil = mr.makeTrapezoid('z', 'Area', 4 / slice_thickness, 'Duration', 1.0e-3, 'system', sys);
+        'use', 'excitation');
+    gz_reph = mr.makeTrapezoid('z', sys, 'Area', -gz.area/2, 'Duration', 1.0e-3);
+    gz_spoil = mr.makeTrapezoid('z', sys, 'Area', 4 / slice_thickness, 'Duration', 1.0e-3);
 
     % Readout and ADC
     readout_time = 2.56e-3;
-    gx_full = mr.makeTrapezoid('x', 'FlatArea', Nx/fov, 'FlatTime', readout_time, 'system', sys);
-    gx_parts = mr.splitGradientAt(gx_full, gx_full.riseTime + gx_full.flatTime);
+    gx_full = mr.makeTrapezoid('x', sys, 'FlatArea', Nx/fov, 'FlatTime', readout_time);
+    gx_parts = testutils.splitGradientAt(gx_full, gx_full.riseTime + gx_full.flatTime);
     gx = gx_parts(1); % truncate at end of flat
-    adc = mr.makeAdc(Nx, 'Duration', gx_full.flatTime, 'Delay', gx_full.riseTime, 'system', sys);
+    adc = mr.makeAdc(Nx, sys, 'Duration', gx_full.flatTime, 'Delay', gx_full.riseTime);
     dummy_adc = mr.makeDelay(mr.calcDuration(adc));
 
     % Pre/rewinder templates
-    gx_pre = mr.makeTrapezoid('x', 'Area', -gx_full.area/2, 'Duration', 1.0e-3, 'system', sys);
+    gx_pre = mr.makeTrapezoid('x', sys, 'Area', -gx_full.area/2, 'Duration', 1.0e-3);
     gx_spoil_area = 4 / slice_thickness;
 
     % Bridged spoiler that starts at gx flat amplitude for continuity.
-    gx_spoil = mr.makeExtendedTrapezoidArea('x', gx_full.amplitude, 0, gx_spoil_area, sys);
+    gx_spoil = testutils.makeExtendedTrapezoidArea('x', gx_full.amplitude, 0, gx_spoil_area, sys);
 
     pe_areas = ((0:Ny-1) - floor(Ny/2)) / fov;
     max_pe_area = max(abs(pe_areas));
-    gy_phase = mr.makeTrapezoid('y', 'Area', max_pe_area, 'Duration', 1.0e-3, 'system', sys);
+    gy_phase = mr.makeTrapezoid('y', sys, 'Area', max_pe_area, 'Duration', 1.0e-3);
 
     % ONCE labels for prep/main semantics.
     lbl_once1 = mr.makeLabel('SET', 'ONCE', 1);
@@ -571,7 +568,7 @@ function seq = write_epi(write, num_slices, num_averages)
 
      % Fat-sat pulse
     sat_ppm = -3.35;
-    rf_fs = mr.makeGaussPulse(110 * pi / 180, 'system', sys, ...
+    rf_fs = mr.makeGaussPulse(110 * pi / 180, sys, ...
         'Duration', 8e-3, ...
         'bandwidth', abs(sat_ppm * 1e-6 * sys.B0 * sys.gamma), ...
         'freqPPM', sat_ppm, 'use', 'saturation');
@@ -579,7 +576,7 @@ function seq = write_epi(write, num_slices, num_averages)
     gz_fs = mr.makeTrapezoid('z', sys, 'delay', mr.calcDuration(rf_fs), 'Area', 0.1 / 1e-4);
 
     % Excitation
-    [rf, gz, gzReph] = mr.makeSincPulse(pi / 2, 'system', sys, ...
+    [rf, gz, gzReph] = mr.makeSincPulse(pi / 2, sys, ...
         'Duration', 2e-3, 'SliceThickness', slice_thickness, ...
         'apodization', 0.42, 'timeBwProduct', 4, 'use', 'excitation');
 
@@ -609,9 +606,9 @@ function seq = write_epi(write, num_slices, num_averages)
     adc.delay = round((gx.riseTime + gx.flatTime/2 - time_to_center) * 1e6) * 1e-6;
 
     % Split blips
-    gy_parts = mr.splitGradientAt(gy, blip_dur / 2, sys);
+    gy_parts = testutils.splitGradientAt(gy, blip_dur / 2, sys);
     [gy_blipup, gy_blipdown, ~] = mr.align('right', gy_parts(1), 'left', gy_parts(2), gx);
-    gy_blipdownup = mr.addGradients({gy_blipdown, gy_blipup}, sys);
+    gy_blipdownup = testutils.addGradients({gy_blipdown, gy_blipup}, sys);
 
     gy_blipup.waveform     = gy_blipup.waveform * pe_enable;
     gy_blipdown.waveform   = gy_blipdown.waveform * pe_enable;
@@ -876,41 +873,39 @@ function seq = write_mprage(write, num_slices, num_averages)
     
     % Inversion
     % RF and slice-select
-    rf180 = mr.makeBlockPulse(pi, ...
+    rf180 = mr.makeBlockPulse(pi, sys, ...
         'Duration', 20.0e-3, ...
-        'use', 'excitation', ... % should be 'inversion', but this way we get timing
-        'system', sys);
+        'use', 'excitation'); % should be 'inversion', but this way we get timing
     delayTI = mr.makeDelay(0.1e-3);
 
     % RF and slice-select
-    [rf, gz] = mr.makeSincPulse(alpha, ...
+    [rf, gz] = mr.makeSincPulse(alpha, sys, ...
         'Duration', 2.0e-3, ...
         'SliceThickness', slice_thickness, ...
         'timeBwProduct', 4, ...
         'apodization', 0.5, ...
-        'use', 'excitation', ...
-        'system', sys);
-    gz_reph = mr.makeTrapezoid('z', 'Area', -gz.area/2, 'Duration', 1.0e-3, 'system', sys);
-    gz_spoil = mr.makeTrapezoid('z', 'Area', 4 / slice_thickness, 'Duration', 1.0e-3, 'system', sys);
+        'use', 'excitation');
+    gz_reph = mr.makeTrapezoid('z', sys, 'Area', -gz.area/2, 'Duration', 1.0e-3);
+    gz_spoil = mr.makeTrapezoid('z', sys, 'Area', 4 / slice_thickness, 'Duration', 1.0e-3);
 
     % Readout and ADC
     readout_time = 2.56e-3;
-    gx_full = mr.makeTrapezoid('x', 'FlatArea', Nx/fov, 'FlatTime', readout_time, 'system', sys);
-    gx_parts = mr.splitGradientAt(gx_full, gx_full.riseTime + gx_full.flatTime);
+    gx_full = mr.makeTrapezoid('x', sys, 'FlatArea', Nx/fov, 'FlatTime', readout_time);
+    gx_parts = testutils.splitGradientAt(gx_full, gx_full.riseTime + gx_full.flatTime);
     gx = gx_parts(1); % truncate at end of flat
-    adc = mr.makeAdc(Nx, 'Duration', gx_full.flatTime, 'Delay', gx_full.riseTime, 'system', sys);
+    adc = mr.makeAdc(Nx, sys, 'Duration', gx_full.flatTime, 'Delay', gx_full.riseTime);
 
     % Pre/rewinder templates
-    gx_pre = mr.makeTrapezoid('x', 'Area', -gx_full.area/2, 'Duration', 1.0e-3, 'system', sys);
+    gx_pre = mr.makeTrapezoid('x', sys, 'Area', -gx_full.area/2, 'Duration', 1.0e-3);
     gx_spoil_area = 4 / slice_thickness;
 
     % Bridged spoiler that starts at gx flat amplitude for continuity.
-    gx_spoil = mr.makeExtendedTrapezoidArea('x', gx_full.amplitude, 0, gx_spoil_area, sys);
+    gx_spoil = testutils.makeExtendedTrapezoidArea('x', gx_full.amplitude, 0, gx_spoil_area, sys);
     delayTR = mr.makeDelay(0.5e-3);
 
     pe_areas = ((0:Ny-1) - floor(Ny/2)) / fov;
     max_pe_area = max(abs(pe_areas));
-    gy_phase = mr.makeTrapezoid('y', 'Area', max_pe_area, 'Duration', 1.0e-3, 'system', sys);
+    gy_phase = mr.makeTrapezoid('y', sys, 'Area', max_pe_area, 'Duration', 1.0e-3);
 
     seq = mr.Sequence(sys);
 
@@ -995,29 +990,27 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
     
     % Inversion
     % RF and slice-select
-    rf180 = mr.makeBlockPulse(pi, ...
+    rf180 = mr.makeBlockPulse(pi, sys, ...
         'Duration', 20.0e-3, ...
-        'use', 'excitation', ... % should be 'inversion', but this way we get timing
-        'system', sys);
+        'use', 'excitation'); % should be 'inversion', but this way we get timing
     delayTI = mr.makeDelay(0.1e-3);
 
     % RF and slice-select
-    [rf, gz] = mr.makeSincPulse(alpha, ...
+    [rf, gz] = mr.makeSincPulse(alpha, sys, ...
         'Duration', 2.0e-3, ...
         'SliceThickness', slice_thickness, ...
         'timeBwProduct', 4, ...
         'apodization', 0.5, ...
-        'use', 'excitation', ...
-        'system', sys);
-    gz_reph = mr.makeTrapezoid('z', 'Area', -gz.area/2, 'Duration', 1.0e-3, 'system', sys);
-    gz_spoil = mr.makeTrapezoid('z', 'Area', 4 / slice_thickness, 'Duration', 1.0e-3, 'system', sys);
+        'use', 'excitation');
+    gz_reph = mr.makeTrapezoid('z', sys, 'Area', -gz.area/2, 'Duration', 1.0e-3);
+    gz_spoil = mr.makeTrapezoid('z', sys, 'Area', 4 / slice_thickness, 'Duration', 1.0e-3);
 
     % Readout and ADC
     readout_time = 2.56e-3;
-    gx_full = mr.makeTrapezoid('x', 'FlatArea', Nx/fov, 'FlatTime', readout_time, 'system', sys);
-    gx_parts = mr.splitGradientAt(gx_full, gx_full.riseTime + gx_full.flatTime);
+    gx_full = mr.makeTrapezoid('x', sys, 'FlatArea', Nx/fov, 'FlatTime', readout_time);
+    gx_parts = testutils.splitGradientAt(gx_full, gx_full.riseTime + gx_full.flatTime);
     gx = gx_parts(1); % truncate at end of flat
-    adc = mr.makeAdc(Nx, 'Duration', gx_full.flatTime, 'Delay', gx_full.riseTime, 'system', sys);
+    adc = mr.makeAdc(Nx, sys, 'Duration', gx_full.flatTime, 'Delay', gx_full.riseTime);
 
     % Navigator: 3 orthogonal single-shot spirals (16 samples)
     % Each nav has a slice-selective sinc pulse selecting the respective plane.
@@ -1025,26 +1018,25 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
     nav_slice_thickness = 10e-3;
     [gx_nav_cells, gy_nav_cells, adc_nav] = testutils.makeTestSpiral(sys, 1, Nx_nav, 10.0*fov);
     
-    gx_nav_ax = gx_nav_cells{1}; gx_nav_rew_ax = mr.makeExtendedTrapezoidArea('x', gx_nav_ax.last, 0.0, -gx_nav_ax.area, sys);
-    gy_nav_ax = gy_nav_cells{1}; gy_nav_rew_ax = mr.makeExtendedTrapezoidArea('y', gy_nav_ax.last, 0.0, -gy_nav_ax.area, sys);
-    gz_nav_spoil_ax = mr.makeTrapezoid('z', 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3, 'system', sys);
+    gx_nav_ax = gx_nav_cells{1}; gx_nav_rew_ax = testutils.makeExtendedTrapezoidArea('x', gx_nav_ax.last, 0.0, -gx_nav_ax.area, sys);
+    gy_nav_ax = gy_nav_cells{1}; gy_nav_rew_ax = testutils.makeExtendedTrapezoidArea('y', gy_nav_ax.last, 0.0, -gy_nav_ax.area, sys);
+    gz_nav_spoil_ax = mr.makeTrapezoid('z', sys, 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3);
 
-    gx_nav_cor = gx_nav_ax; gx_nav_cor.channel = 'x'; gx_nav_rew_cor = mr.makeExtendedTrapezoidArea('x', gx_nav_cor.last, 0.0, -gx_nav_cor.area, sys);
-    gz_nav_cor = gy_nav_ax; gz_nav_cor.channel = 'z'; gz_nav_rew_cor = mr.makeExtendedTrapezoidArea('z', gz_nav_cor.last, 0.0, -gz_nav_cor.area, sys);
-    gy_nav_spoil_cor = mr.makeTrapezoid('y', 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3, 'system', sys);
+    gx_nav_cor = gx_nav_ax; gx_nav_cor.channel = 'x'; gx_nav_rew_cor = testutils.makeExtendedTrapezoidArea('x', gx_nav_cor.last, 0.0, -gx_nav_cor.area, sys);
+    gz_nav_cor = gy_nav_ax; gz_nav_cor.channel = 'z'; gz_nav_rew_cor = testutils.makeExtendedTrapezoidArea('z', gz_nav_cor.last, 0.0, -gz_nav_cor.area, sys);
+    gy_nav_spoil_cor = mr.makeTrapezoid('y', sys, 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3);
     
-    gy_nav_sag = gx_nav_ax; gy_nav_sag.channel = 'y'; gy_nav_rew_sag = mr.makeExtendedTrapezoidArea('y', gy_nav_sag.last, 0.0, -gy_nav_sag.area, sys);
-    gz_nav_sag = gy_nav_ax; gz_nav_sag.channel = 'z'; gz_nav_rew_sag = mr.makeExtendedTrapezoidArea('z', gz_nav_sag.last, 0.0, -gz_nav_sag.area, sys);
-    gx_nav_spoil_sag = mr.makeTrapezoid('x', 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3, 'system', sys);
+    gy_nav_sag = gx_nav_ax; gy_nav_sag.channel = 'y'; gy_nav_rew_sag = testutils.makeExtendedTrapezoidArea('y', gy_nav_sag.last, 0.0, -gy_nav_sag.area, sys);
+    gz_nav_sag = gy_nav_ax; gz_nav_sag.channel = 'z'; gz_nav_rew_sag = testutils.makeExtendedTrapezoidArea('z', gz_nav_sag.last, 0.0, -gz_nav_sag.area, sys);
+    gx_nav_spoil_sag = mr.makeTrapezoid('x', sys, 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3);
 
     % Axial nav: slice-select on z
-    [rf_nav_ax, gz_nav_ss] = mr.makeSincPulse(alpha, ...
+    [rf_nav_ax, gz_nav_ss] = mr.makeSincPulse(alpha, sys, ...
         'Duration', 0.5e-3, ...
         'SliceThickness', nav_slice_thickness, ...
         'timeBwProduct', 4, ...
         'apodization', 0.5, ...
-        'use', 'excitation', ...
-        'system', sys);
+        'use', 'excitation');
     
     % Coronal nav: slice-select on y
     gy_nav_ss = gz_nav_ss; gy_nav_ss.channel = 'y';
@@ -1057,16 +1049,16 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
     lblNav = mr.makeLabel('SET', 'NAV', 1);
 
     % Pre/rewinder templates
-    gx_pre = mr.makeTrapezoid('x', 'Area', -gx_full.area/2, 'Duration', 1.0e-3, 'system', sys);
+    gx_pre = mr.makeTrapezoid('x', sys, 'Area', -gx_full.area/2, 'Duration', 1.0e-3);
     gx_spoil_area = 4 / slice_thickness;
 
     % Bridged spoiler that starts at gx flat amplitude for continuity.
-    gx_spoil = mr.makeExtendedTrapezoidArea('x', gx_full.amplitude, 0, gx_spoil_area, sys);
+    gx_spoil = testutils.makeExtendedTrapezoidArea('x', gx_full.amplitude, 0, gx_spoil_area, sys);
     delayTR = mr.makeDelay(0.5e-3);
 
     pe_areas = ((0:Ny-1) - floor(Ny/2)) / fov;
     max_pe_area = max(abs(pe_areas));
-    gy_phase = mr.makeTrapezoid('y', 'Area', max_pe_area, 'Duration', 1.0e-3, 'system', sys);
+    gy_phase = mr.makeTrapezoid('y', sys, 'Area', max_pe_area, 'Duration', 1.0e-3);
 
     seq = mr.Sequence(sys);
 
@@ -1168,18 +1160,16 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
     rf_spoil_inc = 84.0; % degrees
 
     % Inversion
-    rf180 = mr.makeBlockPulse(pi, ...
+    rf180 = mr.makeBlockPulse(pi, sys, ...
         'Duration', 20.0e-3, ...
-        'use', 'excitation', ...
-        'system', sys);
+        'use', 'excitation');
     delayTI = mr.makeDelay(0.1e-3);
 
     % Excitation
-    rf = mr.makeBlockPulse(alpha, ...
+    rf = mr.makeBlockPulse(alpha, sys, ...
         'Duration', 2.0e-3, ...
-        'use', 'excitation', ...
-        'system', sys);
-    gz_spoil = mr.makeTrapezoid('z', 'Area', 4 / 5.0e-3, 'Duration', 1.0e-3, 'system', sys);
+        'use', 'excitation');
+    gz_spoil = mr.makeTrapezoid('z', sys, 'Area', 4 / 5.0e-3, 'Duration', 1.0e-3);
 
     % --- Spiral readout (multi-interleave) ---
     if use_rotext
@@ -1188,8 +1178,8 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
         [gx_cells, gy_cells, adc] = testutils.makeTestSpiral(sys, num_shots * Nz, Nx, fov);
         gx_base = gx_cells{1};
         gy_base = gy_cells{1};
-        gx_rew = mr.makeExtendedTrapezoidArea('x', gx_base.last, 0.0, -gx_base.area, sys);
-        gy_rew = mr.makeExtendedTrapezoidArea('y', gy_base.last, 0.0, -gy_base.area, sys);
+        gx_rew = testutils.makeExtendedTrapezoidArea('x', gx_base.last, 0.0, -gx_base.area, sys);
+        gy_rew = testutils.makeExtendedTrapezoidArea('y', gy_base.last, 0.0, -gy_base.area, sys);
         dphi = 2 * pi / (num_shots  * Nz);  % interleave angular step
     else
         % Explicit path: pre-compute all interleaves across all partitions.
@@ -1198,13 +1188,13 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
         gx_rews = cell(num_shots * Nz, 1);
         gy_rews = cell(num_shots * Nz, 1);
         for ii = 1:(num_shots * Nz)
-            gx_rews{ii} = mr.makeExtendedTrapezoidArea('x', gx_shots{ii}.last, 0.0, -gx_shots{ii}.area, sys);
-            gy_rews{ii} = mr.makeExtendedTrapezoidArea('y', gy_shots{ii}.last, 0.0, -gy_shots{ii}.area, sys);
+            gx_rews{ii} = testutils.makeExtendedTrapezoidArea('x', gx_shots{ii}.last, 0.0, -gx_shots{ii}.area, sys);
+            gy_rews{ii} = testutils.makeExtendedTrapezoidArea('y', gy_shots{ii}.last, 0.0, -gy_shots{ii}.area, sys);
         end
     end
     
     % Partition encoding (along z)
-    gz_phase = mr.makeTrapezoid('z', 'Area', -Nz / fov / 2, 'system', sys);
+    gz_phase = mr.makeTrapezoid('z', sys, 'Area', -Nz / fov / 2);
 
     delayTR = mr.makeDelay(0.5e-3);
 
@@ -1304,30 +1294,26 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
     rf_spoil_inc = 84.0; % degrees
 
     % T2-prep
-    rf90 = mr.makeBlockPulse(pi/2, ...
+    rf90 = mr.makeBlockPulse(pi/2, sys, ...
+        'Duration', 10.0e-3, ...
+        'use', 'excitation');
+     rf90_inv = mr.makeBlockPulse(pi/2, sys, ...
         'Duration', 10.0e-3, ...
         'use', 'excitation', ...
-        'system', sys);
-     rf90_inv = mr.makeBlockPulse(pi/2, ...
-        'Duration', 10.0e-3, ...
-        'use', 'excitation', ...
-        'system', sys, ...
         'phaseOffset', pi); % 180 degree phase shift for inversion
     t2prep_delay = mr.makeDelay(50e-3);
     
     % Inversion
-    rf180 = mr.makeBlockPulse(pi, ...
+    rf180 = mr.makeBlockPulse(pi, sys, ...
         'Duration', 20.0e-3, ...
-        'use', 'excitation', ...
-        'system', sys);
+        'use', 'excitation');
     delayTI = mr.makeDelay(0.1e-3);
 
     % Excitation
-    rf = mr.makeBlockPulse(alpha, ...
+    rf = mr.makeBlockPulse(alpha, sys, ...
         'Duration', 2.0e-3, ...
-        'use', 'excitation', ...
-        'system', sys);
-    gz_spoil = mr.makeTrapezoid('z', 'Area', 4 / 5.0e-3, 'Duration', 1.0e-3, 'system', sys);
+        'use', 'excitation');
+    gz_spoil = mr.makeTrapezoid('z', sys, 'Area', 4 / 5.0e-3, 'Duration', 1.0e-3);
 
     % --- Spiral readout (multi-interleave) ---
     if use_rotext
@@ -1336,8 +1322,8 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
         [gx_cells, gy_cells, adc] = testutils.makeTestSpiral(sys, num_shots * Nz, Nx, fov);
         gx_base = gx_cells{1};
         gy_base = gy_cells{1};
-        gx_rew = mr.makeExtendedTrapezoidArea('x', gx_base.last, 0.0, -gx_base.area, sys);
-        gy_rew = mr.makeExtendedTrapezoidArea('y', gy_base.last, 0.0, -gy_base.area, sys);
+        gx_rew = testutils.makeExtendedTrapezoidArea('x', gx_base.last, 0.0, -gx_base.area, sys);
+        gy_rew = testutils.makeExtendedTrapezoidArea('y', gy_base.last, 0.0, -gy_base.area, sys);
         dphi = 2 * pi / (num_shots  * Nz);  % interleave angular step
     else
         % Explicit path: pre-compute all interleaves across all partitions.
@@ -1346,13 +1332,13 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
         gx_rews = cell(num_shots * Nz, 1);
         gy_rews = cell(num_shots * Nz, 1);
         for ii = 1:(num_shots * Nz)
-            gx_rews{ii} = mr.makeExtendedTrapezoidArea('x', gx_shots{ii}.last, 0.0, -gx_shots{ii}.area, sys);
-            gy_rews{ii} = mr.makeExtendedTrapezoidArea('y', gy_shots{ii}.last, 0.0, -gy_shots{ii}.area, sys);
+            gx_rews{ii} = testutils.makeExtendedTrapezoidArea('x', gx_shots{ii}.last, 0.0, -gx_shots{ii}.area, sys);
+            gy_rews{ii} = testutils.makeExtendedTrapezoidArea('y', gy_shots{ii}.last, 0.0, -gy_shots{ii}.area, sys);
         end
     end
     
     % Partition encoding (along z)
-    gz_phase = mr.makeTrapezoid('z', 'Area', -Nz / fov / 2, 'system', sys);
+    gz_phase = mr.makeTrapezoid('z', sys, 'Area', -Nz / fov / 2);
 
     delayTR = mr.makeDelay(0.5e-3);
 

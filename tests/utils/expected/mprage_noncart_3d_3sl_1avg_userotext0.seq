@@ -14,6 +14,7 @@ GradientRasterTime 2e-05
 NumPartitions 3 
 PeakRF 25 
 RadiofrequencyRasterTime 2e-06 
+RequiredExtensions  
 TR 0.03792 
 TotalDuration 0.11376 
 
@@ -73,27 +74,27 @@ TotalDuration 0.11376
 2       550994            0      -493239 5 0 0
 3       566952            0       297827 6 0 0
 5      -493239      -493239            0 7 8 0
-6       664230       297827            0 9 10 0
+6       553521       297827            0 9 10 0
 7       571668            0      -504545 11 0 0
 8       556607            0      -278244 12 0 0
-9      -665705      -504545            0 13 14 0
-10      -358291      -278244            0 15 16 0
+9      -665697      -504545            0 13 14 0
+10      -358289      -278244            0 15 16 0
 11      -561929            0     -11305.9 17 0 0
 12       576071            0      -576071 18 0 0
-14      -582997     -11305.9            0 19 20 0
-15      -576071      -576071            0 21 14 0
-16      -550994            0       493239 22 0 0
-17      -566952            0      -297827 23 0 0
-18       493239       493239            0 24 8 0
-19      -664230      -297827            0 25 10 0
-20      -571668            0       504545 26 0 0
-21      -556607            0       278244 27 0 0
-23       665705       504545            0 28 14 0
-24       358291       278244            0 29 16 0
-25       561929            0      11305.9 30 0 0
-26      -576071            0       576071 31 0 0
-27       582997      11305.9            0 32 20 0
-28       576071       576071            0 33 14 0
+14      -583003     -11305.9            0 19 20 0
+15      -576071      -576071            0 21 22 0
+16      -550994            0       493239 23 0 0
+17      -566952            0      -297827 24 0 0
+18       493239       493239            0 25 8 0
+19      -553521      -297827            0 26 10 0
+20      -571668            0       504545 27 0 0
+21      -556607            0       278244 28 0 0
+23       665697       504545            0 29 14 0
+24       358289       278244            0 30 16 0
+25       561929            0      11305.9 31 0 0
+26      -576071            0       576071 32 0 0
+27       583003      11305.9            0 33 20 0
+28       576071       576071            0 34 22 0
 
 # Format of trapezoid gradients:
 # id amplitude rise flat fall delay
@@ -663,7 +664,7 @@ num_samples 258
 shape_id 7
 num_samples 3
 1
--0.474527683
+-0.474529101
 -0
 
 shape_id 8
@@ -673,16 +674,18 @@ num_samples 3
 7
 
 shape_id 9
-num_samples 3
-0.448378799
+num_samples 4
+0.538058038
+-1
 -1
 0
 
 shape_id 10
-num_samples 3
+num_samples 4
 0
 6
-10
+7
+11
 
 shape_id 11
 num_samples 258
@@ -1208,7 +1211,7 @@ num_samples 258
 
 shape_id 13
 num_samples 3
-0.75791031
+0.757919739
 -1
 -0
 
@@ -1220,7 +1223,7 @@ num_samples 3
 
 shape_id 15
 num_samples 4
-0.776587728
+0.776592631
 1
 1
 -0
@@ -1756,7 +1759,7 @@ num_samples 258
 
 shape_id 19
 num_samples 3
-0.0193926857
+0.0193924654
 -1
 -0
 
@@ -1767,12 +1770,20 @@ num_samples 3
 8
 
 shape_id 21
-num_samples 3
+num_samples 4
 1
--0.906338075
+-0.830807379
+-0.830807379
 -0
 
 shape_id 22
+num_samples 4
+0
+7
+8
+11
+
+shape_id 23
 num_samples 258
 -0
 0.0159017577
@@ -2033,7 +2044,7 @@ num_samples 258
 -0.895180372
 -0.895180372
 
-shape_id 23
+shape_id 24
 num_samples 258
 -0
 0.00394609953
@@ -2294,19 +2305,20 @@ num_samples 258
 0.525312042
 0.525312042
 
-shape_id 24
-num_samples 3
-1
--0.474527683
-0
-
 shape_id 25
 num_samples 3
-0.448378799
+1
+-0.474529101
+0
+
+shape_id 26
+num_samples 4
+0.538058038
+-1
 -1
 -0
 
-shape_id 26
+shape_id 27
 num_samples 258
 -0
 0.00427410912
@@ -2567,7 +2579,7 @@ num_samples 258
 -0.882583187
 -0.882583187
 
-shape_id 27
+shape_id 28
 num_samples 258
 -0
 0.0156421808
@@ -2828,20 +2840,20 @@ num_samples 258
 -0.49989382
 -0.49989382
 
-shape_id 28
+shape_id 29
 num_samples 3
-0.75791031
+0.757919739
 -1
 0
 
-shape_id 29
+shape_id 30
 num_samples 4
-0.776587728
+0.776592631
 1
 1
 0
 
-shape_id 30
+shape_id 31
 num_samples 258
 0
 0.0112441341
@@ -3102,7 +3114,7 @@ num_samples 258
 0.0201197659
 0.0201197659
 
-shape_id 31
+shape_id 32
 num_samples 258
 -0
 0.0112300329
@@ -3363,16 +3375,17 @@ num_samples 258
 -1
 -1
 
-shape_id 32
+shape_id 33
 num_samples 3
-0.0193926857
+0.0193924654
 -1
 0
 
-shape_id 33
-num_samples 3
+shape_id 34
+num_samples 4
 1
--0.906338075
+-0.830807379
+-0.830807379
 0
 
 
@@ -3383,4 +3396,4 @@ num_samples 3
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash 1e071b6b48f9da6efeb83926285e78a5
+Hash 623569285200b222be7f099bfb2b8c08
