@@ -744,6 +744,7 @@ MU_TEST(test_sequences_geninstructions_mprage_nav_2d_3sl_3avg) { run_sequences_g
 /* ------------------------------------------------------------------ */
 
 static void check_fmod_shift(const pulseqlib_collection* coll,
+    const seg_meta* meta,
     const fmod_def_file* ref,
     const fmod_plan_file* plan,
     const scan_table_file* scan,
@@ -766,6 +767,11 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
     lib = fmc->libs[0];
     mu_assert(lib != NULL, "freq_mod lib missing for subsequence 0");
     mu_assert_int_eq(scan->num_entries, lib->scan_table_len);
+    if (plan && plan->num_plans >= 0)
+        mu_assert_int_eq(plan->num_plans, lib->num_plan_instances);
+    if (meta && meta->fmod_build_mode_tr_scoped)
+        mu_assert(lib->num_plan_instances >= ref->num_defs,
+                  "tr_scoped mode should not collapse below def count");
     used_plan = (int*)calloc((size_t)lib->num_plan_instances, sizeof(int));
     mu_assert(used_plan != NULL, "alloc failed for used_plan flags");
 
@@ -874,9 +880,11 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
 {
     pulseqlib_opts opts;
     pulseqlib_collection* coll = NULL;
+    seg_meta meta = SEG_META_INIT;
     fmod_def_file ref = FMOD_DEF_FILE_INIT;
     fmod_plan_file plan = FMOD_PLAN_FILE_INIT;
     scan_table_file scan = SCAN_TABLE_FILE_INIT;
+    char meta_path[512];
     char fmod_path[512];
     char fmod_plan_path[512];
     char scan_path[512];
@@ -904,6 +912,10 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
     rc = load_seq_with_averages(&coll, tc->seq_file, &opts, tc->num_averages);
     mu_assert(PULSEQLIB_SUCCEEDED(rc), "load_seq failed");
 
+    build_case_path(meta_path, sizeof(meta_path), tc, "_meta.txt");
+    ok = parse_meta(meta_path, &meta);
+    mu_assert(ok, "failed to parse meta.txt");
+
     build_case_path(fmod_path, sizeof(fmod_path), tc, "_freqmod_def.bin");
     ok = parse_fmod_defs(fmod_path, &ref);
     mu_assert(ok, "failed to parse freqmod_def.bin");
@@ -925,7 +937,8 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
     for (t = 0; t < 4; ++t) {
         int r;
         for (r = 0; r < 4; ++r) {
-            check_fmod_shift(coll, &ref,
+            check_fmod_shift(coll, &meta,
+                             &ref,
                              &plan,
                              &scan,
                              shifts[t],

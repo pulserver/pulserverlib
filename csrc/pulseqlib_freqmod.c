@@ -577,68 +577,6 @@ static void compute_plan_waveforms(
 }
 
 /* ================================================================== */
-/*  Helper: compute per-scan-row extra phase from inactive-axis areas */
-/* ================================================================== */
-
-/*
- * For each scan-table row that has a freq-mod event, accumulate the
- * phase contribution from gradient axes that are inactive during the
- * active window, integrated from TR-start to the reference timepoint.
- *
- * scan_phase_extra[pos] = 2π * dot(scan_inactive_area_3ch[pos*3..], u)
- * where  u = R^T @ shift_m  for the plan instance at this row.
- *
- * scan_inactive_area_3ch must be pre-built (shift-independent).
- */
-static void compute_scan_phase_extra(
-    pulseqlib_freq_mod_library* lib,
-    const float* shift_m)
-{
-    int p, pos, ch;
-    float identity[9] = {1,0,0, 0,1,0, 0,0,1};
-    float* all_u = NULL;
-
-    if (!lib->scan_phase_extra || !lib->scan_inactive_area_3ch
-            || lib->num_plan_instances == 0 || lib->scan_table_len == 0)
-        return;
-
-    all_u = (float*)PULSEQLIB_ALLOC(
-        (size_t)lib->num_plan_instances * 3 * sizeof(float));
-    if (!all_u) {
-        for (pos = 0; pos < lib->scan_table_len; ++pos)
-            lib->scan_phase_extra[pos] = 0.0f;
-        return;
-    }
-
-    for (p = 0; p < lib->num_plan_instances; ++p) {
-        int ridx = lib->pi_rotation_idx[p];
-        const float* R;
-        float u[3];
-        R = (ridx >= 0 && ridx < lib->num_rotations)
-            ? (const float*)lib->rotations[ridx] : identity;
-        pulseqlib__apply_rotation(u, R, shift_m, 1);   /* transpose */
-        all_u[p * 3 + 0] = u[0];
-        all_u[p * 3 + 1] = u[1];
-        all_u[p * 3 + 2] = u[2];
-    }
-
-    for (pos = 0; pos < lib->scan_table_len; ++pos) {
-        int pi = lib->scan_to_plan[pos];
-        if (pi < 0) {
-            lib->scan_phase_extra[pos] = 0.0f;
-        } else {
-            float extra = 0.0f;
-            for (ch = 0; ch < 3; ++ch)
-                extra += lib->scan_inactive_area_3ch[pos * 3 + ch]
-                       * all_u[pi * 3 + ch];
-            lib->scan_phase_extra[pos] = (float)PULSEQLIB__TWO_PI * extra;
-        }
-    }
-
-    PULSEQLIB_FREE(all_u);
-}
-
-/* ================================================================== */
 /*  Helper: allocate plan arrays                                      */
 /* ================================================================== */
 
@@ -723,7 +661,6 @@ static int build_freq_mod_library(
     int* block_rotation      = NULL;   /* [count] rotation_idx per event  */
     int* block_norot         = NULL;   /* [count] norot flag per event    */
     pulseqlib_freq_mod_definition* base_defs = NULL;  /* [num_base] temp */
-    int* base_active_mask    = NULL;   /* [num_base * 3] per-axis flag    */
     int  max_samples;
 
     /* ---- Validate arguments ---- */
@@ -821,11 +758,10 @@ static int build_freq_mod_library(
         base_unique, base_map,
         (const int*)base_rows, count, FREQ_MOD_BASE_COLS);
 
-    /* ==== Build base definitions and active masks ==== */
+    /* ==== Build base definitions ==== */
     base_defs = (pulseqlib_freq_mod_definition*)PULSEQLIB_ALLOC(
         (size_t)num_base * sizeof(pulseqlib_freq_mod_definition));
-    base_active_mask = (int*)PULSEQLIB_ALLOC((size_t)num_base * 3 * sizeof(int));
-    if (!base_defs || !base_active_mask) goto build_fail;
+    if (!base_defs) goto build_fail;
     memset(base_defs, 0, (size_t)num_base * sizeof(pulseqlib_freq_mod_definition));
 
     max_samples = 0;
@@ -870,15 +806,9 @@ static int build_freq_mod_library(
                 active_end_us   = active_start_us + adc_dur_us;
                 ref_time_us     = adc_dur_us * 0.5f;
             } else {
-                base_active_mask[n * 3 + 0] = 0;
-                base_active_mask[n * 3 + 1] = 0;
-                base_active_mask[n * 3 + 2] = 0;
                 continue;
             }
         } else {
-            base_active_mask[n * 3 + 0] = 0;
-            base_active_mask[n * 3 + 1] = 0;
-            base_active_mask[n * 3 + 2] = 0;
             continue;
         }
 
@@ -897,19 +827,8 @@ static int build_freq_mod_library(
             active_start_us, active_end_us, ref_time_us,
             target_raster_us, &base_defs[n]);
         if (PULSEQLIB_FAILED(result)) {
-            base_active_mask[n * 3 + 0] = 0;
-            base_active_mask[n * 3 + 1] = 0;
-            base_active_mask[n * 3 + 2] = 0;
             continue;
         }
-
-        /* Determine which axes are active */
-        base_active_mask[n * 3 + 0] = axis_is_active(
-            base_defs[n].waveform_gx, base_defs[n].num_samples);
-        base_active_mask[n * 3 + 1] = axis_is_active(
-            base_defs[n].waveform_gy, base_defs[n].num_samples);
-        base_active_mask[n * 3 + 2] = axis_is_active(
-            base_defs[n].waveform_gz, base_defs[n].num_samples);
 
         if (base_defs[n].num_samples > max_samples)
             max_samples = base_defs[n].num_samples;
@@ -928,11 +847,6 @@ static int build_freq_mod_library(
                  ? desc->grad_table[bte->gy_id].amplitude : 0.0f;
         amp[2] = (bte->gz_id >= 0 && bte->gz_id < desc->grad_table_size)
                  ? desc->grad_table[bte->gz_id].amplitude : 0.0f;
-
-        /* Mask inactive axes to zero */
-        if (!base_active_mask[bi * 3 + 0]) amp[0] = 0.0f;
-        if (!base_active_mask[bi * 3 + 1]) amp[1] = 0.0f;
-        if (!base_active_mask[bi * 3 + 2]) amp[2] = 0.0f;
 
         memset(&entry_keys[n], 0, sizeof(entry_keys[n]));
         entry_keys[n].base_idx = bi;
@@ -1162,115 +1076,8 @@ static int build_freq_mod_library(
     /* ==== Compute plan waveforms ==== */
     compute_plan_waveforms(lib, shift_m);
 
-    /* ==== Compute per-scan-row inactive-axis gradient areas ==== */
-    {
-        /* All declarations at top of block (C89 compliance) */
-        int nbt = desc->tr_descriptor.tr_size;
-        int* pi_active_mask  = NULL;
-        float* pi_ref_abs_us = NULL;
-        int ok, p, ii;
-
-        lib->scan_inactive_area_3ch = NULL;
-        lib->scan_phase_extra       = NULL;
-        ok = 0;
-
-        if (nbt > 0 && num_plan > 0 && lib->scan_table_len > 0) {
-            pi_active_mask  = (int*)PULSEQLIB_ALLOC(
-                (size_t)num_plan * 3 * sizeof(int));
-            pi_ref_abs_us   = (float*)PULSEQLIB_ALLOC(
-                (size_t)num_plan * sizeof(float));
-            lib->scan_inactive_area_3ch = (float*)PULSEQLIB_ALLOC(
-                (size_t)lib->scan_table_len * 3 * sizeof(float));
-            lib->scan_phase_extra = (float*)PULSEQLIB_ALLOC(
-                (size_t)lib->scan_table_len * sizeof(float));
-
-            if (pi_active_mask && pi_ref_abs_us &&
-                    lib->scan_inactive_area_3ch && lib->scan_phase_extra)
-                ok = 1;
-        }
-
-        if (ok) {
-            memset(lib->scan_inactive_area_3ch, 0,
-                   (size_t)lib->scan_table_len * 3 * sizeof(float));
-            memset(lib->scan_phase_extra, 0,
-                   (size_t)lib->scan_table_len * sizeof(float));
-
-            /* Per-plan: determine active axes and ref time from block start */
-            for (p = 0; p < num_plan; ++p) {
-                int eidx     = lib->pi_entry_idx[p];
-                int ev       = entry_unique[eidx];
-                int bi       = base_map[ev];
-                int rf_id_p  = base_rows[ev][1];
-                int adc_id_p = base_rows[ev][2];
-                float active_start_us_p;
-
-                pi_active_mask[p * 3 + 0] = base_active_mask[bi * 3 + 0];
-                pi_active_mask[p * 3 + 1] = base_active_mask[bi * 3 + 1];
-                pi_active_mask[p * 3 + 2] = base_active_mask[bi * 3 + 2];
-
-                if (rf_id_p >= 0 && rf_id_p < desc->num_unique_rfs)
-                    active_start_us_p =
-                        (float)desc->rf_definitions[rf_id_p].delay;
-                else if (adc_id_p >= 0 && adc_id_p < desc->num_unique_adcs)
-                    active_start_us_p =
-                        (float)desc->adc_definitions[adc_id_p].delay;
-                else
-                    active_start_us_p = 0.0f;
-
-                pi_ref_abs_us[p] = active_start_us_p + base_defs[bi].ref_time_us;
-            }
-
-            /* For each scan-table row with freq_mod: integrate inactive axes
-             * from the TR start block to the reference timepoint. */
-            for (ii = 0; ii < desc->scan_table_len; ++ii) {
-                int pi, blk_idx_ii, tr_start_blk, bb, ch;
-                float ref_abs_us_ii;
-
-                pi = lib->scan_to_plan[ii];
-                if (pi < 0) continue;
-
-                blk_idx_ii    = desc->scan_table_block_idx[ii];
-                tr_start_blk  = (blk_idx_ii / nbt) * nbt;
-                ref_abs_us_ii = pi_ref_abs_us[pi];
-
-                for (bb = tr_start_blk; bb <= blk_idx_ii; ++bb) {
-                    const pulseqlib_block_table_element* bte_bb;
-                    float t0_us_bb, t1_us_bb;
-
-                    if (bb >= desc->num_blocks) break;
-                    bte_bb   = &desc->block_table[bb];
-                    t0_us_bb = 0.0f;
-                    t1_us_bb = (bb < blk_idx_ii)
-                        ? (float)bte_bb->duration_us
-                        : ref_abs_us_ii;
-                    if (t1_us_bb <= 0.0f) continue;
-
-                    for (ch = 0; ch < 3; ++ch) {
-                        if (pi_active_mask[pi * 3 + ch]) continue;
-                        lib->scan_inactive_area_3ch[ii * 3 + ch] +=
-                            integrate_grad_interval_us(
-                                desc, bte_bb, ch, t0_us_bb, t1_us_bb);
-                    }
-                }
-            }
-        }
-
-        if (!ok) {
-            if (lib->scan_inactive_area_3ch) {
-                PULSEQLIB_FREE(lib->scan_inactive_area_3ch);
-                lib->scan_inactive_area_3ch = NULL;
-            }
-            if (lib->scan_phase_extra) {
-                PULSEQLIB_FREE(lib->scan_phase_extra);
-                lib->scan_phase_extra = NULL;
-            }
-        }
-        if (pi_active_mask) PULSEQLIB_FREE(pi_active_mask);
-        if (pi_ref_abs_us)  PULSEQLIB_FREE(pi_ref_abs_us);
-    }
-
-    /* Compute shift-dependent scan_phase_extra from inactive areas */
-    compute_scan_phase_extra(lib, shift_m);
+    /* Keep accessor-only semantics for phase: all channel contributions
+     * are precomputed in plan_phase from the 3-channel definition itself. */
 
     /* ==== For non-PMC: discard 3-channel data ==== */
     if (!desc->enable_pmc) {
@@ -1282,7 +1089,6 @@ static int build_freq_mod_library(
 
     /* ==== Free temporary working arrays ==== */
     free_base_defs(base_defs, num_base);
-    PULSEQLIB_FREE(base_active_mask);
     PULSEQLIB_FREE(block_indices);
     PULSEQLIB_FREE(base_rows);
     PULSEQLIB_FREE(base_unique);
@@ -1301,7 +1107,6 @@ static int build_freq_mod_library(
 
 build_fail:
     free_base_defs(base_defs, num_base);
-    if (base_active_mask) PULSEQLIB_FREE(base_active_mask);
     if (block_indices)  PULSEQLIB_FREE(block_indices);
     if (base_rows)      PULSEQLIB_FREE(base_rows);
     if (base_unique)    PULSEQLIB_FREE(base_unique);
@@ -1334,7 +1139,6 @@ static int update_freq_mod_library(
         return PULSEQLIB_SUCCESS;
 
     compute_plan_waveforms(lib, shift_m);
-    compute_scan_phase_extra(lib, shift_m);
     return PULSEQLIB_SUCCESS;
 }
 
@@ -1360,8 +1164,6 @@ static int freq_mod_library_get(
     *out_waveform    = lib->plan_waveforms[pi];
     *out_num_samples = lib->plan_num_samples[pi];
     *out_phase_rad   = lib->plan_phase[pi];
-    if (lib->scan_phase_extra)
-        *out_phase_rad += lib->scan_phase_extra[scan_table_pos];
     return 1;
 }
 
@@ -1605,9 +1407,6 @@ static int freq_mod_library_read_cache(
      * Otherwise plan waveforms from cache are used as-is. */
     if (has_3ch && lib->num_plan_instances > 0 && lib->entry_waveform_3ch)
         compute_plan_waveforms(lib, shift_m);
-
-    /* Always recompute shift-dependent scan_phase_extra */
-    compute_scan_phase_extra(lib, shift_m);
 
     /* If not PMC-enabled: discard 3-channel data */
     if (!pmc_enabled) {

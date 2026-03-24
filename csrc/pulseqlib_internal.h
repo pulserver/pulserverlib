@@ -296,15 +296,14 @@ typedef struct pulseqlib_freq_mod_library {
     float* plan_waveform_data;  /* flat [num_plan_instances * max_samples] */
     float** plan_waveforms;     /* [num_plan_instances] row pointers       */
     int* plan_num_samples;      /* [num_plan_instances] actual length      */
-    float* plan_phase;          /* [num_plan_instances] phase comp (rad)   */
+    float* plan_phase;          /* [num_plan_instances] phase comp (rad)
+                                 * from all 3 channels                     */
 
     /* O(1) accessor by scan-table position. */
     int  scan_table_len;
     int* scan_to_plan;          /* [scan_table_len] -> plan instance, -1   */
 
-    /* Per-scan-row phase tracking from TR start (inactive-axis areas).
-     * scan_inactive_area_3ch: shift-independent, kept for PMC update path.
-     * scan_phase_extra: shift-dependent, recomputed by compute_scan_phase_extra(). */
+    /* Optional cache fields retained for backward cache compatibility. */
     float* scan_inactive_area_3ch; /* [scan_table_len * 3]  or NULL */
     float* scan_phase_extra;       /* [scan_table_len]      or NULL */
 } pulseqlib_freq_mod_library;

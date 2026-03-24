@@ -54,12 +54,15 @@ classdef TruthBuilder < handle
         fmod_types          = []
         fmod_durations      = []   % blockDuration of each def (for scan-table matching)
         fmod_kinds          = []   % 0=RF, 1=ADC (same as fmod_types)
+        fmod_def_tr_group_ids = [] % [n] TR-group ID associated with each def
         fmod_waveforms_cell = {}   % cell array of waveform cell arrays for dedup
+        fmod_build_mode     = 'full_collection'
         scan_table          = []
         rotmat_table        = []
         freq_mod_table      = []
         scan_src_block_idx  = []
         scan_src_tr_start_idx = []
+        scan_src_tr_group_id = []
         fmod_plan_truth     = struct()
         label_names         = {}
         label_states_per_block = int32([])
@@ -125,6 +128,20 @@ classdef TruthBuilder < handle
 
         function setBaseRotation(obj, R)
             obj.base_rot = R;
+            obj.prepared = false;
+        end
+
+        function setFreqModBuildMode(obj, mode)
+        % SETFREQMODBUILDMODE  Select freq-mod deduplication scope.
+        %   mode: 'full_collection' (default) or 'tr_scoped'
+            if ~ischar(mode) && ~isstring(mode)
+                error('freq-mod build mode must be a string');
+            end
+            mode = char(string(mode));
+            if ~strcmp(mode, 'full_collection') && ~strcmp(mode, 'tr_scoped')
+                error('Unsupported freq-mod build mode: %s', mode);
+            end
+            obj.fmod_build_mode = mode;
             obj.prepared = false;
         end
 
@@ -879,6 +896,7 @@ classdef TruthBuilder < handle
             fmt = zeros(max_entries, 1);
             src_blk = zeros(max_entries, 1);
             src_tr_start = zeros(max_entries, 1);
+            src_tr_group = zeros(max_entries, 1);
             act = 1;
 
             ppm_to_hz = 1e-6 * obj.sys.gamma * obj.sys.B0;
@@ -990,6 +1008,7 @@ classdef TruthBuilder < handle
                         rot(act, :) = reshape(act_rotmat', 1, 9);
                         src_blk(act) = b;
                         src_tr_start(act) = floor((b - 1) / obj.num_blocks_in_tr) * obj.num_blocks_in_tr + 1;
+                        src_tr_group(act) = floor((b - 1) / obj.num_blocks_in_tr);
                         if nlabels > 0
                             label_scan(act, :) = block_label_states(b, :);
                         end
@@ -1005,6 +1024,7 @@ classdef TruthBuilder < handle
             obj.freq_mod_table = fmt(1:n);
             obj.scan_src_block_idx = src_blk(1:n);
             obj.scan_src_tr_start_idx = src_tr_start(1:n);
+            obj.scan_src_tr_group_id = src_tr_group(1:n);
 
             if nlabels > 0
                 obj.label_states_per_scan = label_scan(1:n, :);
@@ -1044,11 +1064,16 @@ classdef TruthBuilder < handle
                 if def_id <= 0
                     continue;
                 end
+                tr_scope_id = 0;
                 rot = reshape(obj.rotmat_table(i, :), [3, 3])';
+                if strcmp(obj.fmod_build_mode, 'tr_scoped')
+                    tr_scope_id = obj.scan_src_tr_start_idx(i);
+                end
 
                 found = 0;
                 for p = 1:length(plans)
-                    if plans(p).def_id == def_id && max(abs(plans(p).rot(:) - rot(:))) < 1e-7
+                    if plans(p).def_id == def_id && plans(p).tr_scope_id == tr_scope_id ...
+                            && max(abs(plans(p).rot(:) - rot(:))) < 1e-7
                         plan_map(i) = p - 1;
                         found = 1;
                         break;
@@ -1059,6 +1084,7 @@ classdef TruthBuilder < handle
                     plans(end+1).def_id = def_id; %#ok<AGROW>
                     plans(end).rot = rot;
                     plans(end).scan_row = i;
+                    plans(end).tr_scope_id = tr_scope_id;
                     plan_map(i) = length(plans) - 1;
                 end
             end
@@ -1081,17 +1107,6 @@ classdef TruthBuilder < handle
             for p = 1:num_plans
                 def_id = plans(p).def_id;
                 fm = obj.fmod_defs{def_id};
-                row = plans(p).scan_row;
-                block_idx = obj.scan_src_block_idx(row);
-                tr_start_idx = obj.scan_src_tr_start_idx(row);
-                block = obj.seq.getBlock(block_idx);
-
-                active_axes = max(abs(fm.waveform), [], 1) > 1e-12;
-                [ref_abs_s, ok] = obj.getFreqModReferenceTime(block, def_id);
-                if ~ok
-                    ref_abs_s = 0;
-                end
-
                 plan_defs(p) = def_id;
                 plan_num_samples(p) = fm.num_samples;
                 plan_rot(p, :) = reshape(plans(p).rot', [1, 9]);
@@ -1102,8 +1117,7 @@ classdef TruthBuilder < handle
                     w = fm.waveform * u;
 
                     phase_active = dot(fm.ref_integral, u.');
-                    phase_extra = obj.integrateInactivePhaseFromTrStart( ...
-                        tr_start_idx, block_idx, ref_abs_s, active_axes, u);
+                    phase_extra = 0.0;
 
                     plan_phase_active(p, q) = phase_active;
                     plan_phase_extra(p, q) = phase_extra;
@@ -1124,6 +1138,7 @@ classdef TruthBuilder < handle
             obj.fmod_plan_truth.plan_phase_total = plan_phase_total;
             obj.fmod_plan_truth.plan_waveforms = plan_waveforms;
             obj.fmod_plan_truth.scan_to_plan = plan_map;
+            obj.fmod_plan_truth.mode = obj.fmod_build_mode;
         end
 
         function [ref_abs_s, ok] = getFreqModReferenceTime(obj, block, def_id)
@@ -1587,6 +1602,7 @@ classdef TruthBuilder < handle
             end
             fprintf(fid, 'num_canonical_trs %d\n', obj.num_canonical_trs);
             fprintf(fid, 'canonical_mode %s\n', obj.canonical_mode);
+            fprintf(fid, 'fmod_build_mode %s\n', obj.fmod_build_mode);
             if ~isempty(obj.tr_times_list) && ~isempty(obj.tr_times_list{1})
                 fprintf(fid, 'canonical_duration_us %d\n', round(obj.tr_times_list{1}(end)));
             end

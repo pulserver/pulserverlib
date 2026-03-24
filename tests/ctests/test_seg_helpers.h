@@ -35,11 +35,12 @@ typedef struct seg_meta {
     int num_segments;
     int segment_num_blocks[MAX_SEGMENTS];
     int num_canonical_trs;
+    int fmod_build_mode_tr_scoped;
     /* Phase 5: Segment order (scan-table validation) */
     int segment_order[MAX_SEGMENTS];
 } seg_meta;
 
-#define SEG_META_INIT {0, {0}, {0}, 0, 0, 0, {0}, 0, {0}}
+#define SEG_META_INIT {0, {0}, {0}, 0, 0, 0, {0}, 0, 0, {0}}
 
 /* ------------------------------------------------------------------ */
 /*  parse_meta                                                        */
@@ -52,6 +53,7 @@ static TSEG_MAYBE_UNUSED int parse_meta(const char* path, seg_meta* out)
     char key[64];
     char suffix[32];
     int val, idx, i, n;
+    char sval[64];
     seg_meta m = SEG_META_INIT;
 
     f = fopen(path, "r");
@@ -59,7 +61,17 @@ static TSEG_MAYBE_UNUSED int parse_meta(const char* path, seg_meta* out)
 
     while (fgets(line, sizeof(line), f) != NULL) {
         /* Parse key and first value */
-        if (sscanf(line, "%63s %d", key, &val) < 1)
+        if (sscanf(line, "%63s", key) < 1)
+            continue;
+
+        if (strcmp(key, "fmod_build_mode") == 0) {
+            if (sscanf(line, "%63s %63s", key, sval) == 2) {
+                m.fmod_build_mode_tr_scoped = (strcmp(sval, "tr_scoped") == 0) ? 1 : 0;
+            }
+            continue;
+        }
+
+        if (sscanf(line, "%63s %d", key, &val) < 2)
             continue;
 
         if (strcmp(key, "num_unique_adcs") == 0) {

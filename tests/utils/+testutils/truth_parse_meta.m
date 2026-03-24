@@ -27,6 +27,7 @@ function meta = truth_parse_meta(path)
     meta.segment_num_blocks = [];
     meta.num_canonical_trs = 0;
     meta.canonical_mode = 'tr';
+    meta.fmod_build_mode = 'full_collection';
     meta.canonical_duration_us = [];
     meta.num_freqmod_plan_probes = 0;
     meta.num_freqmod_plan_entries = 0;
@@ -48,6 +49,13 @@ function meta = truth_parse_meta(path)
         if strcmp(key, 'canonical_mode')
             if numel(parts) >= 2
                 meta.canonical_mode = parts{2};
+            end
+            continue;
+        end
+
+        if strcmp(key, 'fmod_build_mode')
+            if numel(parts) >= 2
+                meta.fmod_build_mode = parts{2};
             end
             continue;
         end

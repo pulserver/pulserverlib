@@ -843,7 +843,8 @@ int pulseqlib_update_freq_mod_collection(
  * @param[in]  scan_table_pos Position in the subsequence scan table.
  * @param[out] out_waveform   Pointer into library (do NOT free).
  * @param[out] out_num_samples Waveform length.
- * @param[out] out_phase_rad  Phase compensation (rad).
+ * @param[out] out_phase_rad  Phase compensation (rad) computed from the
+ *                            full 3-channel definition (no axis masking).
  * @return 1 if the block has a freq-mod event, 0 if not.
  */
 int pulseqlib_freq_mod_collection_get(

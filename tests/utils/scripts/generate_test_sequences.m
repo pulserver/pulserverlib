@@ -1097,6 +1097,7 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
     tb.setSegments([2, 1, 4, 3, 3, 3]);
     tb.setSegmentOrder([1, 2, 3 * ones(1, Ny), 4, 5, 6, 2]);
     tb.setNumAverages(num_averages);
+    tb.setFreqModBuildMode('tr_scoped');
     tb.anchorPoints.adc = [0.5, 0.0];
     tb.export(out_dir, base);
 end
