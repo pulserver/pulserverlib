@@ -269,9 +269,9 @@ classdef TruthBuilder < handle
         % DETERMINECANONICALMODE  Choose TR-based or pass-expanded canonical mode.
         %
         %   Three cases:
-        %   1) No prep/cooldown or degenerate prep/cooldown:
+        %   1) No prep/cooldown or degenerate prep/cooldown (prep only, e.g. GRE):
         %      canonical_mode = 'tr', multipass_info.enabled = false.
-        %   2) Non-degenerate prep/cooldown, single pass:
+        %   2) Non-degenerate prep/cooldown (both once==1 AND once==2), single pass:
         %      canonical_mode = 'tr', multipass_info.enabled = true (single pass).
         %      Canonical TR = main repeating imaging unit (once==0 blocks).
         %   3) Non-degenerate prep/cooldown, multi-pass (e.g. multislice bSSFP):
@@ -301,7 +301,8 @@ classdef TruthBuilder < handle
             pass_len = pass_lens(1);
 
             has_main = true;
-            has_nonmain = false;
+            has_prep = false;
+            has_cooldown = false;
             for p = 1:length(starts)
                 i0 = starts(p);
                 i1 = i0 + pass_len - 1;
@@ -310,16 +311,22 @@ classdef TruthBuilder < handle
                     has_main = false;
                     break;
                 end
-                if any(st == 1) || any(st == 2)
-                    has_nonmain = true;
+                if any(st == 1)
+                    has_prep = true;
+                end
+                if any(st == 2)
+                    has_cooldown = true;
                 end
             end
 
-            if ~has_main || ~has_nonmain
+            % Require both prep (once==1) and cooldown (once==2) to be non-degenerate.
+            % Sequences with only a prep region (e.g. GRE dummy TRs) are left in
+            % standard 'tr' mode with multipass_info disabled.
+            if ~has_main || ~has_prep || ~has_cooldown
                 return;
             end
 
-            % Non-degenerate prep/cooldown detected.
+            % Non-degenerate prep+cooldown detected.
             % Multi-pass (case 3): canonical_mode = 'pass_expanded'.
             % Single-pass (case 2): canonical_mode = 'tr' but multipass_info still
             % enabled so that buildCanonicalTRs uses the pass-aware path.
