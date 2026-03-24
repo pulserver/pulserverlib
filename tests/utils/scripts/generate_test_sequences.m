@@ -6,8 +6,9 @@
 %   - Export minimal segmentation-focused truth
 %   - Keep placeholders for later TR/safety/freqmod truth
 
+function generate_test_sequences()
+
 clear; clc;
-import mr.*
 addpath(fullfile(fileparts(mfilename('fullpath')), '..'));
 
 write_bssfp(true, 1, 1);
@@ -29,6 +30,9 @@ write_epi(true, 1, 1);
 write_epi(true, 3, 1);
 write_epi(true, 1, 3);
 write_epi(true, 3, 3);
+
+write_epi_gre(true, 1);
+write_epi_gre(true, 3);
 
 write_mprage(true, 1, 1);
 write_mprage(true, 3, 1);
@@ -54,6 +58,8 @@ write_qalas_noncart(true, 1, 1, true);
 write_qalas_noncart(true, 3, 1, true);
 write_qalas_noncart(true, 1, 3, true);
 write_qalas_noncart(true, 3, 3, true);
+
+end
 
 
 function seq = write_bssfp(write, num_slices, num_averages)
@@ -807,6 +813,49 @@ function seq = write_epi(write, num_slices, num_averages)
     tb.setSegmentOrder([1, 2, 3]);
     tb.setNumAverages(num_averages);
     tb.export(out_dir, base);
+end
+
+
+function seqs = write_epi_gre(write, num_averages)
+    base = sprintf('gre_epi_collection_2d_1sl_%davg', num_averages);
+    fprintf('Generating sequence collection: %s\n', base);
+
+    gre_seq = write_gre(false, 1, num_averages);
+    epi_seq = write_epi(false, 1, num_averages);
+    seqs = {gre_seq, epi_seq};
+
+    if write == false
+        return;
+    end
+
+    out_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'expected');
+    tmp_dir = tempname;
+    mkdir(tmp_dir);
+    cleanup = onCleanup(@() rmdir(tmp_dir, 's'));
+
+    gre_tb = testutils.TruthBuilder(gre_seq, make_system());
+    gre_tb.setBlocksPerTR(4);
+    gre_tb.setSegments([4]);
+    gre_tb.setSegmentOrder([1]);
+    gre_tb.setNumAverages(num_averages);
+    gre_tb.export(tmp_dir, [base '_gre_part']);
+
+    epi_tb = testutils.TruthBuilder(epi_seq, make_system());
+    epi_tb.setBlocksPerTR(16);
+    epi_tb.setSegments([1, 14, 1]);
+    epi_tb.setSegmentOrder([1, 2, 3]);
+    epi_tb.setNumAverages(num_averages);
+    epi_tb.export(tmp_dir, [base '_epi_part']);
+
+    gre_seq.setDefinition('IgnoreAverages', 1);
+    gre_seq.setDefinition('NextSequence', [base '_epi.seq']);
+
+    gre_seq.write(fullfile(out_dir, [base '.seq']));
+    epi_seq.write(fullfile(out_dir, [base '_epi.seq']));
+
+    gre_truth = testutils.truth_parse_case(fullfile(tmp_dir, [base '_gre_part']));
+    epi_truth = testutils.truth_parse_case(fullfile(tmp_dir, [base '_epi_part']));
+    testutils.exportCollectionTruth(out_dir, base, {gre_truth, epi_truth});
 end
 
 

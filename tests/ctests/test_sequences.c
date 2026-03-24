@@ -57,6 +57,11 @@ static const seq_case kMprageNavCases[] = {
     {"mprage_nav_2d_3sl_3avg", "mprage_nav_2d_3sl_3avg.seq", "mprage_nav_2d_3sl_3avg", 3},
 };
 
+static const seq_case kGreEpiCollectionCases[] = {
+    {"gre_epi_collection_2d_1sl_1avg", "gre_epi_collection_2d_1sl_1avg.seq", "gre_epi_collection_2d_1sl_1avg", 1},
+    {"gre_epi_collection_2d_1sl_3avg", "gre_epi_collection_2d_1sl_3avg.seq", "gre_epi_collection_2d_1sl_3avg", 3},
+};
+
 static void build_case_path(char* dst, size_t dst_sz, const seq_case* tc, const char* suffix)
 {
     (void)snprintf(dst, dst_sz, TEST_DATA_DIR "%s%s", tc->base, suffix);
@@ -1293,10 +1298,102 @@ static void run_scan_table_case(const seq_case* tc)
     pulseqlib_collection_free(coll);
 }
 
+static void run_collection_case(const seq_case* tc)
+{
+    pulseqlib_opts opts;
+    pulseqlib_collection* coll = NULL;
+    pulseqlib_collection_info cinfo = PULSEQLIB_COLLECTION_INFO_INIT;
+    pulseqlib_subseq_info gre_info = PULSEQLIB_SUBSEQ_INFO_INIT;
+    pulseqlib_subseq_info epi_info = PULSEQLIB_SUBSEQ_INFO_INIT;
+    pulseqlib_scan_time_info coll_peek = PULSEQLIB_SCAN_TIME_INFO_INIT;
+    pulseqlib_scan_time_info gre_peek = PULSEQLIB_SCAN_TIME_INFO_INIT;
+    pulseqlib_scan_time_info epi_peek = PULSEQLIB_SCAN_TIME_INFO_INIT;
+    seg_meta meta = SEG_META_INIT;
+    pulseqlib_cursor_info ci = PULSEQLIB_CURSOR_INFO_INIT;
+    char coll_path[512];
+    char gre_path[512];
+    char epi_path[512];
+    char meta_path[512];
+    int rc, ok;
+    int prev_subseq = -1;
+    int saw_transition = 0;
+    int num_blocks = 0;
+    float expected_total_duration_us;
+
+    gre_opts_init(&opts);
+    rc = load_seq_with_averages(&coll, tc->seq_file, &opts, tc->num_averages);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "load_seq failed for collection case");
+
+    rc = pulseqlib_get_collection_info(coll, &cinfo);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_collection_info failed for collection case");
+    mu_assert_int_eq(2, cinfo.num_subsequences);
+
+    rc = pulseqlib_get_subseq_info(coll, 0, &gre_info);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_subseq_info failed for GRE subsequence");
+    rc = pulseqlib_get_subseq_info(coll, 1, &epi_info);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_subseq_info failed for EPI subsequence");
+
+    build_case_path(meta_path, sizeof(meta_path), tc, "_meta.txt");
+    ok = parse_meta(meta_path, &meta);
+    mu_assert(ok, "failed to parse collection _meta.txt");
+
+    mu_assert_int_eq(meta.num_segments, cinfo.num_segments);
+    mu_assert_int_eq(meta.num_unique_adcs, gre_info.num_unique_adcs + epi_info.num_unique_adcs);
+    mu_assert_int_eq(0, gre_info.segment_offset);
+    mu_assert(epi_info.segment_offset > gre_info.segment_offset,
+              "EPI subsequence should have a positive segment offset");
+
+    pulseqlib_cursor_reset(coll);
+    while (pulseqlib_cursor_next(coll) == PULSEQLIB_CURSOR_BLOCK) {
+        rc = pulseqlib_cursor_get_info(coll, &ci);
+        mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_cursor_get_info failed for collection case");
+        mu_assert(ci.subseq_idx >= 0 && ci.subseq_idx < 2,
+                  "cursor subsequence index out of range");
+        if (prev_subseq == 0 && ci.subseq_idx == 1)
+            saw_transition = 1;
+        mu_assert(prev_subseq <= ci.subseq_idx,
+                  "cursor subsequence index should be monotonic across collection");
+        prev_subseq = ci.subseq_idx;
+        ++num_blocks;
+    }
+    mu_assert(num_blocks > 0, "collection cursor did not visit any blocks");
+    mu_assert(saw_transition, "collection cursor never transitioned from GRE to EPI");
+
+    (void)snprintf(coll_path, sizeof(coll_path), TEST_DATA_DIR "%s", tc->seq_file);
+    (void)snprintf(gre_path, sizeof(gre_path), TEST_DATA_DIR "gre_2d_1sl_1avg.seq");
+    (void)snprintf(epi_path, sizeof(epi_path), TEST_DATA_DIR "epi_2d_1sl_1avg.seq");
+
+    rc = pulseqlib_peek_scan_time(&coll_peek, coll_path, &opts, tc->num_averages);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_peek_scan_time failed for collection case");
+    rc = pulseqlib_peek_scan_time(&gre_peek, gre_path, &opts, 1);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_peek_scan_time failed for GRE component");
+    rc = pulseqlib_peek_scan_time(&epi_peek, epi_path, &opts, tc->num_averages);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_peek_scan_time failed for EPI component");
+
+    expected_total_duration_us = gre_peek.total_duration_us + epi_peek.total_duration_us;
+    mu_assert_float_near("collection peek duration",
+        expected_total_duration_us, coll_peek.total_duration_us, 1.0f);
+    mu_assert_float_near("collection loaded duration",
+        expected_total_duration_us, cinfo.total_duration_us, 1.0f);
+
+    pulseqlib_collection_free(coll);
+}
+
+MU_TEST(test_collection_gre_epi_1avg) { run_collection_case(&kGreEpiCollectionCases[0]); }
+MU_TEST(test_collection_gre_epi_3avg) { run_collection_case(&kGreEpiCollectionCases[1]); }
+
+MU_TEST_SUITE(suite_sequences_collection)
+{
+    MU_RUN_TEST(test_collection_gre_epi_1avg);
+    MU_RUN_TEST(test_collection_gre_epi_3avg);
+}
+
 MU_TEST(test_scan_table_gre_2d_1sl_1avg) { run_scan_table_case(&kGreCases[0]); }
 MU_TEST(test_scan_table_gre_2d_1sl_3avg) { run_scan_table_case(&kGreCases[1]); }
 MU_TEST(test_scan_table_gre_2d_3sl_1avg) { run_scan_table_case(&kGreCases[2]); }
 MU_TEST(test_scan_table_gre_2d_3sl_3avg) { run_scan_table_case(&kGreCases[3]); }
+MU_TEST(test_scan_table_gre_epi_collection_1avg) { run_scan_table_case(&kGreEpiCollectionCases[0]); }
+MU_TEST(test_scan_table_gre_epi_collection_3avg) { run_scan_table_case(&kGreEpiCollectionCases[1]); }
 
 MU_TEST(test_scan_table_mprage_2d_1sl_1avg) { run_scan_table_case(&kMprageCases[0]); }
 MU_TEST(test_scan_table_mprage_2d_1sl_3avg) { run_scan_table_case(&kMprageCases[1]); }
@@ -1315,6 +1412,8 @@ MU_TEST_SUITE(suite_sequences_scanloop)
     MU_RUN_TEST(test_scan_table_gre_2d_1sl_3avg);
     MU_RUN_TEST(test_scan_table_gre_2d_3sl_1avg);
     MU_RUN_TEST(test_scan_table_gre_2d_3sl_3avg);
+    MU_RUN_TEST(test_scan_table_gre_epi_collection_1avg);
+    MU_RUN_TEST(test_scan_table_gre_epi_collection_3avg);
     MU_RUN_TEST(test_scan_table_mprage_2d_1sl_1avg);
     MU_RUN_TEST(test_scan_table_mprage_2d_1sl_3avg);
     MU_RUN_TEST(test_scan_table_mprage_2d_3sl_1avg);
@@ -1339,6 +1438,7 @@ int test_sequences_main(void)
     MU_RUN_SUITE(suite_sequences_check);
     MU_RUN_SUITE(suite_sequences_uieval);
     MU_RUN_SUITE(suite_sequences_geninstructions);
+    MU_RUN_SUITE(suite_sequences_collection);
     MU_RUN_SUITE(suite_sequences_scanloop);
     MU_REPORT();
     return MU_EXIT_CODE;
