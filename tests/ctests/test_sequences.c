@@ -690,9 +690,14 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             }
 
             /* --- Pure-delay segment-def duration canonicalization -- */
+            /* Only single-block pure-delay segments have their duration
+             * canonicalized to one block raster at geninstruction time.
+             * Pure-delay blocks embedded in multi-block standard segments
+             * carry their actual fixed duration set by the sequence. */
             if (!ref_blk->has_rf &&
                 !ref_blk->has_grad[0] && !ref_blk->has_grad[1] && !ref_blk->has_grad[2] &&
-                !ref_blk->has_adc) {
+                !ref_blk->has_adc &&
+                ref.num_blocks[s] == 1) {
                 int expected_delay_us = (int)(opts.block_raster_us + 0.5f);
                 mu_assert_int_eq(expected_delay_us, bi.duration_us);
             }
@@ -1320,7 +1325,16 @@ static void run_scan_table_case(const seq_case* tc)
                     mu_assert(prev_seg_end,
                               "prev segment should have ended with segment_end=1");
 
-                /* Validate segment order matches meta.segment_order array */
+                /* Validate segment order matches meta.segment_order array.
+                 * meta records every repetition of a segment separately
+                 * (e.g., each of the ny phase-encoding readout lines in
+                 * MPRAGE gets its own entry), while the cursor fires one
+                 * transition per contiguous run of the same segment.
+                 * Skip past any trailing entries still referencing the
+                 * previous segment before comparing the new one. */
+                while (seg_order_idx < meta.num_segments &&
+                       meta.segment_order[seg_order_idx] == prev_seg_id)
+                    seg_order_idx++;
                 if (seg_order_idx < meta.num_segments) {
                     char msg[256];
                     snprintf(msg, sizeof(msg),
