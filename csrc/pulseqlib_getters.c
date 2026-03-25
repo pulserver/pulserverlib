@@ -1425,9 +1425,12 @@ float** pulseqlib_get_grad_amplitude(
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
     int local_blk, grad_id, shot, k, shape_idx;
+    int block_table_idx, raw_grad_id, canonical_shot;
     const pulseqlib_block_definition* bdef;
+    const pulseqlib_block_table_element* bte;
     const pulseqlib_grad_definition* gdef;
     float** waveforms;
+    float* tmp_wave;
     float* trap_waveform;
     int samples_per_shot;
     int flat_time;
@@ -1509,6 +1512,32 @@ float** pulseqlib_get_grad_amplitude(
             if (*num_samples == 0)
                 *num_samples = decompressed.num_samples;
         }
+    }
+
+    /* Determine the canonical shot for this axis from the raw block table,
+     * the same way pulseqlib_get_grad_initial_shot_id() does it.  When
+     * multiple gradients share one grad_definition (same sample count / timing
+     * but different shapes, e.g. GX and GY of a spiral readout) the raw table
+     * entry for each axis carries the correct shot_index. Place that shot at
+     * waveforms[0] so callers always get the axis-appropriate waveform first. */
+    canonical_shot = 0;
+    block_table_idx = seg->max_energy_start_block + local_blk;
+    bte = &desc->block_table[block_table_idx];
+    switch (axis) {
+        case PULSEQLIB_GRAD_AXIS_X: raw_grad_id = bte->gx_id; break;
+        case PULSEQLIB_GRAD_AXIS_Y: raw_grad_id = bte->gy_id; break;
+        case PULSEQLIB_GRAD_AXIS_Z: raw_grad_id = bte->gz_id; break;
+        default: raw_grad_id = -1; break;
+    }
+    if (raw_grad_id >= 0 && raw_grad_id < desc->grad_table_size) {
+        int cs = desc->grad_table[raw_grad_id].shot_index;
+        if (cs >= 0 && cs < *num_shots)
+            canonical_shot = cs;
+    }
+    if (canonical_shot != 0 && waveforms[0] != NULL && waveforms[canonical_shot] != NULL) {
+        tmp_wave             = waveforms[0];
+        waveforms[0]         = waveforms[canonical_shot];
+        waveforms[canonical_shot] = tmp_wave;
     }
 
     return waveforms;
