@@ -53,6 +53,49 @@ static int is_single_pure_delay_segment_scan(
     return (bt_idx >= 0 && bt[bt_idx].duration_us >= 0) ? 1 : 0;
 }
 
+static int block_defs_structurally_equal(
+    const pulseqlib_sequence_descriptor* desc,
+    int id_a,
+    int id_b)
+{
+    const pulseqlib_block_definition* a;
+    const pulseqlib_block_definition* b;
+
+    if (!desc) return 0;
+    if (id_a < 0 || id_a >= desc->num_unique_blocks) return 0;
+    if (id_b < 0 || id_b >= desc->num_unique_blocks) return 0;
+
+    a = &desc->block_definitions[id_a];
+    b = &desc->block_definitions[id_b];
+
+    if (a->duration_us != b->duration_us) return 0;
+    if ((a->rf_id  >= 0) != (b->rf_id  >= 0)) return 0;
+    if ((a->gx_id  >= 0) != (b->gx_id  >= 0)) return 0;
+    if ((a->gy_id  >= 0) != (b->gy_id  >= 0)) return 0;
+    if ((a->gz_id  >= 0) != (b->gz_id  >= 0)) return 0;
+    if ((a->adc_id >= 0) != (b->adc_id >= 0)) return 0;
+    return 1;
+}
+
+static int segments_structurally_equal(
+    const pulseqlib_sequence_descriptor* desc,
+    const pulseqlib_tr_segment* sa,
+    const pulseqlib_tr_segment* sb)
+{
+    int i;
+
+    if (!desc || !sa || !sb) return 0;
+    if (sa->num_blocks != sb->num_blocks) return 0;
+
+    for (i = 0; i < sa->num_blocks; ++i) {
+        if (!block_defs_structurally_equal(desc,
+                sa->unique_block_indices[i],
+                sb->unique_block_indices[i]))
+            return 0;
+    }
+    return 1;
+}
+
 /* ================================================================== */
 /*  TR detection helpers                                              */
 /* ================================================================== */
@@ -84,6 +127,36 @@ static int first_repeating_segment(const int* s, int len)
         }
         if (match) return l;
     }
+    return len;
+}
+
+static int first_repeating_segment_structural(
+    const pulseqlib_sequence_descriptor* desc,
+    int start,
+    int len)
+{
+    int l, i, match;
+    int a_idx, b_idx;
+    int a_id, b_id;
+
+    if (!desc || len <= 1) return len;
+
+    for (l = 1; l <= len / 2; ++l) {
+        if (len % l != 0) continue;
+        match = 1;
+        for (i = 0; i < len; ++i) {
+            a_idx = start + i;
+            b_idx = start + (i % l);
+            a_id = desc->block_table[a_idx].id;
+            b_id = desc->block_table[b_idx].id;
+            if (!block_defs_structurally_equal(desc, a_id, b_id)) {
+                match = 0;
+                break;
+            }
+        }
+        if (match) return l;
+    }
+
     return len;
 }
 
@@ -317,9 +390,9 @@ int pulseqlib__get_tr_in_sequence(pulseqlib_sequence_descriptor* desc, pulseqlib
     tr->degenerate_prep     = (desc->num_prep_blocks == 0) ? 1 : 0;
     tr->degenerate_cooldown = (desc->num_cooldown_blocks == 0) ? 1 : 0;
     tr->num_prep_blocks     = desc->num_prep_blocks;
-    tr->num_prep_trs        = 1;
+    tr->num_prep_trs        = (desc->num_prep_blocks > 0) ? 1 : 0;
     tr->num_cooldown_blocks = desc->num_cooldown_blocks;
-    tr->num_cooldown_trs    = 1;
+    tr->num_cooldown_trs    = (desc->num_cooldown_blocks > 0) ? 1 : 0;
     tr->imaging_tr_start    = 0;
 
     /* Always search main region only for TR pattern.
@@ -371,81 +444,17 @@ int pulseqlib__get_tr_in_sequence(pulseqlib_sequence_descriptor* desc, pulseqlib
     for (n = 0; n < desc->pass_len; ++n)
         base_pat[n] = seq_pat[n];
 
-    /* ----------------------------------------------------------------
-     * RF-aware pattern augmentation.
-     *
-     * Blocks that share the same structural definition (same seq_pat
-     * value) but differ in RF amplitude or RF shim ID must get distinct
-     * pattern values so that first_repeating_segment discovers the true
-     * period.  We quantise the RF amplitude to an integer, form a tuple
-     * (base_pat, quant_amp, shim_id) and use the existing hash-based
-     * dedup to assign a unique label to each distinct combination.
-     * A new synthetic pattern value (above the current maximum) is then
-     * assigned to every RF-carrying block.
-     *
-     * This only affects the temporary seq_pat array — the original
-     * block table and definitions are untouched.
-     * ---------------------------------------------------------------- */
-    {
-        int max_pat, rf_id, shim_id, q_amp;
-        int* rf_rows;       /* [pass_len * 3]  (base, amp, shim) */
-        int* rf_labels;     /* [pass_len]       dedup label      */
-        int* rf_unique;     /* [pass_len]       unique row idx   */
-        int  num_rf_combos;
-
-        /* Find current max absolute value in seq_pat */
-        max_pat = 0;
-        for (n = 0; n < desc->pass_len; ++n) {
-            int v = seq_pat[n] < 0 ? -seq_pat[n] : seq_pat[n];
-            if (v > max_pat) max_pat = v;
-        }
-
-        rf_rows   = (int*)PULSEQLIB_ALLOC(desc->pass_len * 3 * sizeof(int));
-        rf_labels = (int*)PULSEQLIB_ALLOC(desc->pass_len * sizeof(int));
-        rf_unique = (int*)PULSEQLIB_ALLOC(desc->pass_len * sizeof(int));
-        if (!rf_rows || !rf_labels || !rf_unique) {
-            if (rf_rows)   PULSEQLIB_FREE(rf_rows);
-            if (rf_labels) PULSEQLIB_FREE(rf_labels);
-            if (rf_unique) PULSEQLIB_FREE(rf_unique);
-            PULSEQLIB_FREE(seq_pat); PULSEQLIB_FREE(block_dur);
-            PULSEQLIB_FREE(base_pat);
-            diag->code = PULSEQLIB_ERR_ALLOC_FAILED;
-            return diag->code;
-        }
-
-        /* Build 3-column rows: (base_pat, quantised_rf_amp, rf_shim_id) */
-        for (n = 0; n < desc->pass_len; ++n) {
-            rf_id   = desc->block_table[n].rf_id;
-            shim_id = desc->block_table[n].rf_shim_id;
-
-            /* Quantise amplitude: multiply by 1e6 and round to int.
-             * This makes amplitudes differing by < 1e-6 identical.
-             * Blocks without RF get (base, 0, -1) which dedup will
-             * still group correctly. */
-            q_amp = (rf_id >= 0 && rf_id < desc->rf_table_size)
-                  ? (int)(desc->rf_table[rf_id].amplitude * 1e6f + 0.5f)
-                  : 0;
-
-            rf_rows[n * 3 + 0] = seq_pat[n];
-            rf_rows[n * 3 + 1] = q_amp;
-            rf_rows[n * 3 + 2] = shim_id;
-        }
-
-        num_rf_combos = pulseqlib__deduplicate_int_rows(
-            rf_unique, rf_labels, rf_rows, desc->pass_len, 3);
-
-        /* Remap: each label becomes max_pat + 1 + label */
-        if (num_rf_combos > 0) {
-            for (n = 0; n < desc->pass_len; ++n)
-                seq_pat[n] = max_pat + 1 + rf_labels[n];
-        }
-
-        PULSEQLIB_FREE(rf_rows);
-        PULSEQLIB_FREE(rf_labels);
-        PULSEQLIB_FREE(rf_unique);
-    }
+    /* Canonical TR identification is timing/block-structure based.
+     * Per-instance RF amplitude or shim patterns are validated by
+     * dedicated safety consistency checks, not by TR-period finding. */
 
     l = first_repeating_segment(&seq_pat[imaging_start], imaging_len);
+    if (l == imaging_len) {
+        int l_struct = first_repeating_segment_structural(
+            desc, imaging_start, imaging_len);
+        if (l_struct > 0 && l_struct < l)
+            l = l_struct;
+    }
     pulseqlib__diag_printf(diag, " candidate TR=%d", l);
 
     found = (l > 0 && l <= imaging_len) ? 1 : 0;
@@ -486,6 +495,22 @@ int pulseqlib__get_tr_in_sequence(pulseqlib_sequence_descriptor* desc, pulseqlib
         }
 
         if (!base_ok) {
+            int structural_l;
+
+            /* Fallback for degenerate/no-prep-no-cool flows where
+             * block IDs differ across interleaves but the ordered
+             * block structure is periodic. */
+            structural_l = first_repeating_segment_structural(
+                desc, imaging_start, imaging_len);
+            if (structural_l > 0 && structural_l < imaging_len) {
+                l = structural_l;
+                found = 1;
+            }
+
+            if (found) {
+                /* Structural period recovered; continue with normal
+                 * TR descriptor population and degeneracy checks. */
+            } else {
             /* Base pattern also non-periodic → genuine single-TR.
              * The main region IS the single TR.  Then compare
              * prep/cooldown to the TR pattern for degeneracy. */
@@ -498,6 +523,7 @@ int pulseqlib__get_tr_in_sequence(pulseqlib_sequence_descriptor* desc, pulseqlib
             if (active_dur_us <= SINGLE_TR_MAX_DURATION_US) {
                 l = imaging_len;  /* single-TR = entire main region */
                 found = 1;        /* fall through to post-hoc degenerate check */
+            }
             }
         }
 
@@ -1518,8 +1544,12 @@ int pulseqlib__get_scan_table_segments(
         main_region_start = region_start;
         main_region_size  = region_size;
 
-        /* Update TR descriptor when main needed more than one original TR */
-        if (mult > 1 && seg_result > 0) {
+        /* Update TR descriptor only for non-degenerate topology.
+         * In degenerate topology, canonical TR remains the repeated
+         * base TR pattern even if segmentation groups multiple TRs. */
+        if (mult > 1 && seg_result > 0 &&
+            (!desc->tr_descriptor.degenerate_prep ||
+             !desc->tr_descriptor.degenerate_cooldown)) {
             new_tr_dur = 0.0f;
             for (n = region_start; n < region_start + region_size; ++n) {
                 blk_def_id = desc->block_table[
@@ -1763,11 +1793,19 @@ int pulseqlib__get_scan_table_segments(
             }
 
             if (!n_is_pure_delay && !i_is_pure_delay &&
-                exp_segs[n].num_blocks == uniq_segs[i].num_blocks &&
-                array_equal(exp_segs[n].unique_block_indices,
-                            uniq_segs[i].unique_block_indices,
-                            exp_segs[n].num_blocks)) {
-                found = i; break;
+                exp_segs[n].num_blocks == uniq_segs[i].num_blocks) {
+                if (array_equal(exp_segs[n].unique_block_indices,
+                                uniq_segs[i].unique_block_indices,
+                                exp_segs[n].num_blocks)) {
+                    found = i; break;
+                }
+
+                if (desc->tr_descriptor.num_prep_blocks == 0 &&
+                    desc->tr_descriptor.num_cooldown_blocks == 0 &&
+                    segments_structurally_equal(desc,
+                        &exp_segs[n], &uniq_segs[i])) {
+                    found = i; break;
+                }
             }
         }
         if (found == -1) {

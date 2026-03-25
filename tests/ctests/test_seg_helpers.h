@@ -665,6 +665,9 @@ static TSEG_MAYBE_UNUSED int parse_fmod_defs(const char* path, fmod_def_file* ou
 #define MAX_SCAN_TABLE_ENTRIES 4096
 
 typedef struct scan_table_entry {
+    int   tr_start_flag;
+    int   segment_id;
+    int   within_segment_idx;
     float rf_amp_hz;
     float rf_phase_rad;
     float rf_freq_hz;
@@ -703,6 +706,9 @@ static TSEG_MAYBE_UNUSED int parse_scan_table(const char* path, scan_table_file*
 
     for (i = 0; i < out->num_entries; ++i) {
         scan_table_entry* e = &out->entries[i];
+        if (fread(&e->tr_start_flag,    sizeof(int),   1, f) != 1) { fclose(f); return 0; }
+        if (fread(&e->segment_id,       sizeof(int),   1, f) != 1) { fclose(f); return 0; }
+        if (fread(&e->within_segment_idx,sizeof(int),  1, f) != 1) { fclose(f); return 0; }
         if (fread(&e->rf_amp_hz,       sizeof(float), 1, f) != 1) { fclose(f); return 0; }
         if (fread(&e->rf_phase_rad,     sizeof(float), 1, f) != 1) { fclose(f); return 0; }
         if (fread(&e->rf_freq_hz,       sizeof(float), 1, f) != 1) { fclose(f); return 0; }

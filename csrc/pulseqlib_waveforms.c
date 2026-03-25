@@ -526,8 +526,11 @@ static int fill_grad_waveform_for_block(
     }
 
     if (block_end_us > last_written) {
+        float tail_amp = 0.0f;
+        if (gdef->type == 1 && idx > start_idx)
+            tail_amp = waveform[idx - 1];
         time[idx]     = block_end_us;
-        waveform[idx] = 0.0f;
+        waveform[idx] = tail_amp;
         idx++;
     }
 
@@ -928,13 +931,13 @@ int pulseqlib_get_tr_gradient_waveforms(
          * between averages; only RF phase does). */
         rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
             0, desc->pass_len,
-            PULSEQLIB_AMP_MAX_POS, NULL, 0);
+            PULSEQLIB_AMP_ACTUAL, NULL, 0);
     } else {
         rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
             desc->tr_descriptor.num_prep_blocks
                 + desc->tr_descriptor.imaging_tr_start,
             desc->tr_descriptor.tr_size,
-            PULSEQLIB_AMP_MAX_POS, NULL, 0);
+            PULSEQLIB_AMP_ACTUAL, NULL, 0);
     }
     if (PULSEQLIB_FAILED(rc)) return rc;
     if (!waveforms) { pulseqlib__uniform_grad_waveforms_free(&uw); return PULSEQLIB_ERR_NULL_POINTER; }

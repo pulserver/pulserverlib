@@ -941,8 +941,38 @@ classdef TruthBuilder < handle
         % ---- Phase 5: scan table ----
         function buildScanTableData(obj)
             num_blocks_per_pass = length(obj.seq.blockEvents);
-            num_cols = 11;
+            num_cols = 14;
             max_entries = obj.num_averages * num_blocks_per_pass;
+
+            % Per-block mapping within one TR/pass:
+            %   segment id (0-based) and block index within that segment (0-based).
+            % For pass-expanded cases, one TR can contain repeated segment-order patterns.
+            pattern_len = 0;
+            for si = 1:length(obj.segment_order)
+                pattern_len = pattern_len + obj.segment_sizes(obj.segment_order(si));
+            end
+            assert(pattern_len > 0, 'invalid segment_order/segment_sizes pattern');
+
+            seg_id_pattern = zeros(1, pattern_len);
+            seg_blk_pattern = zeros(1, pattern_len);
+            pat_cursor = 1;
+            for si = 1:length(obj.segment_order)
+                seg_id_1b = obj.segment_order(si);
+                seg_sz = obj.segment_sizes(seg_id_1b);
+                for bi = 1:seg_sz
+                    seg_id_pattern(pat_cursor) = seg_id_1b - 1;
+                    seg_blk_pattern(pat_cursor) = bi - 1;
+                    pat_cursor = pat_cursor + 1;
+                end
+            end
+
+            seg_id_map = zeros(1, obj.num_blocks_in_tr);
+            seg_blk_map = zeros(1, obj.num_blocks_in_tr);
+            for k = 1:obj.num_blocks_in_tr
+                p = mod(k - 1, pattern_len) + 1;
+                seg_id_map(k) = seg_id_pattern(p);
+                seg_blk_map(k) = seg_blk_pattern(p);
+            end
 
             st  = zeros(max_entries, num_cols);
             rot = zeros(max_entries, 9);
@@ -982,11 +1012,21 @@ classdef TruthBuilder < handle
 
                     % ONCE filter: once==1 → first avg only; once==2 → last avg only.
                     if once == 0 || (once == 1 && avg == 1) || (once == 2 && avg == obj.num_averages)
+                        tr_local_idx = mod(b - 1, obj.num_blocks_in_tr) + 1;
+
+                        % Prepended debug columns:
+                        %   1) TR start flag (1 at start of each TR/pass)
+                        %   2) segment id (0-based)
+                        %   3) block index within segment (0-based)
+                        st(act, 1) = double(tr_local_idx == 1);
+                        st(act, 2) = seg_id_map(tr_local_idx);
+                        st(act, 3) = seg_blk_map(tr_local_idx);
+
                         % RF
                         if isfield(block, 'rf') && ~isempty(block.rf)
-                            st(act, 1) = max(abs(block.rf.signal));
-                            st(act, 2) = block.rf.phaseOffset + ppm_to_hz * block.rf.phasePPM;
-                            st(act, 3) = block.rf.freqOffset  + ppm_to_hz * block.rf.freqPPM;
+                            st(act, 4) = max(abs(block.rf.signal));
+                            st(act, 5) = block.rf.phaseOffset + ppm_to_hz * block.rf.phasePPM;
+                            st(act, 6) = block.rf.freqOffset  + ppm_to_hz * block.rf.freqPPM;
                             rf_start = block.rf.delay;
                             rf_end   = block.rf.delay + block.rf.t(end);
                             if obj.anyGradNonzeroInWindow(block, rf_start, rf_end)
@@ -1005,20 +1045,20 @@ classdef TruthBuilder < handle
 
                         % Gradients
                         if isfield(block, 'gx') && ~isempty(block.gx)
-                            st(act, 4) = testutils.TruthBuilder.gradPeakAmpSigned(block.gx);
+                            st(act, 7) = testutils.TruthBuilder.gradPeakAmpSigned(block.gx);
                         end
                         if isfield(block, 'gy') && ~isempty(block.gy)
-                            st(act, 5) = testutils.TruthBuilder.gradPeakAmpSigned(block.gy);
+                            st(act, 8) = testutils.TruthBuilder.gradPeakAmpSigned(block.gy);
                         end
                         if isfield(block, 'gz') && ~isempty(block.gz)
-                            st(act, 6) = testutils.TruthBuilder.gradPeakAmpSigned(block.gz);
+                            st(act, 9) = testutils.TruthBuilder.gradPeakAmpSigned(block.gz);
                         end
 
                         % ADC
                         if isfield(block, 'adc') && ~isempty(block.adc)
-                            st(act, 7) = 1;
-                            st(act, 8) = block.adc.phaseOffset + ppm_to_hz * block.adc.phasePPM;
-                            st(act, 9) = block.adc.freqOffset  + ppm_to_hz * block.adc.freqPPM;
+                            st(act, 10) = 1;
+                            st(act, 11) = block.adc.phaseOffset + ppm_to_hz * block.adc.phasePPM;
+                            st(act, 12) = block.adc.freqOffset  + ppm_to_hz * block.adc.freqPPM;
                             adc_start = block.adc.delay;
                             adc_end   = block.adc.delay + block.adc.numSamples * block.adc.dwell;
                             if obj.anyGradNonzeroInWindow(block, adc_start, adc_end)
@@ -1039,10 +1079,10 @@ classdef TruthBuilder < handle
                         if isfield(block, 'trig') && ~isempty(block.trig)
                             for t = 1:length(block.trig)
                                 if strcmp(block.trig(t).type, 'output')
-                                    st(act, 10) = 1;
+                                    st(act, 13) = 1;
                                 end
                                 if strcmp(block.trig(t).type, 'trigger')
-                                    st(act, 11) = 1;
+                                    st(act, 14) = 1;
                                 end
                             end
                         end
@@ -1081,7 +1121,7 @@ classdef TruthBuilder < handle
 
             if nlabels > 0
                 obj.label_states_per_scan = label_scan(1:n, :);
-                adc_rows = find(obj.scan_table(:, 7) ~= 0);
+                adc_rows = find(obj.scan_table(:, 10) ~= 0);
                 obj.label_adc_scan_rows = int32(adc_rows(:) - 1);  % 0-based rows
                 if isempty(adc_rows)
                     obj.label_states_per_adc = zeros(0, nlabels, 'int32');
@@ -1094,7 +1134,7 @@ classdef TruthBuilder < handle
                 end
             else
                 obj.label_states_per_scan = zeros(n, 0, 'int32');
-                adc_rows = find(obj.scan_table(:, 7) ~= 0);
+                adc_rows = find(obj.scan_table(:, 10) ~= 0);
                 obj.label_states_per_adc = zeros(length(adc_rows), 0, 'int32');
                 obj.label_adc_scan_rows = int32(adc_rows(:) - 1);  % 0-based rows
                 obj.label_adc_value_min = zeros(1, 0, 'int32');
@@ -1878,17 +1918,20 @@ classdef TruthBuilder < handle
             fwrite(fid, int32(n), 'int32');
 
             for i = 1:n
-                fwrite(fid, single(obj.scan_table(i, 1)), 'float32');
-                fwrite(fid, single(obj.scan_table(i, 2)), 'float32');
-                fwrite(fid, single(obj.scan_table(i, 3)), 'float32');
+                fwrite(fid, int32(obj.scan_table(i, 1)),  'int32');
+                fwrite(fid, int32(obj.scan_table(i, 2)),  'int32');
+                fwrite(fid, int32(obj.scan_table(i, 3)),  'int32');
                 fwrite(fid, single(obj.scan_table(i, 4)), 'float32');
                 fwrite(fid, single(obj.scan_table(i, 5)), 'float32');
                 fwrite(fid, single(obj.scan_table(i, 6)), 'float32');
-                fwrite(fid, int32(obj.scan_table(i, 7)),  'int32');
+                fwrite(fid, single(obj.scan_table(i, 7)), 'float32');
                 fwrite(fid, single(obj.scan_table(i, 8)), 'float32');
                 fwrite(fid, single(obj.scan_table(i, 9)), 'float32');
                 fwrite(fid, int32(obj.scan_table(i, 10)), 'int32');
-                fwrite(fid, int32(obj.scan_table(i, 11)), 'int32');
+                fwrite(fid, single(obj.scan_table(i, 11)), 'float32');
+                fwrite(fid, single(obj.scan_table(i, 12)), 'float32');
+                fwrite(fid, int32(obj.scan_table(i, 13)), 'int32');
+                fwrite(fid, int32(obj.scan_table(i, 14)), 'int32');
                 fwrite(fid, single(obj.rotmat_table(i, :)), 'float32');
                 fwrite(fid, int32(obj.freq_mod_table(i)), 'int32');
             end

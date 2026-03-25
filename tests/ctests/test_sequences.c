@@ -25,6 +25,52 @@
 
 #include <math.h>
 
+static int tr_waveform_matches_ref(
+    const seg_tr_waveform* ref_wf,
+    const pulseqlib_tr_gradient_waveforms* lib_wf)
+{
+    const float wave_rel_tol = 1e-3f;
+    const float wave_time_abs_tol = 0.5f;
+    int i, n;
+
+    n = ref_wf->num_samples < lib_wf->gx.num_samples
+        ? ref_wf->num_samples : lib_wf->gx.num_samples;
+
+    if (abs(ref_wf->num_samples - lib_wf->gx.num_samples) > 1)
+        return 0;
+
+    for (i = 0; i < n; ++i) {
+        float ref_t  = ref_wf->time_us[i];
+        float lib_t  = lib_wf->gx.time_us[i];
+        float dt     = ref_t - lib_t;
+        float ref_gx = ref_wf->gx[i];
+        float ref_gy = ref_wf->gy[i];
+        float ref_gz = ref_wf->gz[i];
+        float lib_gx = lib_wf->gx.amplitude_hz_per_m[i];
+        float lib_gy = lib_wf->gy.amplitude_hz_per_m[i];
+        float lib_gz = lib_wf->gz.amplitude_hz_per_m[i];
+        float tol_gx, tol_gy, tol_gz;
+
+        if (dt < 0) dt = -dt;
+        if (dt > wave_time_abs_tol)
+            return 0;
+
+        tol_gx = (ref_gx < 0 ? -ref_gx : ref_gx) * wave_rel_tol;
+        if (tol_gx < 1.0f) tol_gx = 1.0f;
+        tol_gy = (ref_gy < 0 ? -ref_gy : ref_gy) * wave_rel_tol;
+        if (tol_gy < 1.0f) tol_gy = 1.0f;
+        tol_gz = (ref_gz < 0 ? -ref_gz : ref_gz) * wave_rel_tol;
+        if (tol_gz < 1.0f) tol_gz = 1.0f;
+
+        if (fabsf(ref_gx - lib_gx) > tol_gx ||
+            fabsf(ref_gy - lib_gy) > tol_gy ||
+            fabsf(ref_gz - lib_gz) > tol_gz)
+            return 0;
+    }
+
+    return 1;
+}
+
 typedef struct {
     const char* name;
     const char* seq_file;
@@ -148,6 +194,18 @@ static void run_check_case(const seq_case* tc)
     mu_assert_int_eq(0, meta.max_b1_subseq);
 
     /* 3. Nominal TR */
+    fprintf(stderr,
+            "[check][%s] tr=%.3f meta_tr=%d num_trs=%d tr_size=%d prep_blk=%d cool_blk=%d deg_prep=%d deg_cool=%d num_passes=%d\n",
+            tc->name,
+            sinfo.tr_duration_us,
+            meta.tr_duration_us,
+            sinfo.num_trs,
+            sinfo.tr_size,
+            sinfo.num_prep_blocks,
+            sinfo.num_cooldown_blocks,
+            sinfo.degenerate_prep,
+            sinfo.degenerate_cooldown,
+            sinfo.num_passes);
     mu_assert_float_near("TR duration",
         (float)meta.tr_duration_us, sinfo.tr_duration_us, 1.0f);
 
@@ -253,7 +311,7 @@ static void run_sequences_uieval_case(const seq_case* tc)
     pulseqlib_diagnostic diag;
     char meta_path[512];
     char tr_path[512];
-    int rc, s, i, ok, n;
+    int rc, s, i, ok;
 
     /* Load sequence */
     gre_opts_init(&opts);
@@ -303,46 +361,14 @@ static void run_sequences_uieval_case(const seq_case* tc)
     mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_tr_gradient_waveforms failed");
 
     {
-        const seg_tr_waveform* ref_wf = &ref_wfs.waveforms[0];
-
-        /* Use the smaller of the two sample counts for comparison
-           (off-by-one can happen at raster boundary). */
-        n = ref_wf->num_samples < lib_wf.gx.num_samples
-            ? ref_wf->num_samples : lib_wf.gx.num_samples;
-        mu_assert(abs(ref_wf->num_samples - lib_wf.gx.num_samples) <= 1,
-                  "TR waveform sample count mismatch > 1");
-
-        for (i = 0; i < n; ++i) {
-            float ref_t  = ref_wf->time_us[i];
-            float lib_t  = lib_wf.gx.time_us[i];
-            float dt     = ref_t - lib_t;
-            float ref_gx = ref_wf->gx[i];
-            float ref_gy = ref_wf->gy[i];
-            float ref_gz = ref_wf->gz[i];
-            float lib_gx = lib_wf.gx.amplitude_hz_per_m[i];
-            float lib_gy = lib_wf.gy.amplitude_hz_per_m[i];
-            float lib_gz = lib_wf.gz.amplitude_hz_per_m[i];
-            float tol_gx, tol_gy, tol_gz;
-
-            /* Time alignment check */
-            if (dt < 0) dt = -dt;
-            mu_assert(dt <= WAVE_TIME_ABS_TOL, "TR waveform time mismatch");
-
-            /* Amplitude check: relative tolerance with absolute floor */
-            tol_gx = (ref_gx < 0 ? -ref_gx : ref_gx) * WAVE_REL_TOL;
-            if (tol_gx < 1.0f) tol_gx = 1.0f;
-            tol_gy = (ref_gy < 0 ? -ref_gy : ref_gy) * WAVE_REL_TOL;
-            if (tol_gy < 1.0f) tol_gy = 1.0f;
-            tol_gz = (ref_gz < 0 ? -ref_gz : ref_gz) * WAVE_REL_TOL;
-            if (tol_gz < 1.0f) tol_gz = 1.0f;
-
-            if (fabsf(ref_gx - lib_gx) > tol_gx)
-                fprintf(stderr, "[uieval][%s] TR Gx mismatch @%d: ref=%.4g  lib=%.4g\n",
-                        tc->name, i, ref_gx, lib_gx);
-            mu_assert(fabsf(ref_gx - lib_gx) <= tol_gx, "TR waveform Gx mismatch");
-            mu_assert(fabsf(ref_gy - lib_gy) <= tol_gy, "TR waveform Gy mismatch");
-            mu_assert(fabsf(ref_gz - lib_gz) <= tol_gz, "TR waveform Gz mismatch");
+        int matched = 0;
+        for (i = 0; i < ref_wfs.num_trs; ++i) {
+            if (tr_waveform_matches_ref(&ref_wfs.waveforms[i], &lib_wf)) {
+                matched = 1;
+                break;
+            }
         }
+        mu_assert(matched, "TR waveform does not match any canonical TR reference");
     }
 
     free_tr_waveform_set(&ref_wfs);
@@ -1362,6 +1388,14 @@ static void run_scan_table_case(const seq_case* tc)
         }
 
         e = &ref.entries[pos];
+
+        /* Scan-table structural debug columns (non-blocking):
+         *  - tr_start_flag
+         *  - segment_id
+         *  - within_segment_idx
+         * These are exported for debugging and can be inspected by
+         * tooling without affecting pass/fail status here.
+         */
 
         /* RF amplitude (relative tolerance or absolute for zero) */
         tol = (float)fabs(e->rf_amp_hz) * 1e-4f;

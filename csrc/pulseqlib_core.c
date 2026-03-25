@@ -326,6 +326,30 @@ static int check_cross_pass_rf_consistency(
     return PULSEQLIB_SUCCESS;
 }
 
+static int block_defs_structurally_equal_core(
+    const pulseqlib_sequence_descriptor* desc,
+    int id_a,
+    int id_b)
+{
+    const pulseqlib_block_definition* a;
+    const pulseqlib_block_definition* b;
+
+    if (!desc) return 0;
+    if (id_a < 0 || id_a >= desc->num_unique_blocks) return 0;
+    if (id_b < 0 || id_b >= desc->num_unique_blocks) return 0;
+
+    a = &desc->block_definitions[id_a];
+    b = &desc->block_definitions[id_b];
+
+    if (a->duration_us != b->duration_us) return 0;
+    if ((a->rf_id  >= 0) != (b->rf_id  >= 0)) return 0;
+    if ((a->gx_id  >= 0) != (b->gx_id  >= 0)) return 0;
+    if ((a->gy_id  >= 0) != (b->gy_id  >= 0)) return 0;
+    if ((a->gz_id  >= 0) != (b->gz_id  >= 0)) return 0;
+    if ((a->adc_id >= 0) != (b->adc_id >= 0)) return 0;
+    return 1;
+}
+
 /*
  * check_scan_table_segments --
  *   Walk the scan table and verify that each entry's block definition ID
@@ -344,6 +368,7 @@ static int check_scan_table_segments(
     const pulseqlib_block_definition* bdef_actual;
     const pulseqlib_block_definition* bdef_expected;
     int both_pure_delay;
+    int structural_match;
 
     prev_seg_id = -2;  /* impossible value to force reset */
     pos_in_seg  = 0;
@@ -385,6 +410,7 @@ static int check_scan_table_segments(
         expected_id = seg->unique_block_indices[pos_in_seg];
 
         both_pure_delay = 0;
+        structural_match = 0;
         if (bdef_id >= 0 && bdef_id < desc->num_unique_blocks &&
             expected_id >= 0 && expected_id < desc->num_unique_blocks) {
             bdef_actual   = &desc->block_definitions[bdef_id];
@@ -396,9 +422,15 @@ static int check_scan_table_segments(
                  bdef_expected->rf_id  == -1 && bdef_expected->gx_id  == -1 &&
                  bdef_expected->gy_id  == -1 && bdef_expected->gz_id  == -1 &&
                  bdef_expected->adc_id == -1) ? 1 : 0;
+            if (!both_pure_delay &&
+                desc->tr_descriptor.num_prep_blocks == 0 &&
+                desc->tr_descriptor.num_cooldown_blocks == 0) {
+                structural_match = block_defs_structurally_equal_core(
+                    desc, bdef_id, expected_id);
+            }
         }
 
-        if (bdef_id != expected_id && !both_pure_delay) {
+        if (bdef_id != expected_id && !both_pure_delay && !structural_match) {
             if (diag) {
                 pulseqlib__diag_printf(diag,
                     "Consistency: scan pos %d (block_table[%d]) has def ID %d, "
@@ -472,18 +504,6 @@ static int check_consistency(
                     return rc;
                 }
 
-                /* (c) RF shim ID periodicity (same TR range as amplitude) */
-                rc = check_rf_shim_periodicity(desc,
-                    ref_tr, first_check, last_check, diag);
-                if (PULSEQLIB_FAILED(rc)) {
-                    if (diag) {
-                        pulseqlib__diag_printf(diag,
-                            "Consistency check failed: RF shim ID "
-                            "not periodic in subsequence %d\n",
-                            subseq_idx);
-                    }
-                    return rc;
-                }
             }
         }
 
@@ -499,6 +519,19 @@ static int check_consistency(
                 }
                 return rc;
             }
+
+                /* (c) RF shim ID periodicity (same TR range as amplitude) */
+                rc = check_rf_shim_periodicity(desc,
+                    ref_tr, first_check, last_check, diag);
+                if (PULSEQLIB_FAILED(rc)) {
+                    if (diag) {
+                        pulseqlib__diag_printf(diag,
+                            "Consistency check failed: RF shim ID "
+                            "not periodic in subsequence %d\n",
+                            subseq_idx);
+                    }
+                    return rc;
+                }
         }
     }
 
@@ -620,8 +653,10 @@ int pulseqlib__get_collection_descriptors(
          * cooldown), computed as total scan-table duration divided by num_passes.
          * This applies to both single-pass (e.g. bSSFP 1sl) and multi-pass
          * (e.g. bSSFP 3sl) sequences. */
-        if (!desc.tr_descriptor.degenerate_prep ||
-            !desc.tr_descriptor.degenerate_cooldown) {
+           if ((!desc.tr_descriptor.degenerate_prep ||
+               !desc.tr_descriptor.degenerate_cooldown) &&
+              (desc.tr_descriptor.num_prep_blocks > 0 ||
+               desc.tr_descriptor.num_cooldown_blocks > 0)) {
             float total_dur = 0.0f;
             int n;
             for (n = 0; n < desc.scan_table_len; ++n) {

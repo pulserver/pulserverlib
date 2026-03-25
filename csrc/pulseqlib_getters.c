@@ -126,9 +126,15 @@ static float pulseqlib__get_tr_duration_us(
     const pulseqlib_collection* coll,
     int subseq_idx)
 {
+    const pulseqlib_sequence_descriptor* desc;
+    const pulseqlib_tr_descriptor* tr;
+
     if (!coll || subseq_idx < 0 || subseq_idx >= coll->num_subsequences)
         return 0.0f;
-    return coll->descriptors[subseq_idx].tr_descriptor.tr_duration_us;
+
+    desc = &coll->descriptors[subseq_idx];
+    tr = &desc->tr_descriptor;
+    return tr->tr_duration_us;
 }
 
 static int pulseqlib__get_num_trs(
@@ -477,48 +483,23 @@ int pulseqlib_get_rf_array(
 static int pulseqlib__get_total_readouts(
     const pulseqlib_collection* coll)
 {
-    int i, b, total;
+    int i, n, total;
 
     if (!coll) return 0;
 
     total = 0;
     for (i = 0; i < coll->num_subsequences; ++i) {
         const pulseqlib_sequence_descriptor* desc = &coll->descriptors[i];
-        const pulseqlib_tr_descriptor* trd = &desc->tr_descriptor;
-        int adc_per_tr = 0;
-        int adc_prep   = 0;
-        int adc_cool   = 0;
-        int main_trs;
+        if (!desc->scan_table_block_idx || desc->scan_table_len <= 0)
+            continue;
 
-        /* Count ADC blocks in one main TR */
-        for (b = 0; b < trd->tr_size; ++b) {
-            int blk_idx = trd->num_prep_blocks + b;
-            if (blk_idx < desc->num_blocks &&
-                desc->block_table[blk_idx].adc_id >= 0)
-                adc_per_tr++;
-        }
-
-        /* Count ADC blocks in prep region */
-        for (b = 0; b < trd->num_prep_blocks; ++b) {
-            if (b < desc->num_blocks &&
-                desc->block_table[b].adc_id >= 0)
-                adc_prep++;
-        }
-
-        /* Count ADC blocks in cooldown region */
-        {
-            int cool_start = trd->num_prep_blocks +
-                             trd->num_trs * trd->tr_size;
-            for (b = 0; b < trd->num_cooldown_blocks; ++b) {
-                int idx = cool_start + b;
-                if (idx < desc->num_blocks &&
-                    desc->block_table[idx].adc_id >= 0)
-                    adc_cool++;
+        for (n = 0; n < desc->scan_table_len; ++n) {
+            int bt_idx = desc->scan_table_block_idx[n];
+            if (bt_idx >= 0 && bt_idx < desc->num_blocks &&
+                desc->block_table[bt_idx].adc_id >= 0) {
+                total++;
             }
         }
-
-        main_trs = trd->num_trs;
-        total += adc_per_tr * main_trs + adc_prep + adc_cool;
     }
     return total;
 }

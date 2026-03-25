@@ -1382,10 +1382,12 @@ int pulseqlib__get_unique_blocks(pulseqlib_sequence_descriptor* desc, const puls
 
     /* ---- step 6: prep/cooldown ---- */
     has_prep = 0; has_cooldown = 0;
-    for (n = 0; n < seq->labelset_library_size; ++n) {
-        if ((int)(seq->labelset_library[n][1]) == PULSEQLIB__ONCE) {
-            if ((int)(seq->labelset_library[n][0]) == 1) has_prep = 1;
-            else if ((int)(seq->labelset_library[n][0]) == 2) has_cooldown = 1;
+    for (n = 0; n < num_blocks; ++n) {
+        pulseqlib__get_raw_block_content_ids(seq, &raw, n, 1);
+        if (raw.ext_count > 0) {
+            pulseqlib__get_raw_extension(seq, &ext, &raw);
+            if (ext.flag.once == 1) has_prep = 1;
+            else if (ext.flag.once == 2) has_cooldown = 1;
         }
     }
     if (!has_prep && !has_cooldown) {
