@@ -9,7 +9,18 @@
 function generate_test_sequences()
 
 clear; clc;
+
+% Add testutils to path
 addpath(fullfile(fileparts(mfilename('fullpath')), '..'));
+
+% Add Pulseq MATLAB library to path
+pulseq_path = fullfile(fileparts(mfilename('fullpath')), '..', 'pulseq', 'matlab');
+if isfolder(pulseq_path) || isdir(pulseq_path)
+    addpath(pulseq_path);
+    fprintf('Added Pulseq path: %s\n', pulseq_path);
+else
+    error('Pulseq MATLAB library not found at: %s', pulseq_path);
+end
 
 write_bssfp(true, 1, 1);
 write_bssfp(true, 3, 1);
