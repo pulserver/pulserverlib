@@ -1993,15 +1993,15 @@ classdef TruthBuilder < handle
         end
 
         function s = gradPeakAmpSigned(grad)
-        % GRADPEAKAMPSIGNED  Return the signed amplitude with max absolute value.
-        %   For trapezoid: amplitude (already signed).
-        %   For arbitrary: the sample with max |value|.
-            if strcmp(grad.type, 'trap') || strcmp(grad.type, 'trapezoid')
-                s = grad.amplitude;
-            else
-                [~, idx] = max(abs(grad.waveform));
-                s = grad.waveform(idx);
-            end
+        % GRADPEAKAMPSIGNED  Return the amplitude stored in the sequence file.
+        %   For both trapezoid and arbitrary: returns grad.amplitude directly.
+        %   For trapezoid, grad.amplitude can be negative (the sign is part of
+        %   the seq file representation).  For arbitrary gradients, grad.amplitude
+        %   is always positive in the pulseq v1.4 format (the waveform shape
+        %   already encodes the sign via values in [-1, 1]).  This matches the
+        %   C library behaviour, which returns the raw amplitude field from the
+        %   [GRADIENTS]/[TRAP] sections without waveform-based sign adjustment.
+            s = grad.amplitude;
         end
 
         function amp = gradPeakAmp(grad)

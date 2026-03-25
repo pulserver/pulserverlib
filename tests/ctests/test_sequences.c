@@ -1429,12 +1429,18 @@ static void run_scan_table_case(const seq_case* tc)
         /* GY amplitude */
         tol = (float)fabs(e->gy_amp_hz_per_m) * 1e-4f;
         if (tol < 1e-6f) tol = 1e-6f;
+        if ((float)fabs(inst.gy_amp_hz_per_m - e->gy_amp_hz_per_m) > tol)
+            fprintf(stderr, "[scantable][%s] gy_amp @pos%d: ref=%.6g  lib=%.6g\n",
+                tc->name, pos, e->gy_amp_hz_per_m, inst.gy_amp_hz_per_m);
         mu_assert((float)fabs(inst.gy_amp_hz_per_m - e->gy_amp_hz_per_m) <= tol,
                   "gy_amp mismatch");
 
         /* GZ amplitude */
         tol = (float)fabs(e->gz_amp_hz_per_m) * 1e-4f;
         if (tol < 1e-6f) tol = 1e-6f;
+        if ((float)fabs(inst.gz_amp_hz_per_m - e->gz_amp_hz_per_m) > tol)
+            fprintf(stderr, "[scantable][%s] gz_amp @pos%d: ref=%.6g  lib=%.6g\n",
+                tc->name, pos, e->gz_amp_hz_per_m, inst.gz_amp_hz_per_m);
         mu_assert((float)fabs(inst.gz_amp_hz_per_m - e->gz_amp_hz_per_m) <= tol,
                   "gz_amp mismatch");
 
