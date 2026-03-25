@@ -2124,11 +2124,45 @@ int pulseqlib_cursor_get_info(
     info->subseq_idx    = cursor->sequence_index;
     info->scan_pos      = pos;
     info->segment_id    = seg_id + coll->subsequence_info[cursor->sequence_index].segment_id_offset;
-    info->segment_start = (pos == 0 || desc->scan_table_seg_id[pos] !=
-                                       desc->scan_table_seg_id[pos - 1]) ? 1 : 0;
-    info->segment_end   = (pos == desc->scan_table_len - 1 ||
-                           desc->scan_table_seg_id[pos] !=
-                           desc->scan_table_seg_id[pos + 1]) ? 1 : 0;
+    /* segment_start fires at the first block of every segment instance,
+     * including consecutive instances of the same segment (e.g. the ny
+     * phase-encoding readout lines in MPRAGE within one TR).
+     * A new instance begins when the seg_id changes, or when enough
+     * blocks have elapsed to complete one full instance of the segment
+     * (detected by counting back to the start of the same-seg_id run). */
+    {
+        int new_inst;
+        if (pos == 0 || desc->scan_table_seg_id[pos] != desc->scan_table_seg_id[pos - 1]) {
+            new_inst = 1;
+        } else if (seg_id >= 0 && seg_id < desc->num_unique_segments) {
+            int nb = desc->segment_definitions[seg_id].num_blocks;
+            int run_start = pos;
+            if (nb <= 0) nb = 1;
+            while (run_start > 0 && desc->scan_table_seg_id[run_start - 1] == seg_id)
+                run_start--;
+            new_inst = (((pos - run_start) % nb) == 0) ? 1 : 0;
+        } else {
+            new_inst = 0;
+        }
+        info->segment_start = new_inst;
+    }
+    {
+        int last_inst;
+        if (pos == desc->scan_table_len - 1 ||
+                desc->scan_table_seg_id[pos] != desc->scan_table_seg_id[pos + 1]) {
+            last_inst = 1;
+        } else if (seg_id >= 0 && seg_id < desc->num_unique_segments) {
+            int nb = desc->segment_definitions[seg_id].num_blocks;
+            int run_start = pos;
+            if (nb <= 0) nb = 1;
+            while (run_start > 0 && desc->scan_table_seg_id[run_start - 1] == seg_id)
+                run_start--;
+            last_inst = ((((pos - run_start) + 1) % nb) == 0) ? 1 : 0;
+        } else {
+            last_inst = 0;
+        }
+        info->segment_end = last_inst;
+    }
     info->tr_start      = desc->scan_table_tr_start
                           ? desc->scan_table_tr_start[pos] : 0;
     info->pmc           = desc->enable_pmc;

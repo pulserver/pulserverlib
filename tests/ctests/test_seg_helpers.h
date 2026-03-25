@@ -37,10 +37,11 @@ typedef struct seg_meta {
     int num_canonical_trs;
     int fmod_build_mode_tr_scoped;
     /* Phase 5: Segment order (scan-table validation) */
+    int num_segment_order_entries;   /* actual count of entries in segment_order */
     int segment_order[MAX_SEGMENTS];
 } seg_meta;
 
-#define SEG_META_INIT {0, {0}, {0}, 0, 0, 0, {0}, 0, 0, {0}}
+#define SEG_META_INIT {0, {0}, {0}, 0, 0, 0, {0}, 0, 0, 0, {0}}
 
 /* ------------------------------------------------------------------ */
 /*  parse_meta                                                        */
@@ -103,6 +104,7 @@ static TSEG_MAYBE_UNUSED int parse_meta(const char* path, seg_meta* out)
             for (n = 0; n < MAX_SEGMENTS && sscanf(pos, " %d%n", &m.segment_order[n], &i) == 1; n++) {
                 pos += i;
             }
+            m.num_segment_order_entries = n;
         }
     }
 

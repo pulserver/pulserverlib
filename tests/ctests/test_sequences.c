@@ -1254,7 +1254,6 @@ static void run_scan_table_case(const seq_case* tc)
     int saw_noncanonical_instance = 0;
 
     /* Cursor-info tracking state */
-    int prev_seg_id = -1;
     int prev_seg_end = 0;
     int total_readout_count = 0;
     int seg_trigger_seen[MAX_SEGMENTS];
@@ -1286,7 +1285,7 @@ static void run_scan_table_case(const seq_case* tc)
     build_case_path(meta_path, sizeof(meta_path), tc, "_meta.txt");
     ok = parse_meta(meta_path, &meta);
     mu_assert(ok, "failed to parse case _meta.txt");
-    mu_assert(meta.num_segments > 0, "meta has no segment_order");
+    mu_assert(meta.num_segment_order_entries > 0, "meta has no segment_order entries");
     mu_assert_int_eq(meta.num_segments, cinfo.num_segments);
 
     /* Walk the scan table via cursor and compare each block instance */
@@ -1316,26 +1315,19 @@ static void run_scan_table_case(const seq_case* tc)
                       "cursor segment_id out of range");
 
             /* Segment transition checks */
-            if (ci.segment_id != prev_seg_id) {
-                /* First block of a new segment must have segment_start */
-                mu_assert(ci.segment_start,
-                          "segment_start should be 1 at segment transition");
-                /* Previous segment's last block should have had segment_end */
-                if (prev_seg_id >= 0)
+            if (ci.segment_start) {
+                /* First block of a new segment instance.  This fires for
+                 * every instance, including consecutive repetitions of the
+                 * same segment (e.g. the ny phase-encoding readout lines
+                 * in MPRAGE within one inversion-to-inversion sequence). */
+                if (pos > 0) {
+                    /* Previous instance should have ended with segment_end */
                     mu_assert(prev_seg_end,
-                              "prev segment should have ended with segment_end=1");
+                              "prev segment instance should have ended with segment_end=1");
+                }
 
-                /* Validate segment order matches meta.segment_order array.
-                 * meta records every repetition of a segment separately
-                 * (e.g., each of the ny phase-encoding readout lines in
-                 * MPRAGE gets its own entry), while the cursor fires one
-                 * transition per contiguous run of the same segment.
-                 * Skip past any trailing entries still referencing the
-                 * previous segment before comparing the new one. */
-                while (seg_order_idx < meta.num_segments &&
-                       meta.segment_order[seg_order_idx] == prev_seg_id)
-                    seg_order_idx++;
-                if (seg_order_idx < meta.num_segments) {
+                /* Validate segment order matches meta.segment_order array */
+                if (seg_order_idx < meta.num_segment_order_entries) {
                     char msg[256];
                     snprintf(msg, sizeof(msg),
                              "segment order mismatch at index %d: got segment_id=%d, expected %d",
@@ -1356,12 +1348,8 @@ static void run_scan_table_case(const seq_case* tc)
                     mu_assert_int_eq(si.is_nav, ci.is_nav);
                     mu_assert_int_eq(si.has_trigger, ci.has_trigger);
                 }
-
-                prev_seg_id = ci.segment_id;
             } else {
-                /* Continuation within same segment: segment_start must be 0 */
-                mu_assert(!ci.segment_start,
-                          "segment_start should be 0 within same segment");
+                /* Continuation block within the current segment instance */
                 if (seg_order_idx > 0)
                     seg_order_blocks++;
             }
@@ -1505,9 +1493,9 @@ static void run_scan_table_case(const seq_case* tc)
     {
         char msg[256];
         snprintf(msg, sizeof(msg),
-                 "segment order incomplete: saw %d segments, expected %d",
-                 seg_order_idx, meta.num_segments);
-        mu_assert(seg_order_idx == meta.num_segments, msg);
+                 "segment order incomplete: saw %d segment instances, expected %d",
+                 seg_order_idx, meta.num_segment_order_entries);
+        mu_assert(seg_order_idx == meta.num_segment_order_entries, msg);
     }
 
     /* ---- Total readouts cross-check (example_check.c step 6) ----- */
