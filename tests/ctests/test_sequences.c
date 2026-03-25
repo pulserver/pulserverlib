@@ -726,6 +726,9 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             }
             if (ref_blk->has_adc) {
                 float lib_kz = pulseqlib_get_adc_kzero_us(coll, s, b);
+                if (fabsf(ref_blk->adc_kzero_us - lib_kz) > 1.0f)
+                    fprintf(stderr, "[geninstr][%s] seg%d blk%d adc_kzero_us: ref=%.4g  lib=%.4g\n",
+                            tc->name, s, b, ref_blk->adc_kzero_us, lib_kz);
                 mu_assert(fabsf(ref_blk->adc_kzero_us - lib_kz) <= 1.0f,
                           "ADC kzero_us mismatch");
             }

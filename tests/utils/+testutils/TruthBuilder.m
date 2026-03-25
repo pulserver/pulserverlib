@@ -769,12 +769,16 @@ classdef TruthBuilder < handle
                 obj.segment_sizes(1) = n_canon_blocks;
 
                 seg_blocks = cell(1, n_canon_blocks);
+                raw_blocks = cell(1, n_canon_blocks);
                 block_start = 0.0;
                 for b = 1:n_canon_blocks
                     block = cseq.getBlock(b);
+                    raw_blocks{b} = block;
                     seg_blocks{b} = obj.extractBlockData(block, block_start);
                     block_start = block_start + block.blockDuration;
                 end
+                seg_blocks = testutils.TruthBuilder.fixADCKzeroForSegment( ...
+                    seg_blocks, raw_blocks, obj.sys.gradRasterTime);
 
                 [rf_adc_gap, adc_adc_gap] = obj.computeSegmentGaps(seg_blocks);
 
@@ -838,13 +842,17 @@ classdef TruthBuilder < handle
                 assert(best_start > 0, 'Could not find representative segment instance');
 
                 seg_blocks = cell(1, obj.segment_sizes(s));
+                raw_blocks = cell(1, obj.segment_sizes(s));
                 block_start = 0.0;
 
                 for b = 1:obj.segment_sizes(s)
                     block = obj.seq.getBlock(best_start + b - 1);
+                    raw_blocks{b} = block;
                     seg_blocks{b} = obj.extractBlockData(block, block_start);
                     block_start = block_start + block.blockDuration;
                 end
+                seg_blocks = testutils.TruthBuilder.fixADCKzeroForSegment( ...
+                    seg_blocks, raw_blocks, obj.sys.gradRasterTime);
 
                 % Compute segment-level gaps.
                 [rf_adc_gap, adc_adc_gap] = obj.computeSegmentGaps(seg_blocks);
@@ -1655,8 +1663,12 @@ classdef TruthBuilder < handle
             end
             if bd.has_adc
                 adc_dur_s = block.adc.numSamples * block.adc.dwell;
-                adc_anchor = obj.getADCAnchorFraction(bd.adc_id);
-                bd.adc_kzero_us = (block_start + block.adc.delay + adc_anchor * adc_dur_s) * 1e6;
+                % Preliminary: store adc window boundaries. adc_kzero_us will
+                % be refined at the segment level by fixADCKzeroForSegment(),
+                % which integrates the full segment gradient trajectory and
+                % finds the sample with minimum |k| (matching the C library's
+                % kRSS-minimum approach in pulseqlib__calc_segment_timing).
+                bd.adc_kzero_us = (block_start + block.adc.delay) * 1e6;  % placeholder
                 bd.adc_start_us = (block_start + block.adc.delay) * 1e6;
                 bd.adc_end_us   = (block_start + block.adc.delay + adc_dur_s) * 1e6;
             else
@@ -2325,5 +2337,102 @@ classdef TruthBuilder < handle
                  max(abs(ref_grad.tt(:) - cand_grad.tt(:))) < tol && ...
                  abs(ref_grad.delay - cand_grad.delay) < tol;
         end
+
+        function frac = estimateADCKzeroFraction(block, grad_raster, k_init)
+        % ESTIMATEADCKZEROFRACTION  Estimate the fractional position within the
+        %   ADC window where k-space is closest to the origin.
+        %
+        %   k_init (optional, 1x3): initial [kx ky kz] at the start of the
+        %     block in physical units (same as the gradient integral gives).
+        %     If omitted, defaults to [0 0 0].
+        %
+        %   Algorithm: integrate gx+gy+gz during the ADC window at the ADC
+        %   dwell rate, then find the sample index with minimum Euclidean |k|.
+        %   This matches the C library's kRSS-minimum approach.
+            if nargin < 3 || isempty(k_init)
+                k_init = [0 0 0];
+            end
+
+            if ~isfield(block, 'adc') || isempty(block.adc)
+                frac = 0.5;
+                return;
+            end
+
+            N     = block.adc.numSamples;
+            dwell = block.adc.dwell;
+            t_adc_start = block.adc.delay;
+
+            % Sample times at ADC dwell rate (START of each sample, matching the
+            % C library convention: kzero = floor(N/2) * dwell, not N/2*dwell+dwell/2).
+            t_s = t_adc_start + (0:N-1)' * dwell;
+
+            % Evaluate each gradient at every ADC sample time via linear
+            % interpolation on the knot representation.
+            ax_names = {'gx', 'gy', 'gz'};
+            k = zeros(N, 3);
+            for ch = 1:3
+                axn = ax_names{ch};
+                if ~isfield(block, axn) || isempty(block.(axn))
+                    k(:, ch) = k_init(ch);
+                    continue;
+                end
+                [t_kn, w_kn] = testutils.TruthBuilder.gradToKnots(block.(axn));
+                % Integrate from t=0 of block to each ADC sample time using
+                % cumtrapz on the full gradient trajectory, then shift by k_init.
+                t_full = unique([0; t_kn(:); t_s(:)], 'sorted');
+                w_full = interp1(t_kn, w_kn, t_full, 'linear', 0);
+                k_full = k_init(ch) + cumtrapz(t_full, w_full);
+                k(:, ch) = interp1(t_full, k_full, t_s, 'linear', k_full(end));
+            end
+
+            % Find sample with minimum |k|.  Return fraction as (i-1)/N so that
+            % kzero_time_in_adc = frac * adc_dur = (i_min-1) * dwell, matching
+            % the C library's formula: floor(N/2) * dwell_time.
+            krss = sqrt(sum(k.^2, 2));
+            [~, i_min] = min(krss);
+            frac = (i_min - 1) / N;
+        end
+
+        function seg_blocks = fixADCKzeroForSegment(seg_blocks, raw_blocks, grad_raster)
+        % FIXADCKZEROFORSEGMENT  Recompute adc_kzero_us for all ADC blocks in a
+        %   segment using the full segment gradient trajectory.
+        %
+        %   Integrates gradients block-by-block to accumulate the running k,
+        %   then for each ADC block calls estimateADCKzeroFraction with the
+        %   correct initial k, matching the C library's kRSS approach.
+            k_accum = [0 0 0];
+            ax_names = {'gx', 'gy', 'gz'};
+
+            for b = 1:length(raw_blocks)
+                block = raw_blocks{b};
+                bd    = seg_blocks{b};
+
+                if bd.has_adc
+                    N     = block.adc.numSamples;
+                    dwell = block.adc.dwell;
+                    adc_dur_s = N * dwell;
+                    frac = testutils.TruthBuilder.estimateADCKzeroFraction( ...
+                        block, grad_raster, k_accum);
+                    % adc_start_us is already set in extractBlockData as
+                    % (block_start + adc_delay)*1e6.  Compute kzero from that.
+                    bd.adc_kzero_us = bd.adc_start_us + frac * adc_dur_s * 1e6;
+                    seg_blocks{b} = bd;
+                end
+
+                % Accumulate k through this block (from t=0 to blockDuration)
+                block_dur = block.blockDuration;
+                for ch = 1:3
+                    axn = ax_names{ch};
+                    if ~isfield(block, axn) || isempty(block.(axn))
+                        continue;
+                    end
+                    [t_kn, w_kn] = testutils.TruthBuilder.gradToKnots(block.(axn));
+                    t_pts = unique([0; t_kn(:); block_dur], 'sorted');
+                    w_pts = interp1(t_kn, w_kn, t_pts, 'linear', 0);
+                    k_accum(ch) = k_accum(ch) + trapz(t_pts, w_pts);
+                end
+            end
+        end
+
     end
 end

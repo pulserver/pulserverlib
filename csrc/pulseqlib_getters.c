@@ -851,6 +851,17 @@ float pulseqlib_get_adc_kzero_us(
     if (bdef->adc_id < 0 || bdef->adc_id >= desc->num_unique_adcs)
         return -1.0f;
 
+    /* If the safety pass has already computed a k=0 anchor for this block
+     * (which handles both Cartesian N/2 and non-Cartesian kRSS-minimum),
+     * return its segment-relative kzero_us directly. */
+    if (seg->timing.adc_anchors && seg->timing.num_adc_anchors > 0) {
+        for (k = 0; k < seg->timing.num_adc_anchors; ++k) {
+            if (seg->timing.adc_anchors[k].block_offset == local_blk)
+                return seg->timing.adc_anchors[k].kzero_us;
+        }
+    }
+
+    /* Fallback: midpoint (Cartesian convention). */
     adef = &desc->adc_definitions[bdef->adc_id];
     return start_us + (float)adef->delay +
         (float)(adef->num_samples / 2) * (float)adef->dwell_time * 1e-3f;
