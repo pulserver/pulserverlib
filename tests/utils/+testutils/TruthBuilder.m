@@ -1994,14 +1994,31 @@ classdef TruthBuilder < handle
 
         function s = gradPeakAmpSigned(grad)
         % GRADPEAKAMPSIGNED  Return the amplitude stored in the sequence file.
-        %   For both trapezoid and arbitrary: returns grad.amplitude directly.
-        %   For trapezoid, grad.amplitude can be negative (the sign is part of
-        %   the seq file representation).  For arbitrary gradients, grad.amplitude
-        %   is always positive in the pulseq v1.4 format (the waveform shape
-        %   already encodes the sign via values in [-1, 1]).  This matches the
-        %   C library behaviour, which returns the raw amplitude field from the
-        %   [GRADIENTS]/[TRAP] sections without waveform-based sign adjustment.
-            s = grad.amplitude;
+        %   Matches the value that pulseq writes to the [GRADIENTS]/[TRAP]
+        %   sections of the .seq file, and that the C library reads back:
+        %
+        %   Trapezoid: grad.amplitude (already signed; can be negative).
+        %
+        %   Arbitrary: max(abs(waveform)) * sign(first_non_zero_sample).
+        %     This reproduces the formula in pulseq Sequence.m addBlock() /
+        %     registerGradEvent() (see lines ~643-646 of Sequence.m):
+        %       amplitude = max(abs(event.waveform));
+        %       amplitude = amplitude * sign(fnz);   % fnz = first non-zero
+        %     The waveform returned by getBlock() is amplitude*normalized_shape,
+        %     so dividing back gives the normalized shape; the seq file stores
+        %     this signed amplitude together with the normalized shape.
+            if strcmp(grad.type, 'trap') || strcmp(grad.type, 'trapezoid')
+                s = grad.amplitude;
+            else
+                w = grad.waveform;
+                peak = max(abs(w));
+                if peak == 0
+                    s = 0;
+                else
+                    fnz_idx = find(w ~= 0, 1, 'first');
+                    s = peak * sign(w(fnz_idx));
+                end
+            end
         end
 
         function amp = gradPeakAmp(grad)
