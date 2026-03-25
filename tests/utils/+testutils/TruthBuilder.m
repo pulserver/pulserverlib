@@ -381,7 +381,13 @@ classdef TruthBuilder < handle
             end
 
             % Deduplicate fingerprints.
-            [~, ia, ic] = unique(fp_matrix, 'rows', 'stable');
+            % unique(...,'rows','stable') with 3 outputs is not available in
+            % Octave < 9, so we replicate it manually.
+            [unique_rows, ia] = unique(fp_matrix, 'rows', 'stable');
+            ic = zeros(num_trs, 1);
+            for k = 1:num_trs
+                ic(k) = find(all(bsxfun(@eq, unique_rows, fp_matrix(k,:)), 2), 1);
+            end
 
             obj.num_canonical_trs = length(ia);
             obj.tr_group_labels = ic(:) - 1;  % 0-based to match C convention
@@ -818,7 +824,11 @@ classdef TruthBuilder < handle
                             end
                         end
 
-                        if e > best_energy
+                        % Use a relative tolerance to avoid picking a later
+                        % instance over the first when energies are equal up
+                        % to floating-point noise (e.g. conjugate spiral
+                        % interleaves where sum(w^2) differs by ~1 ULP).
+                        if e > best_energy + 1e-9 * abs(e)
                             best_energy = e;
                             best_start = tr_base + seg_offset;
                         end
