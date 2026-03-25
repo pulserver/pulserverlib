@@ -305,7 +305,7 @@ static int check_cross_pass_rf_consistency(
                         "pos %d has %.6g, pass 0 has %.6g\n",
                         p, j, (double)chk_amp, (double)ref_amp);
                 }
-                return PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC;
+                return PULSEQLIB_ERR_TR_PATTERN_MISMATCH;
             }
 
             /* RF shim ID */
@@ -612,6 +612,30 @@ int pulseqlib__get_collection_descriptors(
 
         result = pulseqlib__build_scan_table(&desc, num_averages, diag);
         if (PULSEQLIB_FAILED(diag->code)) goto fail;
+
+        /* Non-degenerate pass TR duration:
+         * For any sequence with non-degenerate prep or cooldown (once==1 / once==2
+         * blocks that are structurally distinct from the imaging TR), the canonical
+         * TR equals one full per-slice pass (prep + all averages of imaging +
+         * cooldown), computed as total scan-table duration divided by num_passes.
+         * This applies to both single-pass (e.g. bSSFP 1sl) and multi-pass
+         * (e.g. bSSFP 3sl) sequences. */
+        if (!desc.tr_descriptor.degenerate_prep ||
+            !desc.tr_descriptor.degenerate_cooldown) {
+            float total_dur = 0.0f;
+            int n;
+            for (n = 0; n < desc.scan_table_len; ++n) {
+                int bt_idx = desc.scan_table_block_idx[n];
+                const pulseqlib_block_table_element* bte =
+                    &desc.block_table[bt_idx];
+                const pulseqlib_block_definition* bdef =
+                    &desc.block_definitions[bte->id];
+                total_dur += (bte->duration_us >= 0)
+                    ? (float)bte->duration_us
+                    : (float)bdef->duration_us;
+            }
+            desc.tr_descriptor.tr_duration_us = total_dur / (float)desc.num_passes;
+        }
 
         /* Scan-table-only segmentation (prep / main / cooldown) */
         result = pulseqlib__get_scan_table_segments(&desc, diag, &raw->sequences[i].opts);

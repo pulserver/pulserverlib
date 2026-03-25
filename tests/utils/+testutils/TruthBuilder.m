@@ -267,7 +267,20 @@ classdef TruthBuilder < handle
 
         function determineCanonicalMode(obj)
         % DETERMINECANONICALMODE  Choose TR-based or pass-expanded canonical mode.
-            nbt = obj.num_blocks_in_tr;
+        %
+        %   Two modes:
+        %   1) Degenerate / standard TR: canonical_mode = 'tr', multipass_info disabled.
+        %      Used when: no once flags, pass_len != nbt, or every pass is purely
+        %      imaging (no once!=0 blocks).
+        %   2) Non-degenerate (pass_expanded): canonical_mode = 'pass_expanded',
+        %      multipass_info enabled. Used when: each pass is exactly nbt blocks AND
+        %      at least one block has once==1 OR once==2 (structurally different from
+        %      the main imaging TR). Applies to both single-pass (e.g. bSSFP 1sl) and
+        %      multi-pass (e.g. bSSFP 3sl) sequences.
+        %      Canonical TR duration = seg_cseq.duration (full expanded pass including
+        %      all averages).  Canonical TR waveform = full single pass (one per-slice
+        %      pass from the block table, without average expansion).
+            nbt    = obj.num_blocks_in_tr;
             nblocks = length(obj.seq.blockEvents);
             once_flags = obj.getOnceFlags();
 
@@ -290,11 +303,14 @@ classdef TruthBuilder < handle
             end
 
             pass_len = pass_lens(1);
+
+            % Pass must be exactly one TR unit.  Sequences whose "pass" spans many
+            % TR-unit widths (e.g. GRE with dummy TRs) are left in standard 'tr' mode.
             if pass_len ~= nbt
                 return;
             end
 
-            has_main = true;
+            has_main    = true;
             has_nonmain = false;
             for p = 1:length(starts)
                 i0 = starts(p);
@@ -313,6 +329,8 @@ classdef TruthBuilder < handle
                 return;
             end
 
+            % Non-degenerate detected: use pass_expanded for both single and
+            % multi-pass sequences.
             obj.canonical_mode = 'pass_expanded';
             obj.multipass_info = struct('enabled', true, ...
                 'pass_starts', starts(:)', ...
@@ -527,11 +545,14 @@ classdef TruthBuilder < handle
                 obj.tr_waveforms   = cell(1, 1);
                 obj.tr_times_list  = cell(1, 1);
 
-                pass_len = obj.multipass_info.pass_len;
+                pass_len   = obj.multipass_info.pass_len;
                 once_flags = obj.multipass_info.once_flags;
                 pass_start = obj.segment_data.first_group_indices(1);
 
-                cseq = mr.Sequence(obj.sys);
+                % ---- Build segment canonical sequence (full pass, all averages) ----
+                % Used by buildSegmentData (segment block count, timing, etc.).
+                % Includes prep on first avg, imaging on all avgs, cooldown on last avg.
+                seg_cseq = mr.Sequence(obj.sys);
                 for avg = 1:obj.num_averages
                     for pos = 1:pass_len
                         blk_idx = pass_start + pos - 1;
@@ -563,18 +584,47 @@ classdef TruthBuilder < handle
                         end
 
                         if isempty(args)
-                            cseq.addBlock(mr.makeDelay(block.blockDuration));
+                            seg_cseq.addBlock(mr.makeDelay(block.blockDuration));
                         else
-                            cseq.addBlock(args{:});
+                            seg_cseq.addBlock(args{:});
                         end
                     end
                 end
+                obj.canonical_seqs{1} = seg_cseq;
 
-                obj.canonical_seqs{1} = cseq;
+                % ---- Build canonical waveform: full SINGLE pass (not avg-expanded) ----
+                % Mirrors pulseqlib_get_tr_gradient_waveforms which renders block_table
+                % [0 .. pass_len-1] for non-degenerate sequences — i.e. the prep,
+                % one imaging loop, and cooldown, all in one slice-execution.
+                % This is the same for all avg counts since gradients are invariant
+                % to RF phase (which is the only thing that changes between averages).
+                wf_cseq = mr.Sequence(obj.sys);
+                for pos = 1:pass_len
+                    block = obj.seq.getBlock(pass_start + pos - 1);
+                    args = {};
+                    if isfield(block, 'rf') && ~isempty(block.rf)
+                        args{end+1} = block.rf; %#ok<AGROW>
+                    end
+                    ax_names = {'gx', 'gy', 'gz'};
+                    for a = 1:3
+                        axn = ax_names{a};
+                        if isfield(block, axn) && ~isempty(block.(axn))
+                            args{end+1} = block.(axn); %#ok<AGROW>
+                        end
+                    end
+                    if isfield(block, 'adc') && ~isempty(block.adc)
+                        args{end+1} = block.adc; %#ok<AGROW>
+                    end
+                    if isempty(args)
+                        wf_cseq.addBlock(mr.makeDelay(block.blockDuration));
+                    else
+                        wf_cseq.addBlock(args{:});
+                    end
+                end
 
-                wave_data = cseq.waveforms_and_times(false);
+                wave_data = wf_cseq.waveforms_and_times(false);
                 raster = 0.5 * obj.sys.gradRasterTime;
-                times = 0.0 : raster : cseq.duration;
+                times = 0.0 : raster : wf_cseq.duration;
                 samples = zeros(length(times), 3);
                 for c = 1:3
                     if c <= length(wave_data) && ~isempty(wave_data{c})
@@ -588,7 +638,11 @@ classdef TruthBuilder < handle
 
                 obj.tr_times_list{1} = times(:) * 1e6;
                 obj.tr_waveforms{1}  = samples;
-                obj.TR = cseq.duration;
+
+                % ---- obj.TR = canonical TR duration (written to tr_duration_us) ----
+                % Full expanded pass (prep + N_avg*imaging + cooldown) regardless of
+                % num_passes. Matches C library: total_scan_dur / num_passes.
+                obj.TR = seg_cseq.duration;
                 return;
             end
 
@@ -1332,6 +1386,60 @@ classdef TruthBuilder < handle
                 end
             end
             n = 0;
+        end
+
+        % ---- helper: find fundamental imaging TR period within a pass ----
+        function period = findImagingTRPeriod(obj, pass_start, pass_len)
+        % FINDIMAGINGTRPERIOD  Shortest repeating period among once==0 blocks.
+        %
+        %   Mirrors the C library's first_repeating_segment() logic applied to
+        %   the imaging region of one pass.  Fingerprint per block:
+        %   (blockDuration_us, hasRF, hasADC) — sufficient for typical MR
+        %   sequences.  Returns the full imaging block count if no shorter
+        %   period is found.
+            once_flags = obj.getOnceFlags();
+
+            % Collect once==0 block indices in this pass.
+            img_blks = zeros(1, pass_len);
+            n = 0;
+            for pos = 1:pass_len
+                idx = pass_start + pos - 1;
+                if once_flags(idx) == 0
+                    n = n + 1;
+                    img_blks(n) = idx;
+                end
+            end
+            img_blks = img_blks(1:n);
+
+            if n == 0
+                period = 1;
+                return;
+            end
+
+            % Fingerprint: (blockDuration_us, hasRF, hasADC).
+            fp = zeros(n, 3);
+            for i = 1:n
+                blk = obj.seq.getBlock(img_blks(i));
+                fp(i, 1) = round(blk.blockDuration * 1e6);
+                fp(i, 2) = double(isfield(blk, 'rf')  && ~isempty(blk.rf));
+                fp(i, 3) = double(isfield(blk, 'adc') && ~isempty(blk.adc));
+            end
+
+            % Find shortest repeating period (compatible with Octave).
+            for l = 1:floor(n / 2)
+                match = true;
+                for i = 1:l
+                    if any(fp(i, :) ~= fp(i + l, :))
+                        match = false;
+                        break;
+                    end
+                end
+                if match
+                    period = l;
+                    return;
+                end
+            end
+            period = n;
         end
 
         % ---- helper: extract block data for segment def ----
