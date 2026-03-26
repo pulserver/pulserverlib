@@ -46,9 +46,10 @@ static int compute_kspace_trajectory(
     const pulseqlib__uniform_grad_waveforms* waveforms,
     float* kx, float* ky, float* kz, float* krss,
     float* dt_us,
-    const int* refocus_samples, int num_refocus)
+    const int* refocus_samples, int num_refocus,
+    const int* excite_samples,  int num_excite)
 {
-    int i, n, r;
+    int i, n, r, e;
     float dt_s;
     float cum_x, cum_y, cum_z;
     float v;
@@ -65,11 +66,21 @@ static int compute_kspace_trajectory(
     kx[0] = 0.0f; ky[0] = 0.0f; kz[0] = 0.0f;
 
     r = 0;  /* index into refocus_samples */
+    e = 0;  /* index into excite_samples  */
 
     for (i = 1; i < n; ++i) {
         cum_x += 0.5f * (waveforms->gx[i - 1] + waveforms->gx[i]) * dt_s;
         cum_y += 0.5f * (waveforms->gy[i - 1] + waveforms->gy[i]) * dt_s;
         cum_z += 0.5f * (waveforms->gz[i - 1] + waveforms->gz[i]) * dt_s;
+
+        /* reset k=0 at excitation RF isocenter (90 deg pulse) */
+        if (excite_samples && e < num_excite &&
+            i == excite_samples[e]) {
+            cum_x = 0.0f;
+            cum_y = 0.0f;
+            cum_z = 0.0f;
+            e++;
+        }
 
         /* negate k at refocusing RF isocenter (180 deg pulse) */
         if (refocus_samples && r < num_refocus &&
