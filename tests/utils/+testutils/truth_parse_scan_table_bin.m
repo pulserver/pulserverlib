@@ -33,6 +33,7 @@ function out = truth_parse_scan_table_bin(path)
         e.trigger_flag = read_scalar(fid, 'int32', path, sprintf('entries(%d).trigger_flag', i));
         e.rotmat = read_array(fid, 9, 'single', path, sprintf('entries(%d).rotmat', i)).';
         e.freq_mod_id = read_scalar(fid, 'int32', path, sprintf('entries(%d).freq_mod_id', i));
+        e.block_dur_us = read_scalar(fid, 'int32', path, sprintf('entries(%d).block_dur_us', i));
         out.entries(i) = e;
     end
 
@@ -59,7 +60,8 @@ function e = empty_entry()
         'digitalout_flag', int32(0), ...
         'trigger_flag', int32(0), ...
         'rotmat', single(zeros(1, 9)), ...
-        'freq_mod_id', int32(0));
+        'freq_mod_id', int32(0), ...
+        'block_dur_us', int32(0));
 end
 
 function v = read_scalar(fid, type, path, field)

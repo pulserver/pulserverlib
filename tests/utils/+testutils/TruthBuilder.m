@@ -951,7 +951,7 @@ classdef TruthBuilder < handle
         % ---- Phase 5: scan table ----
         function buildScanTableData(obj)
             num_blocks_per_pass = length(obj.seq.blockEvents);
-            num_cols = 14;
+            num_cols = 15;
             max_entries = obj.num_averages * num_blocks_per_pass;
 
             % Per-block mapping within one TR/pass:
@@ -1096,6 +1096,9 @@ classdef TruthBuilder < handle
                                 end
                             end
                         end
+
+                        % Block duration in µs (column 15)
+                        st(act, 15) = round(block.blockDuration * 1e6);
 
                         % Rotation
                         if isfield(block, 'rotation')
@@ -1944,6 +1947,7 @@ classdef TruthBuilder < handle
                 fwrite(fid, int32(obj.scan_table(i, 14)), 'int32');
                 fwrite(fid, single(obj.rotmat_table(i, :)), 'float32');
                 fwrite(fid, int32(obj.freq_mod_table(i)), 'int32');
+                fwrite(fid, int32(obj.scan_table(i, 15)), 'int32');
             end
 
             fclose(fid);

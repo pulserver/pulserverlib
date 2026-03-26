@@ -330,7 +330,8 @@ function e = empty_scan_entry()
         'digitalout_flag', int32(0), ...
         'trigger_flag', int32(0), ...
         'rotmat', single(zeros(1, 9)), ...
-        'freq_mod_id', int32(0));
+        'freq_mod_id', int32(0), ...
+        'block_dur_us', int32(0));
 end
 
 function write_meta(path, meta)
@@ -479,6 +480,7 @@ function write_scan_table(path, scan)
         fwrite(fid, int32(e.trigger_flag), 'int32');
         fwrite(fid, single(e.rotmat), 'float32');
         fwrite(fid, int32(e.freq_mod_id), 'int32');
+        fwrite(fid, int32(e.block_dur_us), 'int32');
     end
 end
 

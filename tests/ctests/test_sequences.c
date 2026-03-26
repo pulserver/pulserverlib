@@ -1405,6 +1405,9 @@ static void run_scan_table_case(const seq_case* tc)
         /* RF amplitude (relative tolerance or absolute for zero) */
         tol = (float)fabs(e->rf_amp_hz) * 1e-4f;
         if (tol < 1e-6f) tol = 1e-6f;
+        if ((float)fabs(inst.rf_amp_hz - e->rf_amp_hz) > tol)
+            fprintf(stderr, "[scantable][%s] rf_amp @pos%d: ref=%.6g  lib=%.6g\n",
+                tc->name, pos, e->rf_amp_hz, inst.rf_amp_hz);
         mu_assert((float)fabs(inst.rf_amp_hz - e->rf_amp_hz) <= tol,
                   "rf_amp_hz mismatch");
 
@@ -1464,6 +1467,15 @@ static void run_scan_table_case(const seq_case* tc)
 
         /* Digital output flag */
         mu_assert_int_eq(e->digitalout_flag, inst.digitalout_flag);
+
+        /* Block duration — must match library for all blocks;
+         * for pure-delay segments the library uses the per-instance
+         * block table entry, not the canonical segment definition. */
+        if (e->block_dur_us > 0 && inst.duration_us != e->block_dur_us)
+            fprintf(stderr, "[scantable][%s] block_dur @pos%d: ref=%d  lib=%d\n",
+                tc->name, pos, e->block_dur_us, inst.duration_us);
+        if (e->block_dur_us > 0)
+            mu_assert_int_eq(e->block_dur_us, inst.duration_us);
 
         /* Rotation matrix */
         for (i = 0; i < 9; ++i) {
