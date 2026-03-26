@@ -1077,6 +1077,28 @@ static int pulseqlib__get_rf_delay_us(
     return desc->rf_definitions[bdef->rf_id].delay;
 }
 
+static int pulseqlib__get_rf_duration_us(
+    const pulseqlib_collection* coll,
+    int seg_idx, int blk_idx)
+{
+    const pulseqlib_sequence_descriptor* desc;
+    const pulseqlib_tr_segment* seg;
+    int local_blk;
+    const pulseqlib_block_definition* bdef;
+    const pulseqlib_rf_definition* rdef;
+
+    if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
+        return -1;
+
+    bdef = &desc->block_definitions[seg->unique_block_indices[local_blk]];
+    if (bdef->rf_id == -1) return -1;
+
+    rdef = &desc->rf_definitions[bdef->rf_id];
+    /* stats.duration_us is the last time-shape sample time (accounts for
+     * custom non-uniform time shapes). Round to nearest integer µs. */
+    return (int)(rdef->stats.duration_us + 0.5f);
+}
+
 static int pulseqlib__get_rf_num_channels(
     const pulseqlib_collection* coll,
     int seg_idx, int blk_idx)
@@ -2566,6 +2588,8 @@ int pulseqlib_get_block_info(
         pulseqlib__get_rf_num_channels(coll, seg_idx, blk_idx) : -1;
     info->rf_num_samples    = info->has_rf ?
         pulseqlib__get_rf_num_samples(coll, seg_idx, blk_idx) : -1;
+    info->rf_duration_us    = info->has_rf ?
+        pulseqlib__get_rf_duration_us(coll, seg_idx, blk_idx) : -1;
     info->rf_is_complex     = info->has_rf ?
         pulseqlib__block_rf_is_complex(coll, seg_idx, blk_idx) : 0;
     info->rf_uniform_raster = info->has_rf ?

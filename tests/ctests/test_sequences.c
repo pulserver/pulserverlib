@@ -816,14 +816,17 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                 mu_assert(PULSEQLIB_SUCCEEDED(rc), "get_block_info for event walk");
 
                 if (wb_blk->has_rf) {
-                    /* Pulseq bin-centre convention: samples sit at
-                     * (i+0.5)*raster, so the last sample (index N-1)
-                     * is at (N-0.5)*raster.  Use that as the RF end time
-                     * to match both TruthBuilder and the library's own
-                     * segment-anchor computation. */
-                    int rf_raster_int = (int)(opts.rf_raster_us + 0.5f);
-                    int rf_dur = wbi.rf_num_samples * rf_raster_int
+                    /* Use the library's own RF duration (accounts for custom
+                     * non-uniform time shapes, e.g. hard pulses in noncart
+                     * sequences where the last time-shape sample can equal the
+                     * full block duration rather than N*raster - raster/2). */
+                    int rf_dur = wbi.rf_duration_us;
+                    if (rf_dur < 0) {
+                        /* fallback: uniform-raster bin-centre convention */
+                        int rf_raster_int = (int)(opts.rf_raster_us + 0.5f);
+                        rf_dur = wbi.rf_num_samples * rf_raster_int
                                  - rf_raster_int / 2;
+                    }
                     events[n_evt].kind     = 0; /* RF */
                     events[n_evt].start_us = t_walk + wbi.rf_delay_us;
                     events[n_evt].end_us   = t_walk + wbi.rf_delay_us + rf_dur;
