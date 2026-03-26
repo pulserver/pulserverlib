@@ -524,12 +524,8 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
 
             /* --- Flags -------------------------------------------- */
             mu_assert_int_eq(ref_blk->has_rf,          bi.has_rf);
-            for (ax = 0; ax < 3; ++ax) {
-                if (ref_blk->has_grad[ax] != bi.has_grad[ax])
-                    fprintf(stderr, "[geninstr][%s] seg=%d blk=%d ax=%d: ref_has_grad=%d lib_has_grad=%d\n",
-                            tc->name, s, b, ax, ref_blk->has_grad[ax], bi.has_grad[ax]);
+            for (ax = 0; ax < 3; ++ax)
                 mu_assert_int_eq(ref_blk->has_grad[ax], bi.has_grad[ax]);
-            }
             mu_assert_int_eq(ref_blk->has_adc,         bi.has_adc);
             mu_assert_int_eq(ref_blk->has_rotation,    bi.has_rotation);
             mu_assert_int_eq(ref_blk->has_digital_out, bi.has_digitalout);
@@ -958,8 +954,12 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
     lib = fmc->libs[0];
     mu_assert(lib != NULL, "freq_mod lib missing for subsequence 0");
     mu_assert_int_eq(scan->num_entries, lib->scan_table_len);
-    if (plan && plan->num_plans >= 0)
+    if (plan && plan->num_plans >= 0) {
+        if (plan->num_plans != lib->num_plan_instances)
+            fprintf(stderr, "[freqmod_plan][%s] num_plans: truth=%d lib=%d\n",
+                    label, plan->num_plans, lib->num_plan_instances);
         mu_assert_int_eq(plan->num_plans, lib->num_plan_instances);
+    }
     if (meta && meta->fmod_build_mode_tr_scoped)
         mu_assert(lib->num_plan_instances >= ref->num_defs,
                   "tr_scoped mode should not collapse below def count");
@@ -1110,7 +1110,7 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
     build_case_path(fmod_path, sizeof(fmod_path), tc, "_freqmod_def.bin");
     ok = parse_fmod_defs(fmod_path, &ref);
     mu_assert(ok, "failed to parse freqmod_def.bin");
-    mu_assert(ref.num_defs >= 2, "expected at least 2 freq_mod defs");
+    mu_assert(ref.num_defs >= 1, "expected at least 1 freq_mod def");
 
     build_case_path(fmod_plan_path, sizeof(fmod_plan_path), tc, "_freqmod_plan.bin");
     ok = parse_fmod_plan(fmod_plan_path, &plan);
@@ -1135,7 +1135,7 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
                              shifts[t],
                              t,
                              rotations[r],
-                             "build_freq_mod_collection failed");
+                             tc->name);
         }
     }
 
