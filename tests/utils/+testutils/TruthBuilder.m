@@ -1005,9 +1005,45 @@ classdef TruthBuilder < handle
             once  = 0;
             norot_active = 0;
 
-            for avg = 1:obj.num_averages
-                for b = 1:num_blocks_per_pass
-                    block = obj.seq.getBlock(b);
+            % Build ordered traversal list: (block_index, play_prep, play_cool).
+            % For multi-pass sequences (e.g. bSSFP where each slice is a pass),
+            % the C library expands averages WITHIN each pass (outer=pass,
+            % inner=avg).  For standard single-pass sequences the order is
+            % outer=avg, inner=block (identical to before).
+            trav_b    = zeros(1, max_entries, 'int32');
+            trav_prep = false(1, max_entries);
+            trav_cool = false(1, max_entries);
+            trav_len  = 0;
+            if obj.multipass_info.enabled && obj.num_averages > 1
+                mp_starts  = obj.multipass_info.pass_starts;
+                mp_plen    = obj.multipass_info.pass_len;
+                for p = 1:length(mp_starts)
+                    ps = mp_starts(p);
+                    for avg = 1:obj.num_averages
+                        for bi = 0:mp_plen-1
+                            trav_len = trav_len + 1;
+                            trav_b(trav_len)    = ps + bi;
+                            trav_prep(trav_len) = (avg == 1);
+                            trav_cool(trav_len) = (avg == obj.num_averages);
+                        end
+                    end
+                end
+            else
+                for avg = 1:obj.num_averages
+                    for b = 1:num_blocks_per_pass
+                        trav_len = trav_len + 1;
+                        trav_b(trav_len)    = b;
+                        trav_prep(trav_len) = (avg == 1);
+                        trav_cool(trav_len) = (avg == obj.num_averages);
+                    end
+                end
+            end
+
+            for li = 1:trav_len
+                b         = trav_b(li);
+                play_prep = trav_prep(li);
+                play_cool = trav_cool(li);
+                block = obj.seq.getBlock(b);
 
                     if once_col > 0
                         once = double(block_label_states(b, once_col));
@@ -1020,8 +1056,9 @@ classdef TruthBuilder < handle
                         norot_active = 0;
                     end
 
-                    % ONCE filter: once==1 → first avg only; once==2 → last avg only.
-                    if once == 0 || (once == 1 && avg == 1) || (once == 2 && avg == obj.num_averages)
+                    % ONCE filter: once==1 → first avg of this pass only;
+                    %              once==2 → last avg of this pass only.
+                    if once == 0 || (once == 1 && play_prep) || (once == 2 && play_cool)
                         tr_local_idx = mod(b - 1, obj.num_blocks_in_tr) + 1;
 
                         % Prepended debug columns:
@@ -1121,7 +1158,6 @@ classdef TruthBuilder < handle
 
                         act = act + 1;
                     end
-                end
             end
 
             n = act - 1;
