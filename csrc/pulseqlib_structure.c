@@ -201,6 +201,7 @@ int pulseqlib__build_scan_table(
 
     if (!desc) { diag->code = PULSEQLIB_ERR_NULL_POINTER; return diag->code; }
     if (num_averages < 1) num_averages = 1;
+    if (desc->ignore_averages) num_averages = 1;
     num_passes = (desc->num_passes > 1) ? desc->num_passes : 1;
 
     has_nd_prep = (desc->tr_descriptor.num_prep_blocks > 0 &&

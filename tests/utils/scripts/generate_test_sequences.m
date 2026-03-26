@@ -817,8 +817,8 @@ function seq = write_epi(write, num_slices, num_averages)
 
     tb = testutils.TruthBuilder(seq, sys);
     tb.setBlocksPerTR(5 + Nnav + Ny_meas);
-    tb.setSegments([1, 3 + Nnav + Ny_meas, 1]);
-    tb.setSegmentOrder([1, 2, 3]);
+    tb.setSegments([4 + Nnav + Ny_meas, 1]);
+    tb.setSegmentOrder([1, 2]);
     tb.setNumAverages(num_averages);
     tb.export(out_dir, base);
 end
@@ -841,24 +841,24 @@ function seqs = write_epi_gre(write, num_averages)
     mkdir(tmp_dir);
     cleanup = onCleanup(@() rmdir(tmp_dir, 's'));
 
+    gre_seq.setDefinition('IgnoreAverages', 1);
+    gre_seq.setDefinition('NextSequence', [base '_epi.seq']);
+
     gre_tb = testutils.TruthBuilder(gre_seq, make_system());
     gre_tb.setBlocksPerTR(4);
     gre_tb.setSegments([4]);
     gre_tb.setSegmentOrder([1]);
-    gre_tb.setNumAverages(num_averages);
+    gre_tb.setNumAverages(1);
     gre_tb.export(tmp_dir, [base '_gre_part']);
 
     epi_tb = testutils.TruthBuilder(epi_seq, make_system());
     Nnav_epi = 3; Ny_meas_epi = 128;
     nbt_epi = 5 + Nnav_epi + Ny_meas_epi;  % 136
     epi_tb.setBlocksPerTR(nbt_epi);
-    epi_tb.setSegments([1, 3 + Nnav_epi + Ny_meas_epi, 1]);
-    epi_tb.setSegmentOrder([1, 2, 3]);
+    epi_tb.setSegments([4 + Nnav_epi + Ny_meas_epi, 1]);
+    epi_tb.setSegmentOrder([1, 2]);
     epi_tb.setNumAverages(num_averages);
     epi_tb.export(tmp_dir, [base '_epi_part']);
-
-    gre_seq.setDefinition('IgnoreAverages', 1);
-    gre_seq.setDefinition('NextSequence', [base '_epi.seq']);
 
     gre_seq.write(fullfile(out_dir, [base '.seq']));
     epi_seq.write(fullfile(out_dir, [base '_epi.seq']));

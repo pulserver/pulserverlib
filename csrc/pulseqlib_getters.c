@@ -111,6 +111,24 @@ static int get_grad_event_id_by_axis(const pulseqlib_block_table_element* bte, i
     }
 }
 
+/* Resolve the grad_definition index through the actual max-energy
+ * block_table entry.  Returns -1 when the axis has no gradient. */
+static int resolve_grad_def_via_max_energy(
+    const pulseqlib_sequence_descriptor* desc,
+    const pulseqlib_tr_segment* seg,
+    int local_blk, int axis)
+{
+    int block_table_idx, raw_grad_id;
+    const pulseqlib_block_table_element* bte;
+
+    block_table_idx = seg->max_energy_start_block + local_blk;
+    bte = &desc->block_table[block_table_idx];
+    raw_grad_id = get_grad_event_id_by_axis(bte, axis);
+    if (raw_grad_id < 0 || raw_grad_id >= desc->grad_table_size)
+        return -1;
+    return desc->grad_table[raw_grad_id].id;
+}
+
 /* ================================================================== */
 /*  Subsequence accessors (internal helpers for batch getters)         */
 /* ================================================================== */
@@ -1316,14 +1334,12 @@ static int pulseqlib__block_has_grad(
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
     int local_blk, grad_id;
-    const pulseqlib_block_definition* bdef;
 
     if (axis < PULSEQLIB_GRAD_AXIS_X || axis > PULSEQLIB_GRAD_AXIS_Z) return -1;
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return -1;
 
-    bdef = &desc->block_definitions[seg->unique_block_indices[local_blk]];
-    grad_id = get_grad_id_by_axis(bdef, axis);
+    grad_id = resolve_grad_def_via_max_energy(desc, seg, local_blk, axis);
     return (grad_id != -1) ? 1 : 0;
 }
 
@@ -1334,15 +1350,13 @@ static int pulseqlib__block_grad_is_trapezoid(
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
     int local_blk, grad_id;
-    const pulseqlib_block_definition* bdef;
     const pulseqlib_grad_definition* gdef;
 
     if (axis < PULSEQLIB_GRAD_AXIS_X || axis > PULSEQLIB_GRAD_AXIS_Z) return -1;
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return -1;
 
-    bdef = &desc->block_definitions[seg->unique_block_indices[local_blk]];
-    grad_id = get_grad_id_by_axis(bdef, axis);
+    grad_id = resolve_grad_def_via_max_energy(desc, seg, local_blk, axis);
     if (grad_id == -1) return -1;
 
     gdef = &desc->grad_definitions[grad_id];
@@ -1358,7 +1372,6 @@ static int pulseqlib__get_grad_num_samples(
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
     int local_blk, grad_id, shape_idx;
-    const pulseqlib_block_definition* bdef;
     const pulseqlib_grad_definition* gdef;
     const pulseqlib_shape_arbitrary* shape;
 
@@ -1366,8 +1379,7 @@ static int pulseqlib__get_grad_num_samples(
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return -1;
 
-    bdef = &desc->block_definitions[seg->unique_block_indices[local_blk]];
-    grad_id = get_grad_id_by_axis(bdef, axis);
+    grad_id = resolve_grad_def_via_max_energy(desc, seg, local_blk, axis);
     if (grad_id == -1) return -1;
 
     gdef = &desc->grad_definitions[grad_id];
@@ -1395,14 +1407,12 @@ static int pulseqlib__get_grad_num_shots(
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
     int local_blk, grad_id;
-    const pulseqlib_block_definition* bdef;
 
     if (axis < PULSEQLIB_GRAD_AXIS_X || axis > PULSEQLIB_GRAD_AXIS_Z) return -1;
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return -1;
 
-    bdef = &desc->block_definitions[seg->unique_block_indices[local_blk]];
-    grad_id = get_grad_id_by_axis(bdef, axis);
+    grad_id = resolve_grad_def_via_max_energy(desc, seg, local_blk, axis);
     if (grad_id == -1) return -1;
 
     return desc->grad_definitions[grad_id].num_shots;
@@ -1415,14 +1425,12 @@ static int pulseqlib__get_grad_delay_us(
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
     int local_blk, grad_id;
-    const pulseqlib_block_definition* bdef;
 
     if (axis < PULSEQLIB_GRAD_AXIS_X || axis > PULSEQLIB_GRAD_AXIS_Z) return -1;
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return -1;
 
-    bdef = &desc->block_definitions[seg->unique_block_indices[local_blk]];
-    grad_id = get_grad_id_by_axis(bdef, axis);
+    grad_id = resolve_grad_def_via_max_energy(desc, seg, local_blk, axis);
     if (grad_id == -1) return -1;
 
     return desc->grad_definitions[grad_id].delay;
@@ -1436,12 +1444,10 @@ float** pulseqlib_get_grad_amplitude(
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
     int local_blk, grad_id, shot, k, shape_idx;
-    int block_table_idx, raw_grad_id, canonical_shot;
-    const pulseqlib_block_definition* bdef;
+    int block_table_idx, raw_grad_id;
     const pulseqlib_block_table_element* bte;
     const pulseqlib_grad_definition* gdef;
     float** waveforms;
-    float* tmp_wave;
     float* trap_waveform;
     int samples_per_shot;
     int flat_time;
@@ -1459,10 +1465,22 @@ float** pulseqlib_get_grad_amplitude(
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return NULL;
 
-    bdef = &desc->block_definitions[seg->unique_block_indices[local_blk]];
-    grad_id = get_grad_id_by_axis(bdef, axis);
-    if (grad_id == -1) return NULL;
-
+    /* Resolve through the max-energy block_table entry so that the
+     * grad_definition (and thus the set of shot waveforms) matches the
+     * actual physical block at the representative instance.  This is
+     * necessary when different segment instances have gradients with
+     * different time_shape_ids, which places them in separate
+     * grad_definitions despite occupying the same segment position. */
+    block_table_idx = seg->max_energy_start_block + local_blk;
+    bte = &desc->block_table[block_table_idx];
+    switch (axis) {
+        case PULSEQLIB_GRAD_AXIS_X: raw_grad_id = bte->gx_id; break;
+        case PULSEQLIB_GRAD_AXIS_Y: raw_grad_id = bte->gy_id; break;
+        case PULSEQLIB_GRAD_AXIS_Z: raw_grad_id = bte->gz_id; break;
+        default: raw_grad_id = -1; break;
+    }
+    if (raw_grad_id < 0 || raw_grad_id >= desc->grad_table_size) return NULL;
+    grad_id = desc->grad_table[raw_grad_id].id;
     gdef = &desc->grad_definitions[grad_id];
 
     waveforms = (float**)PULSEQLIB_ALLOC(gdef->num_shots * sizeof(float*));
@@ -1525,31 +1543,7 @@ float** pulseqlib_get_grad_amplitude(
         }
     }
 
-    /* Determine the canonical shot for this axis from the raw block table,
-     * the same way pulseqlib_get_grad_initial_shot_id() does it.  When
-     * multiple gradients share one grad_definition (same sample count / timing
-     * but different shapes, e.g. GX and GY of a spiral readout) the raw table
-     * entry for each axis carries the correct shot_index. Place that shot at
-     * waveforms[0] so callers always get the axis-appropriate waveform first. */
-    canonical_shot = 0;
-    block_table_idx = seg->max_energy_start_block + local_blk;
-    bte = &desc->block_table[block_table_idx];
-    switch (axis) {
-        case PULSEQLIB_GRAD_AXIS_X: raw_grad_id = bte->gx_id; break;
-        case PULSEQLIB_GRAD_AXIS_Y: raw_grad_id = bte->gy_id; break;
-        case PULSEQLIB_GRAD_AXIS_Z: raw_grad_id = bte->gz_id; break;
-        default: raw_grad_id = -1; break;
-    }
-    if (raw_grad_id >= 0 && raw_grad_id < desc->grad_table_size) {
-        int cs = desc->grad_table[raw_grad_id].shot_index;
-        if (cs >= 0 && cs < *num_shots)
-            canonical_shot = cs;
-    }
-    if (canonical_shot != 0 && waveforms[0] != NULL && waveforms[canonical_shot] != NULL) {
-        tmp_wave             = waveforms[0];
-        waveforms[0]         = waveforms[canonical_shot];
-        waveforms[canonical_shot] = tmp_wave;
-    }
+    (void)raw_grad_id; /* initial shot reported via pulseqlib_get_grad_initial_shot_id */
 
     return waveforms;
 }
@@ -1632,7 +1626,8 @@ float* pulseqlib_get_grad_time_us(
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
     int local_blk, grad_id, shape_idx;
-    const pulseqlib_block_definition* bdef;
+    int block_table_idx, raw_grad_id;
+    const pulseqlib_block_table_element* bte;
     const pulseqlib_grad_definition* gdef;
     float* time_waveform;
     float accum;
@@ -1643,10 +1638,18 @@ float* pulseqlib_get_grad_time_us(
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return NULL;
 
-    bdef = &desc->block_definitions[seg->unique_block_indices[local_blk]];
-    grad_id = get_grad_id_by_axis(bdef, axis);
-    if (grad_id == -1) return NULL;
-
+    /* Resolve through actual max-energy block_table entry (see comment
+     * in pulseqlib_get_grad_amplitude for rationale). */
+    block_table_idx = seg->max_energy_start_block + local_blk;
+    bte = &desc->block_table[block_table_idx];
+    switch (axis) {
+        case PULSEQLIB_GRAD_AXIS_X: raw_grad_id = bte->gx_id; break;
+        case PULSEQLIB_GRAD_AXIS_Y: raw_grad_id = bte->gy_id; break;
+        case PULSEQLIB_GRAD_AXIS_Z: raw_grad_id = bte->gz_id; break;
+        default: raw_grad_id = -1; break;
+    }
+    if (raw_grad_id < 0 || raw_grad_id >= desc->grad_table_size) return NULL;
+    grad_id = desc->grad_table[raw_grad_id].id;
     gdef = &desc->grad_definitions[grad_id];
 
     if (gdef->type == 0) {

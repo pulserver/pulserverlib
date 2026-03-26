@@ -828,6 +828,7 @@ classdef TruthBuilder < handle
                         % instance over the first when energies are equal up
                         % to floating-point noise (e.g. conjugate spiral
                         % interleaves where sum(w^2) differs by ~1 ULP).
+                        fprintf('[DEBUG] seg%d TR%d inst%d blk_base=%d energy=%.15g\n', s, tr_i, ii, tr_base + seg_offset, e);
                         if e > best_energy + 1e-9 * abs(e)
                             best_energy = e;
                             best_start = tr_base + seg_offset;
@@ -2031,12 +2032,14 @@ classdef TruthBuilder < handle
     methods (Static)
         function e = gradEnergy(g)
         % GRADENERGY  Gradient energy: integral of amplitude^2 over time.
+        %   Uses the trapezoidal rule, matching pulseqlib__trapz_real_* in C.
             if isfield(g, 'amplitude')
                 e = (g.amplitude)^2 / 3 * g.riseTime ...
                   + (g.amplitude)^2 * g.flatTime ...
                   + (g.amplitude)^2 / 3 * g.fallTime;
             elseif isfield(g, 'waveform') && ~isempty(g.waveform)
-                e = sum((g.waveform(1:end-1)).^2 .* diff(g.tt));
+                w2 = g.waveform .^ 2;
+                e = sum(0.5 * (w2(1:end-1) + w2(2:end)) .* diff(g.tt));
             else
                 e = 0;
             end

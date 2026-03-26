@@ -715,8 +715,23 @@ int pulseqlib__get_collection_descriptors(
         seg_off += desc.num_unique_segments;
         blk_off += desc.num_blocks;
 
-        coll->total_duration_us += desc.tr_descriptor.tr_duration_us *
-                                   desc.tr_descriptor.num_trs;
+        /* Accumulate actual scan-table duration (not the peek-style
+         * tr_duration × num_trs approximation). */
+        {
+            float subseq_dur = 0.0f;
+            int n;
+            for (n = 0; n < desc.scan_table_len; ++n) {
+                int bt_idx = desc.scan_table_block_idx[n];
+                const pulseqlib_block_table_element* bte =
+                    &desc.block_table[bt_idx];
+                const pulseqlib_block_definition* bdef =
+                    &desc.block_definitions[bte->id];
+                subseq_dur += (bte->duration_us >= 0)
+                    ? (float)bte->duration_us
+                    : (float)bdef->duration_us;
+            }
+            coll->total_duration_us += subseq_dur;
+        }
 
         coll->descriptors[i] = desc;
     }
