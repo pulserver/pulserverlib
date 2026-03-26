@@ -1732,14 +1732,21 @@ static int pulseqlib__block_has_adc(
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
     int local_blk;
-    const pulseqlib_block_definition* bdef;
 
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return -1;
 
-    bdef = &desc->block_definitions[seg->unique_block_indices[local_blk]];
+    /* Use OR-reduced flag: true if at least one segment instance has an ADC
+     * event at this block position (not just the canonical block def). */
+    if (seg->has_adc && seg->has_adc[local_blk])
+        return 1;
 
-    return (bdef->adc_id != -1) ? 1 : 0;
+    /* Fallback to canonical block definition (pre-11d sequences / cache) */
+    {
+        const pulseqlib_block_definition* bdef =
+            &desc->block_definitions[seg->unique_block_indices[local_blk]];
+        return (bdef->adc_id != -1) ? 1 : 0;
+    }
 }
 
 static int pulseqlib__get_adc_delay_us(
@@ -2010,6 +2017,51 @@ static int arb_nonzero_in_window(
         return 0;
 
     ns = decomp.num_samples;
+
+    /* If the gradient has a non-uniform time shape, use actual sample times
+     * instead of assuming uniform raster.  Uniform-raster index arithmetic
+     * fails for compressed time-shaped gradients: the amplitude shape may
+     * have far fewer samples than block_duration / grad_raster, so the
+     * index computed from win_start/raster exceeds ns-1 and the loop body
+     * never executes.
+     *
+     * Each time-shaped sample i represents a step (hold) from t[i] to
+     * t[i+1] (or to the end of the last defined sample for i=ns-1).
+     * A sample i with nonzero amplitude contributes within the window if
+     * its hold interval [t[i], t[i+1]) overlaps [win_start, win_end].    */
+    if (gdef->unused_or_time_shape_id > 0) {
+        int ts_idx = gdef->unused_or_time_shape_id - 1;
+        if (ts_idx >= 0 && ts_idx < desc->num_shapes) {
+            pulseqlib_shape_arbitrary decomp_time;
+            decomp_time.num_samples = 0;
+            decomp_time.num_uncompressed_samples = 0;
+            decomp_time.samples = NULL;
+            if (pulseqlib__decompress_shape(&decomp_time,
+                                            &desc->shapes[ts_idx],
+                                            desc->grad_raster_us)) {
+                int found = 0;
+                int tns   = decomp_time.num_samples;
+                for (i = 0; i < ns && i < tns; ++i) {
+                    float t_start = (float)gdef->delay + decomp_time.samples[i];
+                    /* Each sample holds until the next sample (or is the last) */
+                    float t_end   = (i + 1 < tns)
+                                    ? ((float)gdef->delay + decomp_time.samples[i + 1])
+                                    : t_start + desc->grad_raster_us;
+                    /* Interval [t_start, t_end) overlaps (win_start, win_end] */
+                    if (t_end > win_start && t_start <= win_end
+                        && decomp.samples[i] != 0.0f) {
+                        found = 1;
+                        break;
+                    }
+                }
+                PULSEQLIB_FREE(decomp_time.samples);
+                PULSEQLIB_FREE(decomp.samples);
+                return found;
+            }
+        }
+    }
+
+    /* Uniform raster: convert window to sample-index range */
     raster = desc->grad_raster_us;
     local_start = win_start - (float)gdef->delay;
     local_end   = win_end   - (float)gdef->delay;
@@ -2081,7 +2133,8 @@ int pulseqlib_block_needs_freq_mod(
 
     bdef = &desc->block_definitions[seg->unique_block_indices[local_blk]];
     has_rf  = (bdef->rf_id >= 0);
-    has_adc = (bdef->adc_id >= 0);
+    /* Use OR-reduced has_adc: true if any instance at this position has ADC */
+    has_adc = (seg->has_adc && seg->has_adc[local_blk]) ? 1 : (bdef->adc_id >= 0);
     if (!has_rf && !has_adc) return 0;
 
     /* Check RF window overlap */

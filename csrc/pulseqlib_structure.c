@@ -1860,11 +1860,13 @@ int pulseqlib__get_scan_table_segments(
         desc->segment_definitions[i].norot_flag   = (int*)PULSEQLIB_ALLOC(nb * sizeof(int));
         desc->segment_definitions[i].nopos_flag   = (int*)PULSEQLIB_ALLOC(nb * sizeof(int));
         desc->segment_definitions[i].has_freq_mod = (int*)PULSEQLIB_ALLOC(nb * sizeof(int));
+        desc->segment_definitions[i].has_adc      = (int*)PULSEQLIB_ALLOC(nb * sizeof(int));
         if (!desc->segment_definitions[i].has_digitalout ||
             !desc->segment_definitions[i].has_rotation ||
             !desc->segment_definitions[i].norot_flag ||
             !desc->segment_definitions[i].nopos_flag ||
-            !desc->segment_definitions[i].has_freq_mod) {
+            !desc->segment_definitions[i].has_freq_mod ||
+            !desc->segment_definitions[i].has_adc) {
             diag->code = PULSEQLIB_ERR_ALLOC_FAILED;
             goto scan_seg_fail;
         }
@@ -1874,6 +1876,7 @@ int pulseqlib__get_scan_table_segments(
             desc->segment_definitions[i].norot_flag[n]   = 0;
             desc->segment_definitions[i].nopos_flag[n]   = 0;
             desc->segment_definitions[i].has_freq_mod[n] = 0;
+            desc->segment_definitions[i].has_adc[n]      = 0;
         }
         desc->segment_definitions[i].trigger_id = -1;
     }
@@ -2103,6 +2106,7 @@ int pulseqlib__get_scan_table_segments(
             desc->segment_definitions[i].norot_flag[n]     = 0;
             desc->segment_definitions[i].nopos_flag[n]     = 0;
             desc->segment_definitions[i].has_freq_mod[n]   = 0;
+            desc->segment_definitions[i].has_adc[n]        = 0;
         }
         desc->segment_definitions[i].trigger_id = -1;
     }
@@ -2154,6 +2158,10 @@ int pulseqlib__get_scan_table_segments(
                 if ((has_rf_b || has_adc_b) && has_grad_b)
                     desc->segment_definitions[seg_id].has_freq_mod[b] = 1;
             }
+
+            /* has_adc: OR-reduce — true if any instance at this position has ADC */
+            if (bte->adc_id >= 0)
+                desc->segment_definitions[seg_id].has_adc[b] = 1;
         }
 
         n += nb;
