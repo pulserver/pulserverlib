@@ -411,7 +411,7 @@ int pulseqlib__calc_segment_timing(
                 memset(&sw, 0, sizeof(sw));
                 if (pulseqlib__get_gradient_waveforms_range(desc, &sw, NULL,
                         seg->start_block, seg->num_blocks,
-                        PULSEQLIB_AMP_ZERO_VAR, NULL, 0) == PULSEQLIB_SUCCESS
+                        PULSEQLIB_AMP_ACTUAL, NULL, 0) == PULSEQLIB_SUCCESS
                         && sw.num_samples >= 2) {
                     seg_krss_n  = sw.num_samples;
                     seg_krss_dt = sw.raster_us;
