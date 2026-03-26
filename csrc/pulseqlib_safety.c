@@ -392,47 +392,15 @@ int pulseqlib__calc_segment_timing(
             }
         }
 
-        /* Per-segment kRSS: build gradient waveforms for this segment only,
-         * starting k from zero, so kzero is found relative to segment start.
-         * This avoids accumulated k from preceding TR segments (e.g. Cartesian
-         * readout lines before a spiral navigator). Falls back to full-TR kRSS
-         * if segment waveform extraction or k-space computation fails.       */
-        {
-            int   seg_krss_ok  = 0;
-            int   seg_krss_n   = 0;
-            float seg_krss_dt  = 0.0f;
-            float *seg_kx_buf  = NULL, *seg_ky_buf = NULL;
-            float *seg_kz_buf  = NULL, *seg_krss_buf = NULL;
-
-            if (has_kspace && adc_count > 0 &&
-                seg->start_block >= 0 &&
-                seg->start_block + seg->num_blocks <= desc->num_blocks) {
-                pulseqlib__uniform_grad_waveforms sw;
-                memset(&sw, 0, sizeof(sw));
-                if (pulseqlib__get_gradient_waveforms_range(desc, &sw, NULL,
-                        seg->start_block, seg->num_blocks,
-                        PULSEQLIB_AMP_ACTUAL, NULL, 0) == PULSEQLIB_SUCCESS
-                        && sw.num_samples >= 2) {
-                    seg_krss_n  = sw.num_samples;
-                    seg_krss_dt = sw.raster_us;
-                    seg_kx_buf   = (float*)PULSEQLIB_ALLOC(
-                                        (size_t)seg_krss_n * sizeof(float));
-                    seg_ky_buf   = (float*)PULSEQLIB_ALLOC(
-                                        (size_t)seg_krss_n * sizeof(float));
-                    seg_kz_buf   = (float*)PULSEQLIB_ALLOC(
-                                        (size_t)seg_krss_n * sizeof(float));
-                    seg_krss_buf = (float*)PULSEQLIB_ALLOC(
-                                        (size_t)seg_krss_n * sizeof(float));
-                    if (seg_kx_buf && seg_ky_buf && seg_kz_buf && seg_krss_buf) {
-                        float dummy_dt;
-                        seg_krss_ok = (compute_kspace_trajectory(&sw,
-                                seg_kx_buf, seg_ky_buf, seg_kz_buf,
-                                seg_krss_buf, &dummy_dt,
-                                NULL, 0) == PULSEQLIB_SUCCESS);
-                    }
-                }
-                pulseqlib__uniform_grad_waveforms_free(&sw);
-            }
+        /* Kzero estimation uses the full-TR canonical k-space trajectory
+         * (PULSEQLIB_AMP_ZERO_VAR, computed above in min_waveforms/krss).
+         * Variable-amplitude gradients (phase encodes, spiral readouts) are
+         * zeroed; constant gradients (readout prephaser, slice select) are
+         * kept — so the k-space trajectory correctly identifies the canonical
+         * k-space zero crossing (N/2 for Cartesian, sample 0 for spiral).
+         * seg_time_offset maps the segment's ADC window into the full-TR
+         * raster.  No per-segment PULSEQLIB_AMP_ACTUAL extraction is used;
+         * that would give instance-specific k and not the canonical result.  */
 
         /* fill anchors */
         rf_count  = 0;
@@ -500,43 +468,10 @@ int pulseqlib__calc_segment_timing(
                         (float)(adef->num_samples / 2) *
                         (float)adef->dwell_time * 1e-3f;
 
-                    if (seg_krss_ok && seg_krss_dt > 0.0f) {
-                        /* per-segment kRSS: find raster sample of min krss
-                         * within ADC window (k=0 at segment start)          */
-                        adc_raster_start = (int)(adc_arr[adc_count].start_us /
-                                                 seg_krss_dt);
-                        adc_raster_end   = (int)(adc_arr[adc_count].end_us /
-                                                 seg_krss_dt);
-                        if (adc_raster_start < 0) adc_raster_start = 0;
-                        if (adc_raster_end >= seg_krss_n)
-                            adc_raster_end = seg_krss_n - 1;
-
-                        if (adc_raster_start <= adc_raster_end) {
-                            min_raster_idx = adc_raster_start;
-                            min_krss_val   = seg_krss_buf[adc_raster_start];
-                            for (a = adc_raster_start + 1;
-                                 a <= adc_raster_end; ++a) {
-                                if (seg_krss_buf[a] < min_krss_val) {
-                                    min_krss_val   = seg_krss_buf[a];
-                                    min_raster_idx = a;
-                                }
-                            }
-                            kzero_in_adc =
-                                (float)min_raster_idx * seg_krss_dt -
-                                adc_arr[adc_count].start_us;
-                            kz_sample = (int)(kzero_in_adc /
-                                ((float)adef->dwell_time * 1e-3f));
-                            if (kz_sample < 0) kz_sample = 0;
-                            if (kz_sample >= adef->num_samples)
-                                kz_sample = adef->num_samples - 1;
-                            adc_arr[adc_count].kzero_index = kz_sample;
-                            adc_arr[adc_count].kzero_us    =
-                                (float)min_raster_idx * seg_krss_dt;
-                        }
-                    } else if (has_kspace && krss && n_samples > 0 &&
+                    /* full-TR canonical kRSS (ZERO_VAR): find min within ADC */
+                    if (has_kspace && krss && n_samples > 0 &&
                                seg->start_block >= num_prep &&
                                seg->start_block < num_prep + tr_size) {
-                        /* fallback: full-TR kRSS + seg_time_offset */
                         adc_raster_start = (int)((seg_time_offset +
                             adc_arr[adc_count].start_us) / dt_us);
                         adc_raster_end   = (int)((seg_time_offset +
@@ -545,26 +480,28 @@ int pulseqlib__calc_segment_timing(
                         if (adc_raster_end >= n_samples)
                             adc_raster_end = n_samples - 1;
 
-                        min_raster_idx = adc_raster_start;
-                        min_krss_val   = krss[adc_raster_start];
-                        for (a = adc_raster_start + 1;
-                             a <= adc_raster_end; ++a) {
-                            if (krss[a] < min_krss_val) {
-                                min_krss_val   = krss[a];
-                                min_raster_idx = a;
+                        if (adc_raster_start <= adc_raster_end) {
+                            min_raster_idx = adc_raster_start;
+                            min_krss_val   = krss[adc_raster_start];
+                            for (a = adc_raster_start + 1;
+                                 a <= adc_raster_end; ++a) {
+                                if (krss[a] < min_krss_val) {
+                                    min_krss_val   = krss[a];
+                                    min_raster_idx = a;
+                                }
                             }
-                        }
 
-                        kzero_in_adc = (float)min_raster_idx * dt_us -
-                            (seg_time_offset + adc_arr[adc_count].start_us);
-                        kz_sample = (int)(kzero_in_adc /
-                            ((float)adef->dwell_time * 1e-3f));
-                        if (kz_sample < 0) kz_sample = 0;
-                        if (kz_sample >= adef->num_samples)
-                            kz_sample = adef->num_samples - 1;
-                        adc_arr[adc_count].kzero_index = kz_sample;
-                        adc_arr[adc_count].kzero_us    =
-                            (float)min_raster_idx * dt_us - seg_time_offset;
+                            kzero_in_adc = (float)min_raster_idx * dt_us -
+                                (seg_time_offset + adc_arr[adc_count].start_us);
+                            kz_sample = (int)(kzero_in_adc /
+                                ((float)adef->dwell_time * 1e-3f));
+                            if (kz_sample < 0) kz_sample = 0;
+                            if (kz_sample >= adef->num_samples)
+                                kz_sample = adef->num_samples - 1;
+                            adc_arr[adc_count].kzero_index = kz_sample;
+                            adc_arr[adc_count].kzero_us    =
+                                (float)min_raster_idx * dt_us - seg_time_offset;
+                        }
                     }
 
                     adc_count++;
@@ -572,12 +509,6 @@ int pulseqlib__calc_segment_timing(
 
             t_accum += block_dur_us;
         }
-
-            PULSEQLIB_FREE(seg_kx_buf);
-            PULSEQLIB_FREE(seg_ky_buf);
-            PULSEQLIB_FREE(seg_kz_buf);
-            PULSEQLIB_FREE(seg_krss_buf);
-        } /* end per-segment kRSS scope */
 
         /* store timing */
         ((pulseqlib_tr_segment*)seg)->timing.num_rf_anchors  = rf_count;
