@@ -796,7 +796,7 @@ static int pulseqlib__get_segment_adc_adc_gap_us(
     const pulseqlib_sequence_descriptor* desc;
     int local_seg;
     const pulseqlib_segment_timing* tm;
-    int a, best;
+    int a, r, best;
 
     if (!pulseqlib__resolve_segment(&desc, &local_seg, coll, seg_idx))
         return -1;
@@ -807,10 +807,26 @@ static int pulseqlib__get_segment_adc_adc_gap_us(
 
     best = -1;
     for (a = 1; a < tm->num_adc_anchors; ++a) {
-        int gap = (int)(tm->adc_anchors[a].start_us -
-                        tm->adc_anchors[a - 1].end_us);
-        if (best < 0 || gap < best)
-            best = gap;
+        int adc_prev_end  = (int)tm->adc_anchors[a - 1].end_us;
+        int adc_curr_start = (int)tm->adc_anchors[a].start_us;
+
+        /* skip this ADC pair if any RF event starts between them */
+        int interleaved = 0;
+        for (r = 0; r < tm->num_rf_anchors; ++r) {
+            int rf_start = (int)tm->rf_anchors[r].start_us;
+            if (rf_start > adc_prev_end && rf_start < adc_curr_start) {
+                interleaved = 1;
+                break;
+            }
+        }
+        if (interleaved)
+            continue;
+
+        {
+            int gap = adc_curr_start - adc_prev_end;
+            if (best < 0 || gap < best)
+                best = gap;
+        }
     }
     return best;
 }

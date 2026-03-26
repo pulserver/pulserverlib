@@ -1708,12 +1708,14 @@ classdef TruthBuilder < handle
 
         % ---- helper: compute segment-level RF->ADC and ADC->ADC gaps ----
         function [rf_adc_gap, adc_adc_gap] = computeSegmentGaps(~, seg_blocks)
+            rf_starts = [];
             rf_ends = [];
             adc_starts = [];
             adc_ends = [];
             for b = 1:length(seg_blocks)
                 bd = seg_blocks{b};
                 if bd.rf_end_us >= 0
+                    rf_starts = [rf_starts, bd.rf_start_us]; %#ok<AGROW>
                     rf_ends = [rf_ends, bd.rf_end_us]; %#ok<AGROW>
                 end
                 if bd.adc_start_us >= 0
@@ -1738,6 +1740,12 @@ classdef TruthBuilder < handle
                 sorted_starts = sort(adc_starts);
                 sorted_ends   = sort(adc_ends);
                 for a = 2:length(sorted_starts)
+                    % skip this ADC pair if any RF event starts between them
+                    interleaved = any(rf_starts > sorted_ends(a-1) & ...
+                                      rf_starts < sorted_starts(a));
+                    if interleaved
+                        continue;
+                    end
                     gap = sorted_starts(a) - sorted_ends(a-1);
                     if adc_adc_gap < 0 || gap < adc_adc_gap
                         adc_adc_gap = gap;

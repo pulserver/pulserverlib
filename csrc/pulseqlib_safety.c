@@ -191,6 +191,10 @@ int pulseqlib__calc_segment_timing(
     int *refocus_samples;
     int  num_refocus;
 
+    /* excitation RF detection variables */
+    int *excite_samples;
+    int  num_excite;
+
     /* ADC-to-kzero mapping variables */
     int a, s, kz_sample;
     float seg_time_offset;
@@ -209,6 +213,8 @@ int pulseqlib__calc_segment_timing(
     kzero_indices = NULL;
     refocus_samples = NULL;
     num_refocus = 0;
+    excite_samples = NULL;
+    num_excite = 0;
     num_kzero = 0;
     n_samples = 0;
     dt_us = 0.0f;
@@ -319,6 +325,66 @@ int pulseqlib__calc_segment_timing(
                 }
             }
 
+            /* ---- Step A.1b: find excitation RF isocenters in TR ---- */
+            {
+                float rf_t_accum = 0.0f;
+                int   ex_cap = 0, rb;
+
+                /* first pass: count excitation pulses */
+                for (rb = 0; rb < tr_size; ++rb) {
+                    int bi = num_prep + rb;
+                    if (bi < 0 || bi >= desc->num_blocks) continue;
+                    bte = &desc->block_table[bi];
+                    rf_raw = bte->rf_id;
+                    if (rf_raw >= 0 && rf_raw < desc->rf_table_size) {
+                        rte = &desc->rf_table[rf_raw];
+                        rf_def_id = rte->id;
+                        if (rf_def_id >= 0 && rf_def_id < desc->num_unique_rfs) {
+                            if (rte->rf_use == PULSEQLIB_RF_USE_EXCITATION)
+                                ex_cap++;
+                        }
+                    }
+                }
+
+                /* second pass: collect isocenter sample indices */
+                if (ex_cap > 0) {
+                    excite_samples = (int*)PULSEQLIB_ALLOC(
+                        (size_t)ex_cap * sizeof(int));
+                }
+                if (excite_samples) {
+                    rf_t_accum = 0.0f;
+                    num_excite = 0;
+                    for (rb = 0; rb < tr_size; ++rb) {
+                        int bi = num_prep + rb;
+                        if (bi < 0 || bi >= desc->num_blocks) continue;
+                        bte  = &desc->block_table[bi];
+                        bdef = &desc->block_definitions[bte->id];
+                        block_dur_us = (bte->duration_us >= 0)
+                            ? (float)bte->duration_us
+                            : (float)bdef->duration_us;
+
+                        rf_raw = bte->rf_id;
+                        if (rf_raw >= 0 && rf_raw < desc->rf_table_size) {
+                            rte = &desc->rf_table[rf_raw];
+                            rf_def_id = rte->id;
+                            if (rf_def_id >= 0 && rf_def_id < desc->num_unique_rfs &&
+                                rte->rf_use == PULSEQLIB_RF_USE_EXCITATION) {
+                                float iso_us;
+                                int   iso_sample;
+                                rdef = &desc->rf_definitions[rf_def_id];
+                                iso_us = rf_t_accum + (float)rdef->delay +
+                                         (float)rdef->stats.isodelay_us;
+                                iso_sample = (int)(iso_us / min_waveforms.raster_us + 0.5f);
+                                if (iso_sample < 0) iso_sample = 0;
+                                if (iso_sample >= n_samples) iso_sample = n_samples - 1;
+                                excite_samples[num_excite++] = iso_sample;
+                            }
+                        }
+                        rf_t_accum += block_dur_us;
+                    }
+                }
+            }
+
             /* ---- Step A.2: compute k-space trajectory ---- */
             kx   = (float*)PULSEQLIB_ALLOC((size_t)n_samples * sizeof(float));
             ky   = (float*)PULSEQLIB_ALLOC((size_t)n_samples * sizeof(float));
@@ -327,7 +393,8 @@ int pulseqlib__calc_segment_timing(
             if (kx && ky && kz && krss) {
                 result = compute_kspace_trajectory(&min_waveforms,
                     kx, ky, kz, krss, &dt_us,
-                    refocus_samples, num_refocus);
+                    refocus_samples, num_refocus,
+                    excite_samples, num_excite);
                 if (!PULSEQLIB_FAILED(result)) {
                     /* threshold = 1% of max |k| */
                     k_threshold = 0.0f;
@@ -546,6 +613,7 @@ int pulseqlib__calc_segment_timing(
     if (krss) PULSEQLIB_FREE(krss);
     if (kzero_indices) PULSEQLIB_FREE(kzero_indices);
     if (refocus_samples) PULSEQLIB_FREE(refocus_samples);
+    if (excite_samples)  PULSEQLIB_FREE(excite_samples);
     pulseqlib__uniform_grad_waveforms_free(&min_waveforms);
 
     return PULSEQLIB_SUCCESS;
@@ -557,6 +625,7 @@ timing_fail:
     if (krss) PULSEQLIB_FREE(krss);
     if (kzero_indices) PULSEQLIB_FREE(kzero_indices);
     if (refocus_samples) PULSEQLIB_FREE(refocus_samples);
+    if (excite_samples)  PULSEQLIB_FREE(excite_samples);
     pulseqlib__uniform_grad_waveforms_free(&min_waveforms);
     return PULSEQLIB_ERR_ALLOC_FAILED;
 }
