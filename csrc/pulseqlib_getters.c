@@ -121,6 +121,7 @@ static int resolve_grad_def_via_max_energy(
     int block_table_idx, raw_grad_id;
     const pulseqlib_block_table_element* bte;
 
+    if (seg->max_energy_start_block < 0) return -1;
     block_table_idx = seg->max_energy_start_block + local_blk;
     bte = &desc->block_table[block_table_idx];
     raw_grad_id = get_grad_event_id_by_axis(bte, axis);

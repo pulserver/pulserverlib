@@ -524,8 +524,12 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
 
             /* --- Flags -------------------------------------------- */
             mu_assert_int_eq(ref_blk->has_rf,          bi.has_rf);
-            for (ax = 0; ax < 3; ++ax)
+            for (ax = 0; ax < 3; ++ax) {
+                if (ref_blk->has_grad[ax] != bi.has_grad[ax])
+                    fprintf(stderr, "[geninstr][%s] seg=%d blk=%d ax=%d: ref_has_grad=%d lib_has_grad=%d\n",
+                            tc->name, s, b, ax, ref_blk->has_grad[ax], bi.has_grad[ax]);
                 mu_assert_int_eq(ref_blk->has_grad[ax], bi.has_grad[ax]);
+            }
             mu_assert_int_eq(ref_blk->has_adc,         bi.has_adc);
             mu_assert_int_eq(ref_blk->has_rotation,    bi.has_rotation);
             mu_assert_int_eq(ref_blk->has_digital_out, bi.has_digitalout);

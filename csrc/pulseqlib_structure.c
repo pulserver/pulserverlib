@@ -1885,8 +1885,8 @@ int pulseqlib__get_scan_table_segments(
     max_energy = (float*)PULSEQLIB_ALLOC((size_t)num_unique * sizeof(float));
     if (!max_energy) { diag->code = PULSEQLIB_ERR_ALLOC_FAILED; goto scan_seg_fail; }
     for (i = 0; i < num_unique; ++i) {
-        max_energy[i] = 0.0f;
-        desc->segment_definitions[i].max_energy_start_block = 0;
+        max_energy[i] = -1.0f;
+        desc->segment_definitions[i].max_energy_start_block = -1;
     }
 
     for (n = 0; n < num_total; ++n) {
@@ -2029,7 +2029,7 @@ int pulseqlib__get_scan_table_segments(
      * can walk the entire scan table, group consecutive blocks into
      * segment instances, compute their energy, and update
      * max_energy_start_block when a higher-energy repetition is found. */
-    for (i = 0; i < num_unique; ++i) max_energy[i] = 0.0f;
+    for (i = 0; i < num_unique; ++i) max_energy[i] = -1.0f;
 
     for (n = 0; n < scan_len; /* advance inside */) {
         int seg_id = desc->scan_table_seg_id[n];
