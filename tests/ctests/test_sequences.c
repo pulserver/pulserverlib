@@ -1004,22 +1004,39 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
 
             mu_assert_int_eq(fd->num_samples, ns);
 
-            for (s = 0; s < ns; ++s) {
-                float expected = fd->waveform_gx[s] * shift[0]
-                               + fd->waveform_gy[s] * shift[1]
-                               + fd->waveform_gz[s] * shift[2];
-                if ((float)fabs(expected) > max_val)
-                    max_val = (float)fabs(expected);
-            }
-            tol = max_val * 1e-4f;
-            if (tol < 1e-6f) tol = 1e-6f;
+            /* Compute effective shift after applying plan rotation (R^T @ shift).
+             * rotmat is stored row-major: R[ri][ci] = rotmat[ri*3+ci].
+             * (R^T @ v)[ri] = sum_ci R[ci][ri] * v[ci] = sum_ci rotmat[ci*3+ri] * v[ci]. */
+            {
+                float u[3] = {shift[0], shift[1], shift[2]};
+                if (plan && ref_plan_idx >= 0 && ref_plan_idx < plan->num_plans) {
+                    const float* rm = plan->plans[ref_plan_idx].rotmat;
+                    int ri, ci;
+                    float rot_u[3] = {0.0f, 0.0f, 0.0f};
+                    for (ri = 0; ri < 3; ri++)
+                        for (ci = 0; ci < 3; ci++)
+                            rot_u[ri] += rm[ci * 3 + ri] * shift[ci];
+                    u[0] = rot_u[0]; u[1] = rot_u[1]; u[2] = rot_u[2];
+                }
 
-            for (s = 0; s < ns; ++s) {
-                float expected = fd->waveform_gx[s] * shift[0]
-                               + fd->waveform_gy[s] * shift[1]
-                               + fd->waveform_gz[s] * shift[2];
-                mu_assert((float)fabs(waveform[s] - expected) <= tol,
-                          "freq_mod waveform sample mismatch");
+                max_val = 0.0f;
+                for (s = 0; s < ns; ++s) {
+                    float expected = fd->waveform_gx[s] * u[0]
+                                   + fd->waveform_gy[s] * u[1]
+                                   + fd->waveform_gz[s] * u[2];
+                    if ((float)fabs(expected) > max_val)
+                        max_val = (float)fabs(expected);
+                }
+                tol = max_val * 1e-4f;
+                if (tol < 1e-6f) tol = 1e-6f;
+
+                for (s = 0; s < ns; ++s) {
+                    float expected = fd->waveform_gx[s] * u[0]
+                                   + fd->waveform_gy[s] * u[1]
+                                   + fd->waveform_gz[s] * u[2];
+                    mu_assert((float)fabs(waveform[s] - expected) <= tol,
+                              "freq_mod waveform sample mismatch");
+                }
             }
 
             if (plan && plan->num_plans > 0 && ref_plan_idx >= 0) {

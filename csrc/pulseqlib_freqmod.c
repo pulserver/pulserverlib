@@ -874,7 +874,44 @@ static int build_freq_mod_library(
                                    (float)adef->dwell_time * 1e-3f;
                 active_start_us = (float)adef->delay;
                 active_end_us   = active_start_us + adc_dur_us;
-                ref_time_us     = adc_dur_us * 0.5f;
+                ref_time_us     = adc_dur_us * 0.5f;   /* default: midpoint */
+
+                /* Override with accurate kzero from segment timing anchors. */
+                {
+                    int scan_p;
+                    for (scan_p = 0; scan_p < desc->scan_table_len; ++scan_p) {
+                        if (desc->scan_table_block_idx[scan_p] == blk_idx) {
+                            int seg_id = desc->scan_table_seg_id[scan_p];
+                            if (seg_id >= 0 && seg_id < desc->num_unique_segments) {
+                                const pulseqlib_tr_segment* seg =
+                                    &desc->segment_definitions[seg_id];
+                                int kb, ka, blk_offset = -1;
+                                for (kb = 0; kb < seg->num_blocks; ++kb) {
+                                    if (seg->unique_block_indices[kb] == bte->id) {
+                                        blk_offset = kb;
+                                        break;
+                                    }
+                                }
+                                if (blk_offset >= 0 &&
+                                    seg->timing.adc_anchors &&
+                                    seg->timing.num_adc_anchors > 0) {
+                                    for (ka = 0; ka < seg->timing.num_adc_anchors; ++ka) {
+                                        if (seg->timing.adc_anchors[ka].block_offset == blk_offset) {
+                                            float kz = seg->timing.adc_anchors[ka].kzero_us;
+                                            float as = seg->timing.adc_anchors[ka].start_us;
+                                            float kz_rel = kz - as;
+                                            if (kz_rel < 0.0f) kz_rel = 0.0f;
+                                            if (kz_rel > adc_dur_us) kz_rel = adc_dur_us;
+                                            ref_time_us = kz_rel;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
             } else {
                 continue;
             }
