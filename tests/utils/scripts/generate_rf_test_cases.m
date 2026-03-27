@@ -144,7 +144,7 @@ seq.write(fullfile(dataDir, '05_rfprep_fail_cooldown_too_long.seq'));
 %% ------------------------------------------------------------------------
 % Invalid sequence: multipass with variable (non-periodic) RF across passes
 %   Two complete prep→main→cooldown passes — different RF amplitude each.
-% Expected error: PULSEQLIB_ERR_TR_PATTERN_MISMATCH (-103)
+% Expected error: PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC (-561)
 % ------------------------------------------------------------------------
 rf_pass1 = mr.makeBlockPulse(0.30 * pi, 'Duration', 1e-3, 'use', 'excitation');
 rf_pass2 = mr.makeBlockPulse(0.45 * pi, 'Duration', 1e-3, 'use', 'excitation');

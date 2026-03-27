@@ -306,7 +306,7 @@ static int check_cross_pass_rf_consistency(
                         "pos %d has %.6g, pass 0 has %.6g\n",
                         p, j, (double)chk_amp, (double)ref_amp);
                 }
-                return PULSEQLIB_ERR_TR_PATTERN_MISMATCH;
+                return PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC;
             }
 
             /* RF shim ID */
