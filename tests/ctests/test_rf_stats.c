@@ -116,7 +116,7 @@ MU_TEST(test_rf_periodic_ok)
 MU_TEST(test_rf_periodic_fail)
 {
     run_consistency_check("02_rfamp_fail_vfa.seq",
-                          PULSEQLIB_ERR_TR_PATTERN_MISMATCH);
+                          PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC);
 }
 
 MU_TEST(test_rfshim_periodic_ok)
@@ -128,7 +128,7 @@ MU_TEST(test_rfshim_periodic_ok)
 MU_TEST(test_rfshim_periodic_fail)
 {
     run_consistency_check("04_rfshim_fail_gre.seq",
-                          PULSEQLIB_ERR_TR_PATTERN_MISMATCH);
+                          PULSEQLIB_ERR_CONSISTENCY_RF_SHIM_PERIODIC);
 }
 
 MU_TEST_SUITE(suite_rf_consistency)

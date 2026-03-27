@@ -432,7 +432,7 @@ int pulseqlib__get_tr_in_sequence(pulseqlib_sequence_descriptor* desc, pulseqlib
         block_dur[n] = desc->block_definitions[desc->block_table[n].id].duration_us;
         seq_pat[n] = (desc->block_table[n].duration_us >= 0)
             ? block_dur[n]
-            : -1 * desc->block_table[desc->block_table[n].id].id;
+            : -1 * desc->block_table[n].id;
     }
 
     /* Save a copy of seq_pat before RF augmentation (used for VFA check) */

@@ -508,6 +508,21 @@ static int check_consistency(
             }
         }
 
+        /* (c) RF shim ID periodicity (same TR range as amplitude). */
+        if (trd->num_trs > 1 && first_check <= last_check) {
+            rc = check_rf_shim_periodicity(desc,
+                ref_tr, first_check, last_check, diag);
+            if (PULSEQLIB_FAILED(rc)) {
+                if (diag) {
+                    pulseqlib__diag_printf(diag,
+                        "Consistency check failed: RF shim ID "
+                        "not periodic in subsequence %d\n",
+                        subseq_idx);
+                }
+                return rc;
+            }
+        }
+
         /* (d) Cross-pass RF amplitude + shim ID consistency */
         if (desc->num_passes > 1) {
             rc = check_cross_pass_rf_consistency(desc, diag);
@@ -520,19 +535,6 @@ static int check_consistency(
                 }
                 return rc;
             }
-
-                /* (c) RF shim ID periodicity (same TR range as amplitude) */
-                rc = check_rf_shim_periodicity(desc,
-                    ref_tr, first_check, last_check, diag);
-                if (PULSEQLIB_FAILED(rc)) {
-                    if (diag) {
-                        pulseqlib__diag_printf(diag,
-                            "Consistency check failed: RF shim ID "
-                            "not periodic in subsequence %d\n",
-                            subseq_idx);
-                    }
-                    return rc;
-                }
         }
     }
 
