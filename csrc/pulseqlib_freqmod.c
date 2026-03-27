@@ -1170,56 +1170,209 @@ static int build_freq_mod_library(
         }
     }
 
-    /* ==== Pass 3: build plan dedup keys ==== */
-    for (n = 0; n < count; ++n) {
-        memset(&plan_keys[n], 0, sizeof(plan_keys[n]));
-        plan_keys[n].entry_idx   = entry_map[n];
-        plan_keys[n].rot_idx     = block_rotation[n];
-        plan_keys[n].tr_scope_id = 0;
-    }
-
-    num_plan = dedup_keys(plan_unique, plan_map,
-        (const char*)plan_keys, count, (int)sizeof(plan_key_t));
-
-    /* ==== Build plan instance metadata ==== */
-    lib->num_plan_instances = num_plan;
-    lib->pi_entry_idx    = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
-    lib->pi_rotation_idx = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
-    if (!lib->pi_entry_idx || !lib->pi_rotation_idx) goto build_fail;
-
-    for (n = 0; n < num_plan; ++n) {
-        int ev = plan_unique[n];
-        lib->pi_entry_idx[n]    = entry_map[ev];
-        lib->pi_rotation_idx[n] = block_rotation[ev];
-    }
-
-    /* ==== Allocate plan arrays ==== */
-    result = alloc_plan(lib);
-    if (PULSEQLIB_FAILED(result)) goto build_fail;
-
-    /* Fill plan_num_samples from entries */
-    for (n = 0; n < num_plan; ++n)
-        lib->plan_num_samples[n] =
-            lib->entry_num_samples[lib->pi_entry_idx[n]];
-
-    /* ==== Build scan_to_plan ==== */
+    /* ==== Pass 3: plan dedup + scan_to_plan ====
+     *
+     * Auto-detect tr_scoped mode: if freq-mod blocks appear in more
+     * than one distinct segment across the scan table, we must dedup
+     * at the scan-table level (each TR gets its own plan instances).
+     * Otherwise the block-level dedup suffices.
+     */
     {
-        /* Temp: block_table_idx -> plan_instance */
-        int* blk_to_plan = (int*)PULSEQLIB_ALLOC(
+        int use_tr_scope = 0;
+        int* blk_to_entry = NULL;
+        int* blk_to_rotation_map = NULL;
+
+        /* Build block -> entry/rotation maps (needed by both paths) */
+        blk_to_entry = (int*)PULSEQLIB_ALLOC(
             (size_t)desc->num_blocks * sizeof(int));
-        int i;
-        if (!blk_to_plan) goto build_fail;
-
-        for (i = 0; i < desc->num_blocks; ++i) blk_to_plan[i] = -1;
-        for (i = 0; i < count; ++i)
-            blk_to_plan[block_indices[i]] = plan_map[i];
-
-        for (i = 0; i < desc->scan_table_len; ++i) {
-            int bti = desc->scan_table_block_idx[i];
-            lib->scan_to_plan[i] = (bti >= 0 && bti < desc->num_blocks)
-                                   ? blk_to_plan[bti] : -1;
+        blk_to_rotation_map = (int*)PULSEQLIB_ALLOC(
+            (size_t)desc->num_blocks * sizeof(int));
+        if (!blk_to_entry || !blk_to_rotation_map) {
+            if (blk_to_entry) PULSEQLIB_FREE(blk_to_entry);
+            if (blk_to_rotation_map) PULSEQLIB_FREE(blk_to_rotation_map);
+            goto build_fail;
         }
-        PULSEQLIB_FREE(blk_to_plan);
+        for (n = 0; n < desc->num_blocks; ++n) {
+            blk_to_entry[n] = -1;
+            blk_to_rotation_map[n] = -1;
+        }
+        for (n = 0; n < count; ++n) {
+            blk_to_entry[block_indices[n]]       = entry_map[n];
+            blk_to_rotation_map[block_indices[n]] = block_rotation[n];
+        }
+
+        /* Detect multi-segment freq_mod: check how many distinct segments
+         * contain freq_mod blocks in the scan table. */
+        if (desc->scan_table_seg_id && desc->scan_table_len > 0) {
+            int first_seg = -1;
+            int i;
+            for (i = 0; i < desc->scan_table_len; ++i) {
+                int bti = desc->scan_table_block_idx[i];
+                if (bti >= 0 && bti < desc->num_blocks &&
+                    blk_to_entry[bti] >= 0) {
+                    int sid = desc->scan_table_seg_id[i];
+                    if (first_seg < 0)
+                        first_seg = sid;
+                    else if (sid != first_seg) {
+                        use_tr_scope = 1;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!use_tr_scope) {
+            /* ---- Block-level plan dedup (full_collection mode) ---- */
+            for (n = 0; n < count; ++n) {
+                memset(&plan_keys[n], 0, sizeof(plan_keys[n]));
+                plan_keys[n].entry_idx   = entry_map[n];
+                plan_keys[n].rot_idx     = block_rotation[n];
+                plan_keys[n].tr_scope_id = 0;
+            }
+            num_plan = dedup_keys(plan_unique, plan_map,
+                (const char*)plan_keys, count, (int)sizeof(plan_key_t));
+
+            lib->num_plan_instances = num_plan;
+            lib->pi_entry_idx    = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
+            lib->pi_rotation_idx = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
+            if (!lib->pi_entry_idx || !lib->pi_rotation_idx) {
+                PULSEQLIB_FREE(blk_to_entry);
+                PULSEQLIB_FREE(blk_to_rotation_map);
+                goto build_fail;
+            }
+            for (n = 0; n < num_plan; ++n) {
+                int ev = plan_unique[n];
+                lib->pi_entry_idx[n]    = entry_map[ev];
+                lib->pi_rotation_idx[n] = block_rotation[ev];
+            }
+            result = alloc_plan(lib);
+            if (PULSEQLIB_FAILED(result)) {
+                PULSEQLIB_FREE(blk_to_entry);
+                PULSEQLIB_FREE(blk_to_rotation_map);
+                goto build_fail;
+            }
+            for (n = 0; n < num_plan; ++n)
+                lib->plan_num_samples[n] =
+                    lib->entry_num_samples[lib->pi_entry_idx[n]];
+            /* Build scan_to_plan via block mapping */
+            {
+                int* blk_to_plan = (int*)PULSEQLIB_ALLOC(
+                    (size_t)desc->num_blocks * sizeof(int));
+                int i;
+                if (!blk_to_plan) {
+                    PULSEQLIB_FREE(blk_to_entry);
+                    PULSEQLIB_FREE(blk_to_rotation_map);
+                    goto build_fail;
+                }
+                for (i = 0; i < desc->num_blocks; ++i) blk_to_plan[i] = -1;
+                for (i = 0; i < count; ++i)
+                    blk_to_plan[block_indices[i]] = plan_map[i];
+                for (i = 0; i < desc->scan_table_len; ++i) {
+                    int bti = desc->scan_table_block_idx[i];
+                    lib->scan_to_plan[i] = (bti >= 0 && bti < desc->num_blocks)
+                        ? blk_to_plan[bti] : -1;
+                }
+                PULSEQLIB_FREE(blk_to_plan);
+            }
+        } else {
+            /* ---- Scan-level plan dedup (tr_scoped mode) ----
+             * Each scan-table row gets a key (entry_idx, rot_idx, tr_group).
+             * tr_group increments at TR boundaries. */
+            int scan_count, sc, i;
+            plan_key_t* scan_plan_keys;
+            int* scan_plan_unique;
+            int* scan_plan_map;
+
+            scan_count = 0;
+            for (i = 0; i < desc->scan_table_len; ++i) {
+                int bti = desc->scan_table_block_idx[i];
+                if (bti >= 0 && bti < desc->num_blocks && blk_to_entry[bti] >= 0)
+                    scan_count++;
+            }
+
+            scan_plan_keys   = (plan_key_t*)PULSEQLIB_ALLOC(
+                (size_t)scan_count * sizeof(plan_key_t));
+            scan_plan_unique = (int*)PULSEQLIB_ALLOC(
+                (size_t)scan_count * sizeof(int));
+            scan_plan_map    = (int*)PULSEQLIB_ALLOC(
+                (size_t)scan_count * sizeof(int));
+            if (!scan_plan_keys || !scan_plan_unique || !scan_plan_map) {
+                if (scan_plan_keys)   PULSEQLIB_FREE(scan_plan_keys);
+                if (scan_plan_unique) PULSEQLIB_FREE(scan_plan_unique);
+                if (scan_plan_map)    PULSEQLIB_FREE(scan_plan_map);
+                PULSEQLIB_FREE(blk_to_entry);
+                PULSEQLIB_FREE(blk_to_rotation_map);
+                goto build_fail;
+            }
+
+            sc = 0;
+            for (i = 0; i < desc->scan_table_len; ++i) {
+                int bti = desc->scan_table_block_idx[i];
+                if (bti >= 0 && bti < desc->num_blocks &&
+                    blk_to_entry[bti] >= 0) {
+                    int tr_size = desc->tr_descriptor.tr_size;
+                    memset(&scan_plan_keys[sc], 0, sizeof(scan_plan_keys[sc]));
+                    scan_plan_keys[sc].entry_idx = blk_to_entry[bti];
+                    scan_plan_keys[sc].rot_idx   = blk_to_rotation_map[bti];
+                    scan_plan_keys[sc].tr_scope_id =
+                        (tr_size > 0) ? (bti / tr_size) : 0;
+                    sc++;
+                }
+            }
+
+            num_plan = dedup_keys(scan_plan_unique, scan_plan_map,
+                (const char*)scan_plan_keys, scan_count,
+                (int)sizeof(plan_key_t));
+
+            lib->num_plan_instances = num_plan;
+            lib->pi_entry_idx    = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
+            lib->pi_rotation_idx = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
+            if (!lib->pi_entry_idx || !lib->pi_rotation_idx) {
+                PULSEQLIB_FREE(scan_plan_keys);
+                PULSEQLIB_FREE(scan_plan_unique);
+                PULSEQLIB_FREE(scan_plan_map);
+                PULSEQLIB_FREE(blk_to_entry);
+                PULSEQLIB_FREE(blk_to_rotation_map);
+                goto build_fail;
+            }
+            for (n = 0; n < num_plan; ++n) {
+                int ev = scan_plan_unique[n];
+                lib->pi_entry_idx[n]    = scan_plan_keys[ev].entry_idx;
+                lib->pi_rotation_idx[n] = scan_plan_keys[ev].rot_idx;
+            }
+            result = alloc_plan(lib);
+            if (PULSEQLIB_FAILED(result)) {
+                PULSEQLIB_FREE(scan_plan_keys);
+                PULSEQLIB_FREE(scan_plan_unique);
+                PULSEQLIB_FREE(scan_plan_map);
+                PULSEQLIB_FREE(blk_to_entry);
+                PULSEQLIB_FREE(blk_to_rotation_map);
+                goto build_fail;
+            }
+            for (n = 0; n < num_plan; ++n)
+                lib->plan_num_samples[n] =
+                    lib->entry_num_samples[lib->pi_entry_idx[n]];
+
+            /* Build scan_to_plan from scan-level dedup */
+            sc = 0;
+            for (i = 0; i < desc->scan_table_len; ++i) {
+                int bti = desc->scan_table_block_idx[i];
+                if (bti >= 0 && bti < desc->num_blocks &&
+                    blk_to_entry[bti] >= 0) {
+                    lib->scan_to_plan[i] = scan_plan_map[sc];
+                    sc++;
+                } else {
+                    lib->scan_to_plan[i] = -1;
+                }
+            }
+
+            PULSEQLIB_FREE(scan_plan_keys);
+            PULSEQLIB_FREE(scan_plan_unique);
+            PULSEQLIB_FREE(scan_plan_map);
+        }
+
+        PULSEQLIB_FREE(blk_to_entry);
+        PULSEQLIB_FREE(blk_to_rotation_map);
     }
 
     /* ==== Compute plan waveforms ==== */
