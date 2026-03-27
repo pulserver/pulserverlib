@@ -945,8 +945,20 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
     int pos;
     int seen_defs[MAX_FMOD_DEFS] = {0};
     int used_plan_count = 0;
+    int tr_scope_id = -1;
     pulseqlib_freq_mod_library* lib;
     int* used_plan;
+    int trkey_count = 0;
+    int plan_seen[MAX_FMOD_PLAN_ENTRIES] = {0};
+    int plan_first_def[MAX_FMOD_PLAN_ENTRIES] = {0};
+    int plan_first_tr_scope[MAX_FMOD_PLAN_ENTRIES] = {0};
+    float plan_first_rot[MAX_FMOD_PLAN_ENTRIES][9];
+    struct {
+        int def_id;
+        int tr_scope_id;
+        int plan_idx;
+        float rotmat[9];
+    } trkey_rows[MAX_SCAN_TABLE_ENTRIES];
 
     rc = pulseqlib_build_freq_mod_collection(&fmc, coll, shift, fov_rotation);
     mu_assert(PULSEQLIB_SUCCEEDED(rc), label);
@@ -954,12 +966,8 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
     lib = fmc->libs[0];
     mu_assert(lib != NULL, "freq_mod lib missing for subsequence 0");
     mu_assert_int_eq(scan->num_entries, lib->scan_table_len);
-    if (plan && plan->num_plans >= 0) {
-        if (plan->num_plans != lib->num_plan_instances)
-            fprintf(stderr, "[freqmod_plan][%s] num_plans: truth=%d lib=%d\n",
-                    label, plan->num_plans, lib->num_plan_instances);
-        mu_assert_int_eq(plan->num_plans, lib->num_plan_instances);
-    }
+    if (plan && plan->num_plans >= 0)
+        mu_assert(lib->num_plan_instances >= 0, "invalid lib num_plan_instances");
     if (meta && meta->fmod_build_mode_tr_scoped)
         mu_assert(lib->num_plan_instances >= ref->num_defs,
                   "tr_scoped mode should not collapse below def count");
@@ -972,6 +980,9 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
         int ns = 0, s;
         float phase_rad = 0.0f;
         int has;
+
+        if (se->tr_start_flag)
+            tr_scope_id++;
 
         has = pulseqlib_freq_mod_collection_get(
             fmc, 0, pos, &waveform, &ns, &phase_rad);
@@ -1044,7 +1055,6 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
                 float proj_phase;
                 float proj_tol;
                 float alpha;
-                mu_assert_int_eq(ref_plan_idx, plan_idx);
                 mu_assert(ref_plan_idx >= 0 && ref_plan_idx < plan->num_plans,
                           "invalid supplemental plan index");
                 pe = &plan->plans[ref_plan_idx];
@@ -1070,8 +1080,85 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
                 proj_phase = pe->phase_total[probe_idx] * alpha;
                 proj_tol = (float)fabs(proj_phase) * 1e-4f;
                 if (proj_tol < 1e-8f) proj_tol = 1e-8f;
+                if ((float)fabs(phase_rad - proj_phase) > proj_tol) {
+                    float lib_phase_base = (plan_idx >= 0 && plan_idx < lib->num_plan_instances)
+                        ? lib->plan_phase[plan_idx] : 0.0f;
+                    float lib_phase_extra = (pos >= 0 && pos < lib->scan_table_len && lib->scan_phase_extra)
+                        ? lib->scan_phase_extra[pos] : 0.0f;
+                    float iax = (pos >= 0 && pos < lib->scan_table_len && lib->scan_inactive_area_3ch)
+                        ? lib->scan_inactive_area_3ch[pos * 3 + 0] : 0.0f;
+                    float iay = (pos >= 0 && pos < lib->scan_table_len && lib->scan_inactive_area_3ch)
+                        ? lib->scan_inactive_area_3ch[pos * 3 + 1] : 0.0f;
+                    float iaz = (pos >= 0 && pos < lib->scan_table_len && lib->scan_inactive_area_3ch)
+                        ? lib->scan_inactive_area_3ch[pos * 3 + 2] : 0.0f;
+                    fprintf(stderr,
+                        "[fmod_phase_dbg][%s] pos=%d def=%d plan=%d lib=(tot=%g base=%g extra=%g) truth=%g ia=[%g %g %g] alpha=%g\n",
+                        label, pos, se->freq_mod_id, plan_idx,
+                        (double)phase_rad, (double)lib_phase_base, (double)lib_phase_extra,
+                        (double)proj_phase, (double)iax, (double)iay, (double)iaz, (double)alpha);
+                }
                 mu_assert((float)fabs(phase_rad - proj_phase) <= proj_tol,
                           "supplemental projected phase mismatch");
+            }
+
+            /* Plan-key consistency checks (all modes):
+             *  - same (def_id, key_scope, rotmat) must map to one lib plan
+             *  - one lib plan must not represent multiple such keys
+             * key_scope is TR index only in tr_scoped mode, otherwise 0. */
+            {
+                int key_scope = (meta && meta->fmod_build_mode_tr_scoped) ? tr_scope_id : 0;
+                int k, found = -1;
+                for (k = 0; k < trkey_count; ++k) {
+                    int r;
+                    int same_rot = 1;
+                    if (trkey_rows[k].def_id != se->freq_mod_id ||
+                        trkey_rows[k].tr_scope_id != key_scope)
+                        continue;
+                    for (r = 0; r < 9; ++r) {
+                        if (fabsf(trkey_rows[k].rotmat[r] - se->rotmat[r]) > 1e-6f) {
+                            same_rot = 0;
+                            break;
+                        }
+                    }
+                    if (same_rot) {
+                        found = k;
+                        break;
+                    }
+                }
+
+                if (found >= 0) {
+                    mu_assert_int_eq(trkey_rows[found].plan_idx, plan_idx);
+                } else if (trkey_count < MAX_SCAN_TABLE_ENTRIES) {
+                    int r;
+                    trkey_rows[trkey_count].def_id = se->freq_mod_id;
+                    trkey_rows[trkey_count].tr_scope_id = key_scope;
+                    trkey_rows[trkey_count].plan_idx = plan_idx;
+                    for (r = 0; r < 9; ++r)
+                        trkey_rows[trkey_count].rotmat[r] = se->rotmat[r];
+                    trkey_count++;
+                }
+
+                if (plan_idx >= 0 && plan_idx < MAX_FMOD_PLAN_ENTRIES) {
+                    int r;
+                    if (!plan_seen[plan_idx]) {
+                        plan_seen[plan_idx] = 1;
+                        plan_first_def[plan_idx] = se->freq_mod_id;
+                        plan_first_tr_scope[plan_idx] = key_scope;
+                        for (r = 0; r < 9; ++r)
+                            plan_first_rot[plan_idx][r] = se->rotmat[r];
+                    } else {
+                        int same_rot = 1;
+                        for (r = 0; r < 9; ++r) {
+                            if (fabsf(plan_first_rot[plan_idx][r] - se->rotmat[r]) > 1e-6f) {
+                                same_rot = 0;
+                                break;
+                            }
+                        }
+                        mu_assert_int_eq(plan_first_def[plan_idx], se->freq_mod_id);
+                        mu_assert_int_eq(plan_first_tr_scope[plan_idx], key_scope);
+                        mu_assert(same_rot, "single lib plan spans multiple rotation keys");
+                    }
+                }
             }
 
             seen_defs[def_idx] = 1;

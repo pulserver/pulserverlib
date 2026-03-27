@@ -1949,8 +1949,12 @@ int pulseqlib__get_scan_table_segments(
 
         if (inst_energy > max_energy[unique_idx]) {
             max_energy[unique_idx] = inst_energy;
+            /* Store scan-table start index of the representative instance.
+             * In average-expanded passes, consecutive local block positions do
+             * not map to consecutive block_table indices, so getters must
+             * resolve through scan_table_block_idx[start + local_blk]. */
             desc->segment_definitions[unique_idx].max_energy_start_block =
-                desc->scan_table_block_idx[exp_segs[n].start_block];
+                exp_segs[n].start_block;
         }
     }
 
@@ -2076,8 +2080,8 @@ int pulseqlib__get_scan_table_segments(
 
         if (inst_energy > max_energy[seg_id]) {
             max_energy[seg_id] = inst_energy;
-            desc->segment_definitions[seg_id].max_energy_start_block =
-                desc->scan_table_block_idx[n];
+            /* Same semantics as step 10: scan-table start index. */
+            desc->segment_definitions[seg_id].max_energy_start_block = n;
         }
 
         n += nb;

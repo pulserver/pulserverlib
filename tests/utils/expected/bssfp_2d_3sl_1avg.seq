@@ -12,7 +12,7 @@ BlockDurationRaster 2e-05
 FOV 0.22 0.22 0.015 
 GradientRasterTime 2e-05 
 NumSlices 3 
-PeakRF 0.545317315 
+PeakRF 31.2443806 
 RadiofrequencyRasterTime 2e-06 
 RequiredExtensions  
 TR 0.0292 
@@ -85,15 +85,15 @@ TotalDuration 0.0876
 # Field 'use' is the initial of: 
 #   excitation refocusing inversion saturation preparation other undefined
 [RF]
-1     0.272659 1 2 0 1000 480 0 0 -750 0 e
-2     0.545317 1 2 0 1000 480 0 0 -750 3.14159 e
-3     0.545317 1 2 0 1000 480 0 0 -750 0 e
-4     0.272659 1 2 0 1000 480 0 0 0 0 e
-5     0.545317 1 2 0 1000 480 0 0 0 3.14159 e
-6     0.545317 1 2 0 1000 480 0 0 0 0 e
-7     0.272659 1 2 0 1000 480 0 0 750 0 e
-8     0.545317 1 2 0 1000 480 0 0 750 3.14159 e
-9     0.545317 1 2 0 1000 480 0 0 750 0 e
+1      15.6222 1 2 0 1000 480 0 0 -750 0 e
+2      31.2444 1 2 0 1000 480 0 0 -750 3.14159 e
+3      31.2444 1 2 0 1000 480 0 0 -750 0 e
+4      15.6222 1 2 0 1000 480 0 0 0 0 e
+5      31.2444 1 2 0 1000 480 0 0 0 3.14159 e
+6      31.2444 1 2 0 1000 480 0 0 0 0 e
+7      15.6222 1 2 0 1000 480 0 0 750 0 e
+8      31.2444 1 2 0 1000 480 0 0 750 3.14159 e
+9      31.2444 1 2 0 1000 480 0 0 750 0 e
 
 # Format of arbitrary gradients:
 #   time_shape_id of 0 means default timing (stepping with grad_raster starting at 1/2 of grad_raster)
@@ -1242,4 +1242,4 @@ num_samples 6
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash fdc084c4ac18c99668f10bff7914e4ce
+Hash 401877b2fd119968f67b84f32911a919

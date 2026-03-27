@@ -431,7 +431,12 @@ int pulseqlib__calc_segment_timing(
         rf_count  = 0;
         adc_count = 0;
         for (blk = 0; blk < seg->num_blocks; ++blk) {
-            block_idx = seg->start_block + blk;
+            int scan_idx = seg->max_energy_start_block + blk;
+            if (scan_idx >= 0 && scan_idx < desc->scan_table_len)
+                block_idx = desc->scan_table_block_idx[scan_idx];
+            else
+                block_idx = seg->start_block + blk;
+
             if (block_idx < 0 || block_idx >= desc->num_blocks) continue;
             bte  = &desc->block_table[block_idx];
             bdef = &desc->block_definitions[bte->id];
@@ -486,7 +491,12 @@ int pulseqlib__calc_segment_timing(
         t_accum   = 0.0f;
 
         for (blk = 0; blk < seg->num_blocks; ++blk) {
-            block_idx = seg->start_block + blk;
+            int scan_idx = seg->max_energy_start_block + blk;
+            if (scan_idx >= 0 && scan_idx < desc->scan_table_len)
+                block_idx = desc->scan_table_block_idx[scan_idx];
+            else
+                block_idx = seg->start_block + blk;
+
             if (block_idx < 0 || block_idx >= desc->num_blocks) continue;
             bte  = &desc->block_table[block_idx];
             bdef = &desc->block_definitions[bte->id];
@@ -546,10 +556,12 @@ int pulseqlib__calc_segment_timing(
                         (float)(adef->num_samples / 2) *
                         (float)adef->dwell_time * 1e-3f;
 
-                    /* full-TR canonical kRSS (ZERO_VAR): find min within ADC */
-                    if (has_kspace && krss && n_samples > 0 &&
-                               seg->start_block >= num_prep &&
-                               seg->start_block < num_prep + tr_size) {
+                    /* full-TR canonical kRSS (ZERO_VAR): find min within ADC.
+                     * Do not gate on seg->start_block being inside the first
+                     * main TR: merged/full-pass segments (e.g. average-
+                     * expanded multipass scans) still need kzero anchors for
+                     * their ADC blocks. */
+                    if (has_kspace && krss && n_samples > 0) {
                         adc_raster_start = (int)((seg_time_offset +
                             adc_arr[adc_count].start_us) / dt_us);
                         adc_raster_end   = (int)((seg_time_offset +

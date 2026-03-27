@@ -1200,15 +1200,42 @@ classdef TruthBuilder < handle
             probes = [1, 0, 0; 0, 1, 0; 0, 0, 1; oblique];
 
             plan_map = -1 * ones(nscan, 1);
-            plans = struct('def_id', {}, 'rot', {}, 'scan_row', {}, 'tr_scope_id', {});
+            plans = struct('def_id', {}, 'rot', {}, 'scan_row', {}, 'tr_scope_id', {}, ...
+                           'inactive_area', {});
 
             for i = 1:nscan
                 def_id = obj.freq_mod_table(i);
+                fm = [];
+                active_axes = [false false false];
+                block_idx = 0;
+                inactive_area = [0, 0, 0];
                 if def_id <= 0
                     continue;
                 end
                 tr_scope_id = 0;
                 rot = reshape(obj.rotmat_table(i, :), [3, 3])';
+                fm = obj.fmod_defs{def_id};
+                active_axes = any(abs(fm.waveform) > 1e-9, 1);
+                block_idx = obj.scan_src_block_idx(i);
+                if block_idx > 0
+                    ax_names = {'gx', 'gy', 'gz'};
+                    block = obj.seq.getBlock(block_idx);
+                    for ch = 1:3
+                        if active_axes(ch)
+                            continue;
+                        end
+                        base_peak = max(abs(fm.waveform(:, ch)));
+                        if base_peak <= 1e-12
+                            continue;
+                        end
+                        inst_peak = 0;
+                        axn = ax_names{ch};
+                        if isfield(block, axn) && ~isempty(block.(axn))
+                            inst_peak = testutils.TruthBuilder.gradPeakAmpSigned(block.(axn));
+                        end
+                        inactive_area(ch) = (fm.ref_integral(ch) / (2 * pi)) * (inst_peak / base_peak);
+                    end
+                end
                 if strcmp(obj.fmod_build_mode, 'tr_scoped')
                     tr_scope_id = obj.scan_src_tr_start_idx(i);
                 end
@@ -1216,7 +1243,8 @@ classdef TruthBuilder < handle
                 found = 0;
                 for p = 1:length(plans)
                     if plans(p).def_id == def_id && plans(p).tr_scope_id == tr_scope_id ...
-                            && max(abs(plans(p).rot(:) - rot(:))) < 1e-7
+                            && max(abs(plans(p).rot(:) - rot(:))) < 1e-7 ...
+                            && max(abs(plans(p).inactive_area(:) - inactive_area(:))) < 1e-12
                         plan_map(i) = p - 1;
                         found = 1;
                         break;
@@ -1228,6 +1256,7 @@ classdef TruthBuilder < handle
                     plans(end).rot = rot;
                     plans(end).scan_row = i;
                     plans(end).tr_scope_id = tr_scope_id;
+                    plans(end).inactive_area = inactive_area;
                     plan_map(i) = length(plans) - 1;
                 end
             end
@@ -1260,7 +1289,7 @@ classdef TruthBuilder < handle
                     w = fm.waveform * u;
 
                     phase_active = dot(fm.ref_integral, u.');
-                    phase_extra = 0.0;
+                    phase_extra = 2 * pi * dot(plans(p).inactive_area, u.');
 
                     plan_phase_active(p, q) = phase_active;
                     plan_phase_extra(p, q) = phase_extra;
@@ -1314,12 +1343,16 @@ classdef TruthBuilder < handle
         end
 
         function phase = integrateInactivePhaseFromTrStart(obj, tr_start_idx, block_idx, ref_abs_s, active_axes, u)
-            phase = 0;
+            area = obj.integrateInactiveAreaFromTrStart(tr_start_idx, block_idx, ref_abs_s, active_axes);
+            phase = 2 * pi * dot(area, u.');
+        end
+
+        function area = integrateInactiveAreaFromTrStart(obj, tr_start_idx, block_idx, ref_abs_s, active_axes)
+            area = zeros(1, 3);
             if tr_start_idx <= 0 || block_idx <= 0
                 return;
             end
 
-            area = zeros(1, 3);
             for bb = tr_start_idx:block_idx
                 blk = obj.seq.getBlock(bb);
                 if bb < block_idx
@@ -1345,8 +1378,6 @@ classdef TruthBuilder < handle
                     end
                 end
             end
-
-            phase = 2 * pi * dot(area, u.');
         end
 
         function exportFreqModPlan(obj, path)
