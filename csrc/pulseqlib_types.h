@@ -630,6 +630,7 @@ typedef struct pulseqlib_block_info {
     int   rf_delay_us;            /**< RF delay (us), -1 if absent       */
     int   rf_num_channels;        /**< Tx channel count, -1 if absent    */
     int   rf_num_samples;         /**< samples per channel, -1 if absent */
+    int   rf_duration_us;         /**< RF duration (us) from last time-shape sample; -1 if absent */
     int   rf_is_complex;          /**< 1 if phase shape exists           */
     int   rf_uniform_raster;      /**< 1 if time shape present           */
 
@@ -653,7 +654,7 @@ typedef struct pulseqlib_block_info {
 #define PULSEQLIB_BLOCK_INFO_INIT { \
     0, 0, \
     {0,0,0}, {0,0,0}, {-1,-1,-1}, {-1,-1,-1}, {-1,-1,-1}, \
-    0, -1, -1, -1, 0, 0, \
+    0, -1, -1, -1, -1, 0, 0, \
     0, -1, -1, \
     0, -1, -1, \
     0, 0, 0, 0 \

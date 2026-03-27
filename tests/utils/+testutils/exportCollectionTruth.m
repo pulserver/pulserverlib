@@ -29,7 +29,7 @@ function merged = merge_truth_cases(truths)
     merged.tr_waveforms = merge_tr_waveforms(truths);
     merged.freqmod_def = merge_freqmod_defs(truths);
     merged.segment_def = merge_segment_defs(truths, merged.meta.num_unique_adcs, merged.freqmod_def.offsets);
-    merged.scan_table = merge_scan_table(truths, merged.freqmod_def.offsets);
+    merged.scan_table = merge_scan_table(truths, merged.freqmod_def.offsets, compute_segment_offsets(truths));
     merged.label_state = merge_label_state(truths);
     merged.freqmod_plan = merge_freqmod_plan(truths, merged.freqmod_def.offsets);
 end
@@ -152,7 +152,7 @@ function out = merge_segment_defs(truths, total_num_adcs, fmod_offsets)
     out = struct('num_segments', numel(segments), 'segments', segments);
 end
 
-function out = merge_scan_table(truths, fmod_offsets)
+function out = merge_scan_table(truths, fmod_offsets, seg_offsets)
     entries = repmat(empty_scan_entry(), 0, 1);
     for i = 1:numel(truths)
         local_entries = truths{i}.scan_table.entries;
@@ -160,10 +160,20 @@ function out = merge_scan_table(truths, fmod_offsets)
             if local_entries(j).freq_mod_id > 0
                 local_entries(j).freq_mod_id = int32(double(local_entries(j).freq_mod_id) + fmod_offsets(i));
             end
+            local_entries(j).segment_id = int32(double(local_entries(j).segment_id) + seg_offsets(i));
         end
         entries = [entries; local_entries(:)]; %#ok<AGROW>
     end
     out = struct('num_entries', numel(entries), 'entries', entries);
+end
+
+function offsets = compute_segment_offsets(truths)
+    offsets = zeros(1, numel(truths));
+    count = 0;
+    for i = 1:numel(truths)
+        offsets(i) = count;
+        count = count + truths{i}.meta.num_segments;
+    end
 end
 
 function out = merge_label_state(truths)
@@ -330,7 +340,8 @@ function e = empty_scan_entry()
         'digitalout_flag', int32(0), ...
         'trigger_flag', int32(0), ...
         'rotmat', single(zeros(1, 9)), ...
-        'freq_mod_id', int32(0));
+        'freq_mod_id', int32(0), ...
+        'block_dur_us', int32(0));
 end
 
 function write_meta(path, meta)
@@ -479,6 +490,7 @@ function write_scan_table(path, scan)
         fwrite(fid, int32(e.trigger_flag), 'int32');
         fwrite(fid, single(e.rotmat), 'float32');
         fwrite(fid, int32(e.freq_mod_id), 'int32');
+        fwrite(fid, int32(e.block_dur_us), 'int32');
     end
 end
 

@@ -19,7 +19,7 @@ canonical_mode tr
 fmod_build_mode tr_scoped
 canonical_duration_us 84260
 num_freqmod_plan_probes 4
-num_freqmod_plan_entries 8
+num_freqmod_plan_entries 10
 num_labels 1
 num_label_scan_rows 45
 num_label_adc_rows 11

@@ -400,6 +400,8 @@ typedef struct pulseqlib_tr_segment {
     int* norot_flag;
     int* nopos_flag;
     int* has_freq_mod;
+    int* has_adc;          /* OR-reduced: 1 if at least one segment instance has an ADC
+                              event at this block position, 0 otherwise          */
     int max_energy_start_block;
     int trigger_id;             /* segment-level physio trigger (INPUT type),
                                    index into trigger_events[], or -1          */
@@ -407,7 +409,7 @@ typedef struct pulseqlib_tr_segment {
     pulseqlib_segment_timing timing;
 } pulseqlib_tr_segment;
 
-#define PULSEQLIB_TR_SEGMENT_INIT {0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, -1, 0, PULSEQLIB_SEGMENT_TIMING_INIT}
+#define PULSEQLIB_TR_SEGMENT_INIT {0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, -1, 0, PULSEQLIB_SEGMENT_TIMING_INIT}
 
 /* ================================================================== */
 /*  Segment table result                                              */

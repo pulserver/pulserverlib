@@ -107,6 +107,61 @@ static void run_consistency_check(const char* filename, int expected_code)
     pulseqlib_collection_free(coll);
 }
 
+/* Build a synthetic descriptor in-memory to trigger a structural
+ * TR pattern mismatch (-103) without involving RF periodicity logic.
+ * Pattern is A,B,A,B,A,C with long active duration (>15 s) so
+ * single-TR fallback is not allowed. */
+static int run_structural_tr_mismatch_probe(void)
+{
+    pulseqlib_sequence_descriptor desc = PULSEQLIB_SEQUENCE_DESCRIPTOR_INIT;
+    pulseqlib_diagnostic diag = PULSEQLIB_DIAGNOSTIC_INIT;
+    pulseqlib_block_definition defs[3];
+    pulseqlib_block_table_element table[6];
+
+    defs[0].id = 0;
+    defs[0].duration_us = 3000000;
+    defs[0].rf_id = 0;
+    defs[0].gx_id = 0;
+    defs[0].gy_id = -1;
+    defs[0].gz_id = -1;
+    defs[0].adc_id = -1;
+
+    defs[1].id = 1;
+    defs[1].duration_us = 3000000;
+    defs[1].rf_id = 0;
+    defs[1].gx_id = -1;
+    defs[1].gy_id = -1;
+    defs[1].gz_id = -1;
+    defs[1].adc_id = -1;
+
+    defs[2].id = 2;
+    defs[2].duration_us = 3000000;
+    defs[2].rf_id = -1;
+    defs[2].gx_id = 0;
+    defs[2].gy_id = -1;
+    defs[2].gz_id = -1;
+    defs[2].adc_id = -1;
+
+    memset(table, 0, sizeof(table));
+
+    table[0].id = 0; table[0].duration_us = -1;
+    table[1].id = 1; table[1].duration_us = -1;
+    table[2].id = 0; table[2].duration_us = -1;
+    table[3].id = 1; table[3].duration_us = -1;
+    table[4].id = 0; table[4].duration_us = -1;
+    table[5].id = 2; table[5].duration_us = -1;
+
+    desc.num_unique_blocks = 3;
+    desc.block_definitions = defs;
+    desc.num_blocks = 6;
+    desc.pass_len = 6;
+    desc.block_table = table;
+    desc.num_prep_blocks = 0;
+    desc.num_cooldown_blocks = 0;
+
+    return pulseqlib__get_tr_in_sequence(&desc, &diag);
+}
+
 MU_TEST(test_rf_periodic_ok)
 {
     run_consistency_check("01_rfamp_ok_mrfingerprinting.seq",
@@ -116,7 +171,7 @@ MU_TEST(test_rf_periodic_ok)
 MU_TEST(test_rf_periodic_fail)
 {
     run_consistency_check("02_rfamp_fail_vfa.seq",
-                          PULSEQLIB_ERR_TR_PATTERN_MISMATCH);
+                          PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC);
 }
 
 MU_TEST(test_rfshim_periodic_ok)
@@ -128,7 +183,21 @@ MU_TEST(test_rfshim_periodic_ok)
 MU_TEST(test_rfshim_periodic_fail)
 {
     run_consistency_check("04_rfshim_fail_gre.seq",
-                          PULSEQLIB_ERR_TR_PATTERN_MISMATCH);
+                          PULSEQLIB_ERR_CONSISTENCY_RF_SHIM_PERIODIC);
+}
+
+MU_TEST(test_error_code_partition_structural_vs_rf)
+{
+    int rc;
+
+    rc = run_structural_tr_mismatch_probe();
+    mu_assert_int_eq(PULSEQLIB_ERR_TR_PATTERN_MISMATCH, rc);
+
+    run_consistency_check("02_rfamp_fail_vfa.seq",
+                          PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC);
+
+    run_consistency_check("04_rfshim_fail_gre.seq",
+                          PULSEQLIB_ERR_CONSISTENCY_RF_SHIM_PERIODIC);
 }
 
 MU_TEST_SUITE(suite_rf_consistency)
@@ -138,6 +207,7 @@ MU_TEST_SUITE(suite_rf_consistency)
     MU_RUN_TEST(test_rf_periodic_fail);
     MU_RUN_TEST(test_rfshim_periodic_ok);
     MU_RUN_TEST(test_rfshim_periodic_fail);
+    MU_RUN_TEST(test_error_code_partition_structural_vs_rf);
 }
 
 /* ================================================================== */
@@ -159,7 +229,7 @@ MU_TEST(test_rf_prep_cooldown_too_long)
 MU_TEST(test_rf_multipass_variable_structure)
 {
     run_consistency_check("06_rfprep_fail_multipass_variable.seq",
-                          PULSEQLIB_ERR_TR_PATTERN_MISMATCH);
+                          PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC);
 }
 
 MU_TEST_SUITE(suite_rf_prep_cooldown)

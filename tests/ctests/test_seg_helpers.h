@@ -37,10 +37,11 @@ typedef struct seg_meta {
     int num_canonical_trs;
     int fmod_build_mode_tr_scoped;
     /* Phase 5: Segment order (scan-table validation) */
+    int num_segment_order_entries;   /* actual count of entries in segment_order */
     int segment_order[MAX_SEGMENTS];
 } seg_meta;
 
-#define SEG_META_INIT {0, {0}, {0}, 0, 0, 0, {0}, 0, 0, {0}}
+#define SEG_META_INIT {0, {0}, {0}, 0, 0, 0, {0}, 0, 0, 0, {0}}
 
 /* ------------------------------------------------------------------ */
 /*  parse_meta                                                        */
@@ -103,6 +104,7 @@ static TSEG_MAYBE_UNUSED int parse_meta(const char* path, seg_meta* out)
             for (n = 0; n < MAX_SEGMENTS && sscanf(pos, " %d%n", &m.segment_order[n], &i) == 1; n++) {
                 pos += i;
             }
+            m.num_segment_order_entries = n;
         }
     }
 
@@ -681,6 +683,7 @@ typedef struct scan_table_entry {
     int   trigger_flag;
     float rotmat[9];
     int   freq_mod_id;    /* 0=none, 1-based fmod def index */
+    int   block_dur_us;   /* block duration in microseconds */
 } scan_table_entry;
 
 typedef struct scan_table_file {
@@ -722,6 +725,9 @@ static TSEG_MAYBE_UNUSED int parse_scan_table(const char* path, scan_table_file*
         if (fread(&e->trigger_flag,     sizeof(int),   1, f) != 1) { fclose(f); return 0; }
         if (fread(e->rotmat,            sizeof(float), 9, f) != 9) { fclose(f); return 0; }
         if (fread(&e->freq_mod_id,      sizeof(int),   1, f) != 1) { fclose(f); return 0; }
+        /* block_dur_us is appended after freq_mod_id; older files may not have it */
+        if (fread(&e->block_dur_us,     sizeof(int),   1, f) != 1)
+            e->block_dur_us = 0;
     }
 
     fclose(f);

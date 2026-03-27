@@ -381,7 +381,13 @@ classdef TruthBuilder < handle
             end
 
             % Deduplicate fingerprints.
-            [~, ia, ic] = unique(fp_matrix, 'rows', 'stable');
+            % unique(...,'rows','stable') with 3 outputs is not available in
+            % Octave < 9, so we replicate it manually.
+            [unique_rows, ia] = unique(fp_matrix, 'rows', 'stable');
+            ic = zeros(num_trs, 1);
+            for k = 1:num_trs
+                ic(k) = find(all(bsxfun(@eq, unique_rows, fp_matrix(k,:)), 2), 1);
+            end
 
             obj.num_canonical_trs = length(ia);
             obj.tr_group_labels = ic(:) - 1;  % 0-based to match C convention
@@ -818,7 +824,12 @@ classdef TruthBuilder < handle
                             end
                         end
 
-                        if e > best_energy
+                        % Use a relative tolerance to avoid picking a later
+                        % instance over the first when energies are equal up
+                        % to floating-point noise (e.g. conjugate spiral
+                        % interleaves where sum(w^2) differs by ~1 ULP).
+                        fprintf('[DEBUG] seg%d TR%d inst%d blk_base=%d energy=%.15g\n', s, tr_i, ii, tr_base + seg_offset, e);
+                        if e > best_energy + 1e-9 * abs(e)
                             best_energy = e;
                             best_start = tr_base + seg_offset;
                         end
@@ -941,7 +952,7 @@ classdef TruthBuilder < handle
         % ---- Phase 5: scan table ----
         function buildScanTableData(obj)
             num_blocks_per_pass = length(obj.seq.blockEvents);
-            num_cols = 14;
+            num_cols = 15;
             max_entries = obj.num_averages * num_blocks_per_pass;
 
             % Per-block mapping within one TR/pass:
@@ -995,9 +1006,45 @@ classdef TruthBuilder < handle
             once  = 0;
             norot_active = 0;
 
-            for avg = 1:obj.num_averages
-                for b = 1:num_blocks_per_pass
-                    block = obj.seq.getBlock(b);
+            % Build ordered traversal list: (block_index, play_prep, play_cool).
+            % For multi-pass sequences (e.g. bSSFP where each slice is a pass),
+            % the C library expands averages WITHIN each pass (outer=pass,
+            % inner=avg).  For standard single-pass sequences the order is
+            % outer=avg, inner=block (identical to before).
+            trav_b    = zeros(1, max_entries, 'int32');
+            trav_prep = false(1, max_entries);
+            trav_cool = false(1, max_entries);
+            trav_len  = 0;
+            if obj.multipass_info.enabled && obj.num_averages > 1
+                mp_starts  = obj.multipass_info.pass_starts;
+                mp_plen    = obj.multipass_info.pass_len;
+                for p = 1:length(mp_starts)
+                    ps = mp_starts(p);
+                    for avg = 1:obj.num_averages
+                        for bi = 0:mp_plen-1
+                            trav_len = trav_len + 1;
+                            trav_b(trav_len)    = ps + bi;
+                            trav_prep(trav_len) = (avg == 1);
+                            trav_cool(trav_len) = (avg == obj.num_averages);
+                        end
+                    end
+                end
+            else
+                for avg = 1:obj.num_averages
+                    for b = 1:num_blocks_per_pass
+                        trav_len = trav_len + 1;
+                        trav_b(trav_len)    = b;
+                        trav_prep(trav_len) = (avg == 1);
+                        trav_cool(trav_len) = (avg == obj.num_averages);
+                    end
+                end
+            end
+
+            for li = 1:trav_len
+                b         = trav_b(li);
+                play_prep = trav_prep(li);
+                play_cool = trav_cool(li);
+                block = obj.seq.getBlock(b);
 
                     if once_col > 0
                         once = double(block_label_states(b, once_col));
@@ -1010,8 +1057,9 @@ classdef TruthBuilder < handle
                         norot_active = 0;
                     end
 
-                    % ONCE filter: once==1 → first avg only; once==2 → last avg only.
-                    if once == 0 || (once == 1 && avg == 1) || (once == 2 && avg == obj.num_averages)
+                    % ONCE filter: once==1 → first avg of this pass only;
+                    %              once==2 → last avg of this pass only.
+                    if once == 0 || (once == 1 && play_prep) || (once == 2 && play_cool)
                         tr_local_idx = mod(b - 1, obj.num_blocks_in_tr) + 1;
 
                         % Prepended debug columns:
@@ -1087,6 +1135,9 @@ classdef TruthBuilder < handle
                             end
                         end
 
+                        % Block duration in µs (column 15)
+                        st(act, 15) = round(block.blockDuration * 1e6);
+
                         % Rotation
                         if isfield(block, 'rotation')
                             rotmat = mr.aux.quat.toRotMat(block.rotation.rotQuaternion);
@@ -1108,7 +1159,6 @@ classdef TruthBuilder < handle
 
                         act = act + 1;
                     end
-                end
             end
 
             n = act - 1;
@@ -1150,15 +1200,42 @@ classdef TruthBuilder < handle
             probes = [1, 0, 0; 0, 1, 0; 0, 0, 1; oblique];
 
             plan_map = -1 * ones(nscan, 1);
-            plans = struct('def_id', {}, 'rot', {}, 'scan_row', {});
+            plans = struct('def_id', {}, 'rot', {}, 'scan_row', {}, 'tr_scope_id', {}, ...
+                           'inactive_area', {});
 
             for i = 1:nscan
                 def_id = obj.freq_mod_table(i);
+                fm = [];
+                active_axes = [false false false];
+                block_idx = 0;
+                inactive_area = [0, 0, 0];
                 if def_id <= 0
                     continue;
                 end
                 tr_scope_id = 0;
                 rot = reshape(obj.rotmat_table(i, :), [3, 3])';
+                fm = obj.fmod_defs{def_id};
+                active_axes = any(abs(fm.waveform) > 1e-9, 1);
+                block_idx = obj.scan_src_block_idx(i);
+                if block_idx > 0
+                    ax_names = {'gx', 'gy', 'gz'};
+                    block = obj.seq.getBlock(block_idx);
+                    for ch = 1:3
+                        if active_axes(ch)
+                            continue;
+                        end
+                        base_peak = max(abs(fm.waveform(:, ch)));
+                        if base_peak <= 1e-12
+                            continue;
+                        end
+                        inst_peak = 0;
+                        axn = ax_names{ch};
+                        if isfield(block, axn) && ~isempty(block.(axn))
+                            inst_peak = testutils.TruthBuilder.gradPeakAmpSigned(block.(axn));
+                        end
+                        inactive_area(ch) = (fm.ref_integral(ch) / (2 * pi)) * (inst_peak / base_peak);
+                    end
+                end
                 if strcmp(obj.fmod_build_mode, 'tr_scoped')
                     tr_scope_id = obj.scan_src_tr_start_idx(i);
                 end
@@ -1166,7 +1243,8 @@ classdef TruthBuilder < handle
                 found = 0;
                 for p = 1:length(plans)
                     if plans(p).def_id == def_id && plans(p).tr_scope_id == tr_scope_id ...
-                            && max(abs(plans(p).rot(:) - rot(:))) < 1e-7
+                            && max(abs(plans(p).rot(:) - rot(:))) < 1e-7 ...
+                            && max(abs(plans(p).inactive_area(:) - inactive_area(:))) < 1e-12
                         plan_map(i) = p - 1;
                         found = 1;
                         break;
@@ -1178,6 +1256,7 @@ classdef TruthBuilder < handle
                     plans(end).rot = rot;
                     plans(end).scan_row = i;
                     plans(end).tr_scope_id = tr_scope_id;
+                    plans(end).inactive_area = inactive_area;
                     plan_map(i) = length(plans) - 1;
                 end
             end
@@ -1210,7 +1289,7 @@ classdef TruthBuilder < handle
                     w = fm.waveform * u;
 
                     phase_active = dot(fm.ref_integral, u.');
-                    phase_extra = 0.0;
+                    phase_extra = 2 * pi * dot(plans(p).inactive_area, u.');
 
                     plan_phase_active(p, q) = phase_active;
                     plan_phase_extra(p, q) = phase_extra;
@@ -1264,12 +1343,16 @@ classdef TruthBuilder < handle
         end
 
         function phase = integrateInactivePhaseFromTrStart(obj, tr_start_idx, block_idx, ref_abs_s, active_axes, u)
-            phase = 0;
+            area = obj.integrateInactiveAreaFromTrStart(tr_start_idx, block_idx, ref_abs_s, active_axes);
+            phase = 2 * pi * dot(area, u.');
+        end
+
+        function area = integrateInactiveAreaFromTrStart(obj, tr_start_idx, block_idx, ref_abs_s, active_axes)
+            area = zeros(1, 3);
             if tr_start_idx <= 0 || block_idx <= 0
                 return;
             end
 
-            area = zeros(1, 3);
             for bb = tr_start_idx:block_idx
                 blk = obj.seq.getBlock(bb);
                 if bb < block_idx
@@ -1295,8 +1378,6 @@ classdef TruthBuilder < handle
                     end
                 end
             end
-
-            phase = 2 * pi * dot(area, u.');
         end
 
         function exportFreqModPlan(obj, path)
@@ -1315,7 +1396,7 @@ classdef TruthBuilder < handle
 
             nprobe = size(p.probes, 1);
             fwrite(fid, int32(nprobe), 'int32');
-            fwrite(fid, single(p.probes(:)), 'float32');
+            fwrite(fid, single(p.probes'), 'float32');
 
             fwrite(fid, int32(p.num_plans), 'int32');
             fwrite(fid, int32(p.max_samples), 'int32');
@@ -1658,12 +1739,14 @@ classdef TruthBuilder < handle
 
         % ---- helper: compute segment-level RF->ADC and ADC->ADC gaps ----
         function [rf_adc_gap, adc_adc_gap] = computeSegmentGaps(~, seg_blocks)
+            rf_starts = [];
             rf_ends = [];
             adc_starts = [];
             adc_ends = [];
             for b = 1:length(seg_blocks)
                 bd = seg_blocks{b};
                 if bd.rf_end_us >= 0
+                    rf_starts = [rf_starts, bd.rf_start_us]; %#ok<AGROW>
                     rf_ends = [rf_ends, bd.rf_end_us]; %#ok<AGROW>
                 end
                 if bd.adc_start_us >= 0
@@ -1688,6 +1771,12 @@ classdef TruthBuilder < handle
                 sorted_starts = sort(adc_starts);
                 sorted_ends   = sort(adc_ends);
                 for a = 2:length(sorted_starts)
+                    % skip this ADC pair if any RF event starts between them
+                    interleaved = any(rf_starts > sorted_ends(a-1) & ...
+                                      rf_starts < sorted_starts(a));
+                    if interleaved
+                        continue;
+                    end
                     gap = sorted_starts(a) - sorted_ends(a-1);
                     if adc_adc_gap < 0 || gap < adc_adc_gap
                         adc_adc_gap = gap;
@@ -1934,6 +2023,7 @@ classdef TruthBuilder < handle
                 fwrite(fid, int32(obj.scan_table(i, 14)), 'int32');
                 fwrite(fid, single(obj.rotmat_table(i, :)), 'float32');
                 fwrite(fid, int32(obj.freq_mod_table(i)), 'int32');
+                fwrite(fid, int32(obj.scan_table(i, 15)), 'int32');
             end
 
             fclose(fid);
@@ -1981,26 +2071,45 @@ classdef TruthBuilder < handle
     methods (Static)
         function e = gradEnergy(g)
         % GRADENERGY  Gradient energy: integral of amplitude^2 over time.
+        %   Uses the trapezoidal rule, matching pulseqlib__trapz_real_* in C.
             if isfield(g, 'amplitude')
                 e = (g.amplitude)^2 / 3 * g.riseTime ...
                   + (g.amplitude)^2 * g.flatTime ...
                   + (g.amplitude)^2 / 3 * g.fallTime;
             elseif isfield(g, 'waveform') && ~isempty(g.waveform)
-                e = sum((g.waveform(1:end-1)).^2 .* diff(g.tt));
+                w2 = g.waveform .^ 2;
+                e = sum(0.5 * (w2(1:end-1) + w2(2:end)) .* diff(g.tt));
             else
                 e = 0;
             end
         end
 
         function s = gradPeakAmpSigned(grad)
-        % GRADPEAKAMPSIGNED  Return the signed amplitude with max absolute value.
-        %   For trapezoid: amplitude (already signed).
-        %   For arbitrary: the sample with max |value|.
+        % GRADPEAKAMPSIGNED  Return the amplitude stored in the sequence file.
+        %   Matches the value that pulseq writes to the [GRADIENTS]/[TRAP]
+        %   sections of the .seq file, and that the C library reads back:
+        %
+        %   Trapezoid: grad.amplitude (already signed; can be negative).
+        %
+        %   Arbitrary: max(abs(waveform)) * sign(first_non_zero_sample).
+        %     This reproduces the formula in pulseq Sequence.m addBlock() /
+        %     registerGradEvent() (see lines ~643-646 of Sequence.m):
+        %       amplitude = max(abs(event.waveform));
+        %       amplitude = amplitude * sign(fnz);   % fnz = first non-zero
+        %     The waveform returned by getBlock() is amplitude*normalized_shape,
+        %     so dividing back gives the normalized shape; the seq file stores
+        %     this signed amplitude together with the normalized shape.
             if strcmp(grad.type, 'trap') || strcmp(grad.type, 'trapezoid')
                 s = grad.amplitude;
             else
-                [~, idx] = max(abs(grad.waveform));
-                s = grad.waveform(idx);
+                w = grad.waveform;
+                peak = max(abs(w));
+                if peak == 0
+                    s = 0;
+                else
+                    fnz_idx = find(w ~= 0, 1, 'first');
+                    s = peak * sign(w(fnz_idx));
+                end
             end
         end
 
@@ -2063,7 +2172,7 @@ classdef TruthBuilder < handle
                     pts = [wstart; tk; wend];
                     vals = interp1(t, w, pts, 'linear', 0);
 
-                    if any(abs(vals) > 0)
+                    if any(abs(vals) > 1.0)
                         waveforms{ch} = vals;
                     else
                         waveforms{ch} = [];
@@ -2127,7 +2236,7 @@ classdef TruthBuilder < handle
             tk = t(t > wstart & t < wend);
             pts = [wstart; tk; wend];
             vals = interp1(t, w, pts, 'linear', 0);
-            result = any(abs(vals) > 0);
+            result = any(abs(vals) > 1.0);
         end
 
         function [t, w] = gradToKnots(grad)

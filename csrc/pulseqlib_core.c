@@ -83,6 +83,7 @@ void pulseqlib_sequence_descriptor_free(pulseqlib_sequence_descriptor* d)
             if (d->segment_definitions[i].norot_flag)           PULSEQLIB_FREE(d->segment_definitions[i].norot_flag);
             if (d->segment_definitions[i].nopos_flag)           PULSEQLIB_FREE(d->segment_definitions[i].nopos_flag);
             if (d->segment_definitions[i].has_freq_mod)          PULSEQLIB_FREE(d->segment_definitions[i].has_freq_mod);
+            if (d->segment_definitions[i].has_adc)               PULSEQLIB_FREE(d->segment_definitions[i].has_adc);
             if (d->segment_definitions[i].timing.rf_anchors)    PULSEQLIB_FREE(d->segment_definitions[i].timing.rf_anchors);
             if (d->segment_definitions[i].timing.adc_anchors)   PULSEQLIB_FREE(d->segment_definitions[i].timing.adc_anchors);
             if (d->segment_definitions[i].timing.kzero_crossing_indices) PULSEQLIB_FREE(d->segment_definitions[i].timing.kzero_crossing_indices);
@@ -305,7 +306,7 @@ static int check_cross_pass_rf_consistency(
                         "pos %d has %.6g, pass 0 has %.6g\n",
                         p, j, (double)chk_amp, (double)ref_amp);
                 }
-                return PULSEQLIB_ERR_TR_PATTERN_MISMATCH;
+                return PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC;
             }
 
             /* RF shim ID */
@@ -507,6 +508,21 @@ static int check_consistency(
             }
         }
 
+        /* (c) RF shim ID periodicity (same TR range as amplitude). */
+        if (trd->num_trs > 1 && first_check <= last_check) {
+            rc = check_rf_shim_periodicity(desc,
+                ref_tr, first_check, last_check, diag);
+            if (PULSEQLIB_FAILED(rc)) {
+                if (diag) {
+                    pulseqlib__diag_printf(diag,
+                        "Consistency check failed: RF shim ID "
+                        "not periodic in subsequence %d\n",
+                        subseq_idx);
+                }
+                return rc;
+            }
+        }
+
         /* (d) Cross-pass RF amplitude + shim ID consistency */
         if (desc->num_passes > 1) {
             rc = check_cross_pass_rf_consistency(desc, diag);
@@ -519,19 +535,6 @@ static int check_consistency(
                 }
                 return rc;
             }
-
-                /* (c) RF shim ID periodicity (same TR range as amplitude) */
-                rc = check_rf_shim_periodicity(desc,
-                    ref_tr, first_check, last_check, diag);
-                if (PULSEQLIB_FAILED(rc)) {
-                    if (diag) {
-                        pulseqlib__diag_printf(diag,
-                            "Consistency check failed: RF shim ID "
-                            "not periodic in subsequence %d\n",
-                            subseq_idx);
-                    }
-                    return rc;
-                }
         }
     }
 
@@ -715,8 +718,23 @@ int pulseqlib__get_collection_descriptors(
         seg_off += desc.num_unique_segments;
         blk_off += desc.num_blocks;
 
-        coll->total_duration_us += desc.tr_descriptor.tr_duration_us *
-                                   desc.tr_descriptor.num_trs;
+        /* Accumulate actual scan-table duration (not the peek-style
+         * tr_duration × num_trs approximation). */
+        {
+            float subseq_dur = 0.0f;
+            int n;
+            for (n = 0; n < desc.scan_table_len; ++n) {
+                int bt_idx = desc.scan_table_block_idx[n];
+                const pulseqlib_block_table_element* bte =
+                    &desc.block_table[bt_idx];
+                const pulseqlib_block_definition* bdef =
+                    &desc.block_definitions[bte->id];
+                subseq_dur += (bte->duration_us >= 0)
+                    ? (float)bte->duration_us
+                    : (float)bdef->duration_us;
+            }
+            coll->total_duration_us += subseq_dur;
+        }
 
         coll->descriptors[i] = desc;
     }

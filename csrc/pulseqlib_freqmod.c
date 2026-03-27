@@ -108,7 +108,7 @@ static int axis_is_active(const float* waveform, int num_samples)
 {
     int i;
     for (i = 0; i < num_samples; ++i)
-        if (waveform[i] != 0.0f) return 1;
+        if (fabsf(waveform[i]) > 1e-8f) return 1;
     return 0;
 }
 
@@ -576,6 +576,35 @@ static void compute_plan_waveforms(
     }
 }
 
+/* Recompute per-scan extra phase from inactive-axis areas. */
+static void compute_scan_phase_extra(
+    pulseqlib_freq_mod_library* lib,
+    const float* shift_m)
+{
+    int pos;
+    float identity[9] = {1,0,0, 0,1,0, 0,0,1};
+
+    if (!lib || !shift_m || !lib->scan_phase_extra || !lib->scan_inactive_area_3ch)
+        return;
+
+    for (pos = 0; pos < lib->scan_table_len; ++pos) {
+        int pi = lib->scan_to_plan[pos];
+        int ridx = -1;
+        const float* R;
+        float u[3];
+        const float* ia = lib->scan_inactive_area_3ch + (size_t)pos * 3;
+
+        if (pi >= 0 && pi < lib->num_plan_instances)
+            ridx = lib->pi_rotation_idx[pi];
+
+        R = (ridx >= 0 && ridx < lib->num_rotations)
+            ? (const float*)lib->rotations[ridx] : identity;
+        pulseqlib__apply_rotation(u, R, shift_m, 1);  /* R^T @ shift */
+
+        lib->scan_phase_extra[pos] = ia[0] * u[0] + ia[1] * u[1] + ia[2] * u[2];
+    }
+}
+
 /* ================================================================== */
 /*  Helper: allocate plan arrays                                      */
 /* ================================================================== */
@@ -621,10 +650,15 @@ static void free_base_defs(pulseqlib_freq_mod_definition* defs, int n)
 /*  Dedup key types                                                   */
 /* ================================================================== */
 
-#define FREQ_MOD_BASE_COLS  7   /* freq_mod_id, rf_def_id, adc_def_id, gx_evt_id, gy_evt_id, gz_evt_id, effective_duration_us */
+#define FREQ_MOD_BASE_COLS  7   /* freq_mod_id, active_start_us, active_dur_us, gx_def_shot, gy_def_shot, gz_def_shot, effective_duration_us */
 
 typedef struct { int base_idx; float amp[3]; } entry_key_t;
-typedef struct { int entry_idx; int rot_idx; } plan_key_t;
+typedef struct {
+    int entry_idx;
+    int rot_idx;
+    int tr_scope_id;
+    float inactive_ref_3ch[3];
+} plan_key_t;
 
 /* ================================================================== */
 /*  Build                                                             */
@@ -660,6 +694,7 @@ static int build_freq_mod_library(
 
     int* block_rotation      = NULL;   /* [count] rotation_idx per event  */
     int* block_norot         = NULL;   /* [count] norot flag per event    */
+    int* base_active_mask    = NULL;   /* [num_base * 3], allocated after dedup */
     pulseqlib_freq_mod_definition* base_defs = NULL;  /* [num_base] temp */
     int  max_samples;
 
@@ -725,23 +760,93 @@ static int build_freq_mod_library(
         for (n = 0; n < desc->num_blocks; ++n) {
             const pulseqlib_block_table_element* bte = &desc->block_table[n];
             const pulseqlib_block_definition* bdef = &desc->block_definitions[bte->id];
-            int has_adc, adc_def_id;
+            int has_rf, has_adc, adc_def_id_local;
             int effective_duration_us;
+            int gx_key, gy_key, gz_key;
+            int active_start_key, active_dur_key;
 
             if (bte->freq_mod_id < 0) continue;
 
             block_indices[idx] = n;
-
-            /* Base dedup key */
-            base_rows[idx][0] = bte->freq_mod_id;
-            base_rows[idx][1] = bdef->rf_id;
-            has_adc = (bte->adc_id >= 0 && bte->adc_id < desc->adc_table_size);
-            adc_def_id = has_adc ? desc->adc_table[bte->adc_id].id : -1;
-            base_rows[idx][2] = adc_def_id;
-            base_rows[idx][3] = bte->gx_id;
-            base_rows[idx][4] = bte->gy_id;
-            base_rows[idx][5] = bte->gz_id;
             effective_duration_us = bdef->duration_us;
+
+            /* Compute active window timing for the base key.  Two blocks
+             * that use different RF definitions but have the same active
+             * window and gradient shapes will produce identical base
+             * waveforms and should share the same base index. */
+            has_rf  = (bdef->rf_id >= 0 && bdef->rf_id < desc->num_unique_rfs);
+            has_adc = (bte->adc_id >= 0 && bte->adc_id < desc->adc_table_size);
+            active_start_key = 0;
+            active_dur_key   = 0;
+
+            if (has_rf) {
+                const pulseqlib_rf_definition* rdef =
+                    &desc->rf_definitions[bdef->rf_id];
+                float rf_end_us = (float)rdef->delay + rdef->stats.duration_us;
+                float a_start = (float)rdef->delay;
+                float a_end;
+                adc_def_id_local = has_adc
+                    ? desc->adc_table[bte->adc_id].id : -1;
+                if (!has_adc && rf_end_us < 0.75f * (float)effective_duration_us)
+                    a_end = (float)effective_duration_us;
+                else
+                    a_end = rf_end_us;
+                if (a_start < 0.0f) a_start = 0.0f;
+                if (a_end > (float)effective_duration_us)
+                    a_end = (float)effective_duration_us;
+                active_start_key = (int)(a_start + 0.5f);
+                active_dur_key   = (int)(a_end - a_start + 0.5f);
+            } else if (has_adc) {
+                adc_def_id_local = desc->adc_table[bte->adc_id].id;
+                if (adc_def_id_local >= 0 &&
+                    adc_def_id_local < desc->num_unique_adcs) {
+                    const pulseqlib_adc_definition* adef =
+                        &desc->adc_definitions[adc_def_id_local];
+                    float a_start = (float)adef->delay;
+                    float a_end = a_start +
+                        (float)adef->num_samples * (float)adef->dwell_time * 1e-3f;
+                    if (a_start < 0.0f) a_start = 0.0f;
+                    if (a_end > (float)effective_duration_us)
+                        a_end = (float)effective_duration_us;
+                    active_start_key = (int)(a_start + 0.5f);
+                    active_dur_key   = (int)(a_end - a_start + 0.5f);
+                }
+            }
+
+            /* Encode gradient base key as (def_id, shot_index) pair so that
+             * blocks sharing the same gradient *shape* but differing only in
+             * amplitude map to the same base waveform.  Amplitude differences
+             * are handled at the entry dedup level.  */
+            {
+                int ax_id[3];
+                int ax_key[3];
+                int a;
+                ax_id[0] = bte->gx_id;
+                ax_id[1] = bte->gy_id;
+                ax_id[2] = bte->gz_id;
+                for (a = 0; a < 3; ++a) {
+                    if (ax_id[a] >= 0 && ax_id[a] < desc->grad_table_size) {
+                        int g_def = desc->grad_table[ax_id[a]].id;
+                        int shot  = desc->grad_table[ax_id[a]].shot_index;
+                        ax_key[a] = g_def * PULSEQLIB_MAX_GRAD_SHOTS + shot;
+                    } else {
+                        ax_key[a] = -1;
+                    }
+                }
+                gx_key = ax_key[0];
+                gy_key = ax_key[1];
+                gz_key = ax_key[2];
+            }
+
+            /* Base dedup key: active-window timing + gradient shape IDs.
+             * Using active window (start, duration) instead of rf_id/adc_id
+             * merges blocks whose RF definitions differ only in amplitude. */
+            base_rows[idx][0] = bte->freq_mod_id;
+            base_rows[idx][1] = active_start_key;
+            base_rows[idx][2] = active_dur_key;
+            base_rows[idx][3] = gx_key;
+            base_rows[idx][4] = gy_key;
+            base_rows[idx][5] = gz_key;
             base_rows[idx][6] = effective_duration_us;
 
             /* Rotation: record both rotation_id and norot_flag */
@@ -761,8 +866,11 @@ static int build_freq_mod_library(
     /* ==== Build base definitions ==== */
     base_defs = (pulseqlib_freq_mod_definition*)PULSEQLIB_ALLOC(
         (size_t)num_base * sizeof(pulseqlib_freq_mod_definition));
+    base_active_mask = (int*)PULSEQLIB_ALLOC((size_t)num_base * 3 * sizeof(int));
     if (!base_defs) goto build_fail;
     memset(base_defs, 0, (size_t)num_base * sizeof(pulseqlib_freq_mod_definition));
+    if (!base_active_mask) goto build_fail;
+    memset(base_active_mask, 0, (size_t)num_base * 3 * sizeof(int));
 
     max_samples = 0;
     for (n = 0; n < num_base; ++n) {
@@ -795,6 +903,42 @@ static int build_freq_mod_library(
                 active_end_us = rf_end_us;
             }
             ref_time_us   = (float)rdef->stats.isodelay_us;
+
+            /* Prefer segment RF-anchor isocenter when available. */
+            {
+                int scan_p;
+                for (scan_p = 0; scan_p < desc->scan_table_len; ++scan_p) {
+                    if (desc->scan_table_block_idx[scan_p] == blk_idx) {
+                        int seg_id = (desc->scan_table_seg_id) ? desc->scan_table_seg_id[scan_p] : -1;
+                        if (seg_id >= 0 && seg_id < desc->num_unique_segments) {
+                            const pulseqlib_tr_segment* seg = &desc->segment_definitions[seg_id];
+                            int kb, ka, blk_offset = -1;
+                            for (kb = 0; kb < seg->num_blocks; ++kb) {
+                                if (seg->unique_block_indices[kb] == bte->id) {
+                                    blk_offset = kb;
+                                    break;
+                                }
+                            }
+                            if (blk_offset >= 0 && seg->timing.rf_anchors &&
+                                seg->timing.num_rf_anchors > 0) {
+                                for (ka = 0; ka < seg->timing.num_rf_anchors; ++ka) {
+                                    if (seg->timing.rf_anchors[ka].block_offset == blk_offset) {
+                                        float iso = seg->timing.rf_anchors[ka].isocenter_us;
+                                        float as = seg->timing.rf_anchors[ka].start_us;
+                                        float iso_rel = iso - as;
+                                        if (iso_rel < 0.0f) iso_rel = 0.0f;
+                                        if (iso_rel > (active_end_us - active_start_us))
+                                            iso_rel = active_end_us - active_start_us;
+                                        ref_time_us = iso_rel;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
         } else if (has_adc) {
             adc_def_id_local = desc->adc_table[bte->adc_id].id;
             if (adc_def_id_local >= 0 && adc_def_id_local < desc->num_unique_adcs) {
@@ -804,7 +948,44 @@ static int build_freq_mod_library(
                                    (float)adef->dwell_time * 1e-3f;
                 active_start_us = (float)adef->delay;
                 active_end_us   = active_start_us + adc_dur_us;
-                ref_time_us     = adc_dur_us * 0.5f;
+                ref_time_us     = adc_dur_us * 0.5f;   /* default: midpoint */
+
+                /* Override with accurate kzero from segment timing anchors. */
+                {
+                    int scan_p;
+                    for (scan_p = 0; scan_p < desc->scan_table_len; ++scan_p) {
+                        if (desc->scan_table_block_idx[scan_p] == blk_idx) {
+                            int seg_id = desc->scan_table_seg_id[scan_p];
+                            if (seg_id >= 0 && seg_id < desc->num_unique_segments) {
+                                const pulseqlib_tr_segment* seg =
+                                    &desc->segment_definitions[seg_id];
+                                int kb, ka, blk_offset = -1;
+                                for (kb = 0; kb < seg->num_blocks; ++kb) {
+                                    if (seg->unique_block_indices[kb] == bte->id) {
+                                        blk_offset = kb;
+                                        break;
+                                    }
+                                }
+                                if (blk_offset >= 0 &&
+                                    seg->timing.adc_anchors &&
+                                    seg->timing.num_adc_anchors > 0) {
+                                    for (ka = 0; ka < seg->timing.num_adc_anchors; ++ka) {
+                                        if (seg->timing.adc_anchors[ka].block_offset == blk_offset) {
+                                            float kz = seg->timing.adc_anchors[ka].kzero_us;
+                                            float as = seg->timing.adc_anchors[ka].start_us;
+                                            float kz_rel = kz - as;
+                                            if (kz_rel < 0.0f) kz_rel = 0.0f;
+                                            if (kz_rel > adc_dur_us) kz_rel = adc_dur_us;
+                                            ref_time_us = kz_rel;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
             } else {
                 continue;
             }
@@ -830,8 +1011,69 @@ static int build_freq_mod_library(
             continue;
         }
 
+        base_active_mask[n * 3 + 0] = axis_is_active(
+            base_defs[n].waveform_gx, base_defs[n].num_samples);
+        base_active_mask[n * 3 + 1] = axis_is_active(
+            base_defs[n].waveform_gy, base_defs[n].num_samples);
+        base_active_mask[n * 3 + 2] = axis_is_active(
+            base_defs[n].waveform_gz, base_defs[n].num_samples);
+
         if (base_defs[n].num_samples > max_samples)
             max_samples = base_defs[n].num_samples;
+    }
+
+    /* ==== Merge bases with identical waveforms ====
+     * The integer base key may over-distinguish bases (e.g. different gradient
+     * event IDs for channels that are all-zero within the active window).
+     * Remap base_map so that waveform-identical bases share one index.  */
+    {
+        int* base_remap = (int*)PULSEQLIB_ALLOC((size_t)num_base * sizeof(int));
+        if (base_remap) {
+            int b, b2, ch2, s2;
+            for (b = 0; b < num_base; ++b) base_remap[b] = b;
+
+            for (b = 1; b < num_base; ++b) {
+                for (b2 = 0; b2 < b; ++b2) {
+                    const pulseqlib_freq_mod_definition* da = &base_defs[b];
+                    const pulseqlib_freq_mod_definition* db = &base_defs[b2];
+                    int identical = 1;
+                    if (da->num_samples != db->num_samples ||
+                        da->raster_us  != db->raster_us) {
+                        identical = 0;
+                    } else {
+                        const float* wa[3] = {da->waveform_gx, da->waveform_gy, da->waveform_gz};
+                        const float* wb[3] = {db->waveform_gx, db->waveform_gy, db->waveform_gz};
+                        for (ch2 = 0; ch2 < 3 && identical; ++ch2) {
+                            if (!wa[ch2] && !wb[ch2]) continue;
+                            if (!wa[ch2] || !wb[ch2]) { identical = 0; break; }
+                            for (s2 = 0; s2 < da->num_samples; ++s2) {
+                                if (wa[ch2][s2] != wb[ch2][s2]) {
+                                    identical = 0; break;
+                                }
+                            }
+                        }
+                        /* Also compare ref_integral and ref_time */
+                        if (identical) {
+                            for (ch2 = 0; ch2 < 3; ++ch2) {
+                                if (da->ref_integral[ch2] != db->ref_integral[ch2]) {
+                                    identical = 0; break;
+                                }
+                            }
+                        }
+                    }
+                    if (identical) {
+                        base_remap[b] = base_remap[b2];
+                        break;
+                    }
+                }
+            }
+
+            /* Apply remap to base_map */
+            for (b = 0; b < count; ++b)
+                base_map[b] = base_remap[base_map[b]];
+
+            PULSEQLIB_FREE(base_remap);
+        }
     }
 
     /* ==== Pass 2: build entry dedup keys ==== */
@@ -840,6 +1082,7 @@ static int build_freq_mod_library(
         const pulseqlib_block_table_element* bte = &desc->block_table[blk_idx];
         int bi = base_map[n];
         float amp[3];
+        int ch;
 
         amp[0] = (bte->gx_id >= 0 && bte->gx_id < desc->grad_table_size)
                  ? desc->grad_table[bte->gx_id].amplitude : 0.0f;
@@ -847,6 +1090,13 @@ static int build_freq_mod_library(
                  ? desc->grad_table[bte->gy_id].amplitude : 0.0f;
         amp[2] = (bte->gz_id >= 0 && bte->gz_id < desc->grad_table_size)
                  ? desc->grad_table[bte->gz_id].amplitude : 0.0f;
+
+        /* Zero out amplitudes for channels inactive in the active window. */
+        if (bi >= 0 && bi < num_base) {
+            if (!base_active_mask[bi * 3 + 0]) amp[0] = 0.0f;
+            if (!base_active_mask[bi * 3 + 1]) amp[1] = 0.0f;
+            if (!base_active_mask[bi * 3 + 2]) amp[2] = 0.0f;
+        }
 
         memset(&entry_keys[n], 0, sizeof(entry_keys[n]));
         entry_keys[n].base_idx = bi;
@@ -1022,59 +1272,347 @@ static int build_freq_mod_library(
         }
     }
 
-    /* ==== Pass 3: build plan dedup keys ==== */
-    for (n = 0; n < count; ++n) {
-        memset(&plan_keys[n], 0, sizeof(plan_keys[n]));
-        plan_keys[n].entry_idx = entry_map[n];
-        plan_keys[n].rot_idx   = block_rotation[n];
-    }
-
-    num_plan = dedup_keys(plan_unique, plan_map,
-        (const char*)plan_keys, count, (int)sizeof(plan_key_t));
-
-    /* ==== Build plan instance metadata ==== */
-    lib->num_plan_instances = num_plan;
-    lib->pi_entry_idx    = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
-    lib->pi_rotation_idx = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
-    if (!lib->pi_entry_idx || !lib->pi_rotation_idx) goto build_fail;
-
-    for (n = 0; n < num_plan; ++n) {
-        int ev = plan_unique[n];
-        lib->pi_entry_idx[n]    = entry_map[ev];
-        lib->pi_rotation_idx[n] = block_rotation[ev];
-    }
-
-    /* ==== Allocate plan arrays ==== */
-    result = alloc_plan(lib);
-    if (PULSEQLIB_FAILED(result)) goto build_fail;
-
-    /* Fill plan_num_samples from entries */
-    for (n = 0; n < num_plan; ++n)
-        lib->plan_num_samples[n] =
-            lib->entry_num_samples[lib->pi_entry_idx[n]];
-
-    /* ==== Build scan_to_plan ==== */
+    /* ==== Pass 3: plan dedup + scan_to_plan ====
+     *
+     * Auto-detect tr_scoped mode: if freq-mod blocks appear in more
+     * than one distinct segment across the scan table, we must dedup
+     * at the scan-table level (each TR gets its own plan instances).
+     * Otherwise the block-level dedup suffices.
+     */
     {
-        /* Temp: block_table_idx -> plan_instance */
-        int* blk_to_plan = (int*)PULSEQLIB_ALLOC(
+        int use_tr_scope = 0;
+        int* blk_to_entry = NULL;
+        int* blk_to_rotation_map = NULL;
+        int* blk_to_base = NULL;
+        int* blk_to_active_mask = NULL;
+        int scan_count, sc, i;
+        plan_key_t* scan_plan_keys = NULL;
+        int* scan_plan_unique = NULL;
+        int* scan_plan_map = NULL;
+        int tr_size = desc->tr_descriptor.tr_size;
+        int tr_scope_scan_id = -1;
+        int tr_start_scan_pos = -1;
+
+        /* Build block -> entry/rotation maps (needed by both paths) */
+        blk_to_entry = (int*)PULSEQLIB_ALLOC(
             (size_t)desc->num_blocks * sizeof(int));
-        int i;
-        if (!blk_to_plan) goto build_fail;
+        blk_to_rotation_map = (int*)PULSEQLIB_ALLOC(
+            (size_t)desc->num_blocks * sizeof(int));
+        blk_to_base = (int*)PULSEQLIB_ALLOC(
+            (size_t)desc->num_blocks * sizeof(int));
+        blk_to_active_mask = (int*)PULSEQLIB_ALLOC(
+            (size_t)desc->num_blocks * 3 * sizeof(int));
+        if (!blk_to_entry || !blk_to_rotation_map || !blk_to_base || !blk_to_active_mask) {
+            if (blk_to_entry) PULSEQLIB_FREE(blk_to_entry);
+            if (blk_to_rotation_map) PULSEQLIB_FREE(blk_to_rotation_map);
+            if (blk_to_base) PULSEQLIB_FREE(blk_to_base);
+            if (blk_to_active_mask) PULSEQLIB_FREE(blk_to_active_mask);
+            goto build_fail;
+        }
+        for (n = 0; n < desc->num_blocks; ++n) {
+            blk_to_entry[n] = -1;
+            blk_to_rotation_map[n] = -1;
+            blk_to_base[n] = -1;
+            blk_to_active_mask[n * 3 + 0] = 0;
+            blk_to_active_mask[n * 3 + 1] = 0;
+            blk_to_active_mask[n * 3 + 2] = 0;
+        }
+        for (n = 0; n < count; ++n) {
+            int bi = base_map[n];
+            blk_to_entry[block_indices[n]]       = entry_map[n];
+            blk_to_rotation_map[block_indices[n]] = block_rotation[n];
+            blk_to_base[block_indices[n]] = bi;
+            if (bi >= 0 && bi < num_base) {
+                blk_to_active_mask[block_indices[n] * 3 + 0] = base_active_mask[bi * 3 + 0];
+                blk_to_active_mask[block_indices[n] * 3 + 1] = base_active_mask[bi * 3 + 1];
+                blk_to_active_mask[block_indices[n] * 3 + 2] = base_active_mask[bi * 3 + 2];
+            }
+        }
 
-        for (i = 0; i < desc->num_blocks; ++i) blk_to_plan[i] = -1;
-        for (i = 0; i < count; ++i)
-            blk_to_plan[block_indices[i]] = plan_map[i];
+        lib->scan_inactive_area_3ch = (float*)PULSEQLIB_ALLOC(
+            (size_t)lib->scan_table_len * 3 * sizeof(float));
+        lib->scan_phase_extra = (float*)PULSEQLIB_ALLOC(
+            (size_t)lib->scan_table_len * sizeof(float));
+        if (!lib->scan_inactive_area_3ch || !lib->scan_phase_extra) {
+            PULSEQLIB_FREE(blk_to_entry);
+            PULSEQLIB_FREE(blk_to_rotation_map);
+            PULSEQLIB_FREE(blk_to_base);
+            PULSEQLIB_FREE(blk_to_active_mask);
+            goto build_fail;
+        }
+        memset(lib->scan_inactive_area_3ch, 0,
+               (size_t)lib->scan_table_len * 3 * sizeof(float));
+        memset(lib->scan_phase_extra, 0,
+               (size_t)lib->scan_table_len * sizeof(float));
 
+        /* Detect multi-segment freq_mod: check how many distinct segments
+         * contain freq_mod blocks in the scan table. */
+        if (desc->scan_table_seg_id && desc->scan_table_len > 0) {
+            int first_seg = -1;
+            int i;
+            for (i = 0; i < desc->scan_table_len; ++i) {
+                int bti = desc->scan_table_block_idx[i];
+                if (bti >= 0 && bti < desc->num_blocks &&
+                    blk_to_entry[bti] >= 0) {
+                    int sid = desc->scan_table_seg_id[i];
+                    if (first_seg < 0)
+                        first_seg = sid;
+                    else if (sid != first_seg) {
+                        use_tr_scope = 1;
+                        break;
+                    }
+                }
+            }
+        }
+
+        scan_count = 0;
         for (i = 0; i < desc->scan_table_len; ++i) {
             int bti = desc->scan_table_block_idx[i];
-            lib->scan_to_plan[i] = (bti >= 0 && bti < desc->num_blocks)
-                                   ? blk_to_plan[bti] : -1;
+            if (bti >= 0 && bti < desc->num_blocks && blk_to_entry[bti] >= 0)
+                scan_count++;
         }
-        PULSEQLIB_FREE(blk_to_plan);
+
+        scan_plan_keys = (plan_key_t*)PULSEQLIB_ALLOC((size_t)scan_count * sizeof(plan_key_t));
+        scan_plan_unique = (int*)PULSEQLIB_ALLOC((size_t)scan_count * sizeof(int));
+        scan_plan_map = (int*)PULSEQLIB_ALLOC((size_t)scan_count * sizeof(int));
+        if (!scan_plan_keys || !scan_plan_unique || !scan_plan_map) {
+            if (scan_plan_keys) PULSEQLIB_FREE(scan_plan_keys);
+            if (scan_plan_unique) PULSEQLIB_FREE(scan_plan_unique);
+            if (scan_plan_map) PULSEQLIB_FREE(scan_plan_map);
+            PULSEQLIB_FREE(blk_to_entry);
+            PULSEQLIB_FREE(blk_to_rotation_map);
+            PULSEQLIB_FREE(blk_to_base);
+            PULSEQLIB_FREE(blk_to_active_mask);
+            goto build_fail;
+        }
+
+        sc = 0;
+        for (i = 0; i < desc->scan_table_len; ++i) {
+            int bti = desc->scan_table_block_idx[i];
+
+            if (desc->scan_table_tr_start && desc->scan_table_tr_start[i]) {
+                tr_scope_scan_id++;
+                tr_start_scan_pos = i;
+            }
+            if (tr_scope_scan_id < 0) {
+                tr_scope_scan_id = 0;
+                tr_start_scan_pos = i;
+            }
+
+            if (!(bti >= 0 && bti < desc->num_blocks && blk_to_entry[bti] >= 0)) {
+                lib->scan_to_plan[i] = -1;
+                continue;
+            }
+
+            {
+                const pulseqlib_block_table_element* bte = &desc->block_table[bti];
+                const pulseqlib_block_definition* bdef = &desc->block_definitions[bte->id];
+                int has_rf = (bdef->rf_id >= 0 && bdef->rf_id < desc->num_unique_rfs);
+                int has_adc = (bte->adc_id >= 0 && bte->adc_id < desc->adc_table_size);
+                float ref_abs_us = 0.0f;
+                int tr_start_blk_local = -1;
+                int ch;
+                int entry_idx_local = blk_to_entry[bti];
+
+                memset(&scan_plan_keys[sc], 0, sizeof(scan_plan_keys[sc]));
+                scan_plan_keys[sc].entry_idx = blk_to_entry[bti];
+                scan_plan_keys[sc].rot_idx = blk_to_rotation_map[bti];
+                scan_plan_keys[sc].tr_scope_id = use_tr_scope ? tr_scope_scan_id : 0;
+
+                if (tr_start_scan_pos >= 0 && tr_start_scan_pos < desc->scan_table_len) {
+                    tr_start_blk_local = desc->scan_table_block_idx[tr_start_scan_pos];
+                }
+                if (tr_start_blk_local < 0) {
+                    tr_start_blk_local = (tr_size > 0) ? (bti / tr_size) * tr_size : bti;
+                }
+
+                if (has_rf) {
+                    const pulseqlib_rf_definition* rdef = &desc->rf_definitions[bdef->rf_id];
+                    ref_abs_us = (float)rdef->delay + (float)rdef->stats.isodelay_us;
+
+                    /* Prefer segment RF-anchor isocenter when available. */
+                    {
+                        int seg_id = (desc->scan_table_seg_id) ? desc->scan_table_seg_id[i] : -1;
+                        if (seg_id >= 0 && seg_id < desc->num_unique_segments) {
+                            const pulseqlib_tr_segment* seg = &desc->segment_definitions[seg_id];
+                            int kb, ka, blk_offset = -1;
+                            for (kb = 0; kb < seg->num_blocks; ++kb) {
+                                if (seg->unique_block_indices[kb] == bte->id) {
+                                    blk_offset = kb;
+                                    break;
+                                }
+                            }
+                            if (blk_offset >= 0 && seg->timing.rf_anchors &&
+                                seg->timing.num_rf_anchors > 0) {
+                                for (ka = 0; ka < seg->timing.num_rf_anchors; ++ka) {
+                                    if (seg->timing.rf_anchors[ka].block_offset == blk_offset) {
+                                        float iso = seg->timing.rf_anchors[ka].isocenter_us;
+                                        float as = seg->timing.rf_anchors[ka].start_us;
+                                        float iso_rel = iso - as;
+                                        if (iso_rel < 0.0f) iso_rel = 0.0f;
+                                        ref_abs_us = (float)rdef->delay + iso_rel;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (has_adc) {
+                    int adc_def_id_local = desc->adc_table[bte->adc_id].id;
+                    if (adc_def_id_local >= 0 && adc_def_id_local < desc->num_unique_adcs) {
+                        const pulseqlib_adc_definition* adef =
+                            &desc->adc_definitions[adc_def_id_local];
+                        float adc_dur_us = (float)adef->num_samples *
+                                           (float)adef->dwell_time * 1e-3f;
+                        float ref_time_rel_us = adc_dur_us * 0.5f;
+                        int seg_id = (desc->scan_table_seg_id) ? desc->scan_table_seg_id[i] : -1;
+
+                        if (seg_id >= 0 && seg_id < desc->num_unique_segments) {
+                            const pulseqlib_tr_segment* seg = &desc->segment_definitions[seg_id];
+                            int kb, ka, blk_offset = -1;
+                            for (kb = 0; kb < seg->num_blocks; ++kb) {
+                                if (seg->unique_block_indices[kb] == bte->id) {
+                                    blk_offset = kb;
+                                    break;
+                                }
+                            }
+                            if (blk_offset >= 0 && seg->timing.adc_anchors &&
+                                seg->timing.num_adc_anchors > 0) {
+                                for (ka = 0; ka < seg->timing.num_adc_anchors; ++ka) {
+                                    if (seg->timing.adc_anchors[ka].block_offset == blk_offset) {
+                                        float kz = seg->timing.adc_anchors[ka].kzero_us;
+                                        float as = seg->timing.adc_anchors[ka].start_us;
+                                        float kz_rel = kz - as;
+                                        if (kz_rel < 0.0f) kz_rel = 0.0f;
+                                        if (kz_rel > adc_dur_us) kz_rel = adc_dur_us;
+                                        ref_time_rel_us = kz_rel;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        ref_abs_us = (float)adef->delay + ref_time_rel_us;
+                    }
+                }
+
+                if (ref_abs_us < 0.0f) ref_abs_us = 0.0f;
+                if (ref_abs_us > (float)bdef->duration_us)
+                    ref_abs_us = (float)bdef->duration_us;
+
+                if (tr_start_blk_local < 0) tr_start_blk_local = 0;
+                if (tr_start_blk_local > bti) tr_start_blk_local = bti;
+
+                for (ch = 0; ch < 3; ++ch) {
+                    float area_sum = 0.0f;
+                    int axis_active = 0;
+
+                    if (!use_tr_scope) {
+                        scan_plan_keys[sc].inactive_ref_3ch[ch] = 0.0f;
+                        continue;
+                    }
+
+                    if (entry_idx_local >= 0 && entry_idx_local < lib->num_entries) {
+                        int s;
+                        const float* ew = lib->entry_waveform_3ch
+                            + (size_t)entry_idx_local * lib->max_samples * 3
+                            + (size_t)ch * lib->max_samples;
+                        int ens = lib->entry_num_samples[entry_idx_local];
+                        for (s = 0; s < ens; ++s) {
+                            if (fabsf(ew[s]) > 1e-8f) { axis_active = 1; break; }
+                        }
+                    }
+
+                    if (axis_active) {
+                        scan_plan_keys[sc].inactive_ref_3ch[ch] = 0.0f;
+                        continue;
+                    }
+
+                    {
+                        int bi = blk_to_base[bti];
+                        int gt_id;
+                        float amp = 0.0f;
+
+                        if (ch == 0)      gt_id = bte->gx_id;
+                        else if (ch == 1) gt_id = bte->gy_id;
+                        else              gt_id = bte->gz_id;
+
+                        if (gt_id >= 0 && gt_id < desc->grad_table_size)
+                            amp = desc->grad_table[gt_id].amplitude;
+
+                        if (bi >= 0 && bi < num_base)
+                            area_sum = base_defs[bi].ref_integral[ch] * amp;
+                    }
+                    scan_plan_keys[sc].inactive_ref_3ch[ch] = area_sum;
+                    lib->scan_inactive_area_3ch[i * 3 + ch] =
+                        scan_plan_keys[sc].inactive_ref_3ch[ch];
+                }
+
+                sc++;
+            }
+        }
+
+        num_plan = dedup_keys(scan_plan_unique, scan_plan_map,
+            (const char*)scan_plan_keys, scan_count, (int)sizeof(plan_key_t));
+
+        lib->num_plan_instances = num_plan;
+        lib->pi_entry_idx = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
+        lib->pi_rotation_idx = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
+        if (!lib->pi_entry_idx || !lib->pi_rotation_idx) {
+            PULSEQLIB_FREE(scan_plan_keys);
+            PULSEQLIB_FREE(scan_plan_unique);
+            PULSEQLIB_FREE(scan_plan_map);
+            PULSEQLIB_FREE(blk_to_entry);
+            PULSEQLIB_FREE(blk_to_rotation_map);
+            PULSEQLIB_FREE(blk_to_base);
+            PULSEQLIB_FREE(blk_to_active_mask);
+            goto build_fail;
+        }
+        for (n = 0; n < num_plan; ++n) {
+            int ev = scan_plan_unique[n];
+            lib->pi_entry_idx[n] = scan_plan_keys[ev].entry_idx;
+            lib->pi_rotation_idx[n] = scan_plan_keys[ev].rot_idx;
+        }
+
+        result = alloc_plan(lib);
+        if (PULSEQLIB_FAILED(result)) {
+            PULSEQLIB_FREE(scan_plan_keys);
+            PULSEQLIB_FREE(scan_plan_unique);
+            PULSEQLIB_FREE(scan_plan_map);
+            PULSEQLIB_FREE(blk_to_entry);
+            PULSEQLIB_FREE(blk_to_rotation_map);
+            PULSEQLIB_FREE(blk_to_base);
+            PULSEQLIB_FREE(blk_to_active_mask);
+            goto build_fail;
+        }
+        for (n = 0; n < num_plan; ++n)
+            lib->plan_num_samples[n] =
+                lib->entry_num_samples[lib->pi_entry_idx[n]];
+
+        sc = 0;
+        for (i = 0; i < desc->scan_table_len; ++i) {
+            int bti = desc->scan_table_block_idx[i];
+            if (bti >= 0 && bti < desc->num_blocks && blk_to_entry[bti] >= 0) {
+                lib->scan_to_plan[i] = scan_plan_map[sc];
+                sc++;
+            } else {
+                lib->scan_to_plan[i] = -1;
+            }
+        }
+
+        PULSEQLIB_FREE(scan_plan_keys);
+        PULSEQLIB_FREE(scan_plan_unique);
+        PULSEQLIB_FREE(scan_plan_map);
+
+        PULSEQLIB_FREE(blk_to_entry);
+        PULSEQLIB_FREE(blk_to_rotation_map);
+        PULSEQLIB_FREE(blk_to_base);
+        PULSEQLIB_FREE(blk_to_active_mask);
     }
 
     /* ==== Compute plan waveforms ==== */
     compute_plan_waveforms(lib, shift_m);
+    compute_scan_phase_extra(lib, shift_m);
 
     /* Keep accessor-only semantics for phase: all channel contributions
      * are precomputed in plan_phase from the 3-channel definition itself. */
@@ -1101,6 +1639,7 @@ static int build_freq_mod_library(
     PULSEQLIB_FREE(plan_map);
     PULSEQLIB_FREE(block_rotation);
     PULSEQLIB_FREE(block_norot);
+    PULSEQLIB_FREE(base_active_mask);
 
     *out_lib = lib;
     return PULSEQLIB_SUCCESS;
@@ -1119,6 +1658,7 @@ build_fail:
     if (plan_map)       PULSEQLIB_FREE(plan_map);
     if (block_rotation) PULSEQLIB_FREE(block_rotation);
     if (block_norot)    PULSEQLIB_FREE(block_norot);
+    if (base_active_mask) PULSEQLIB_FREE(base_active_mask);
     if (lib)            { freq_mod_library_free(lib); }
     return PULSEQLIB_ERR_ALLOC_FAILED;
 }
@@ -1139,6 +1679,7 @@ static int update_freq_mod_library(
         return PULSEQLIB_SUCCESS;
 
     compute_plan_waveforms(lib, shift_m);
+    compute_scan_phase_extra(lib, shift_m);
     return PULSEQLIB_SUCCESS;
 }
 
@@ -1163,7 +1704,9 @@ static int freq_mod_library_get(
         return 0;
     *out_waveform    = lib->plan_waveforms[pi];
     *out_num_samples = lib->plan_num_samples[pi];
-    *out_phase_rad   = lib->plan_phase[pi];
+    *out_phase_rad   = lib->plan_phase[pi]
+        + ((lib->scan_phase_extra && scan_table_pos < lib->scan_table_len)
+            ? lib->scan_phase_extra[scan_table_pos] : 0.0f);
     return 1;
 }
 

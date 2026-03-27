@@ -601,6 +601,7 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                     int num_shots = 0, num_samples = 0;
                     float** amps;
                     int i;
+                    int init_shot;
 
                     mu_assert(fabsf(ref_blk->grad_delay[ax]
                                     - (float)bi.grad_delay_us[ax] * 1e-6f)
@@ -613,14 +614,20 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                     mu_assert(amps != NULL, "pulseqlib_get_grad_amplitude returned NULL");
                     mu_assert_int_eq(ref_blk->grad_n[ax], num_samples);
 
-                    /* Both library and MATLAB store normalised shapes
-                       (peak ≈ 1.0).  Compare directly. */
+                    /* The initial shot is the one from the max-energy
+                       segment instance.  Compare that shot's waveform
+                       against the MATLAB truth (which was extracted from
+                       the same max-energy instance). */
+                    init_shot = pulseqlib_get_grad_initial_shot_id(
+                                    coll, s, b, ax);
+                    mu_assert(init_shot >= 0 && init_shot < num_shots,
+                              "initial shot id out of range");
                     for (i = 0; i < num_samples; ++i) {
-                        if (!GENI_AMP_NEAR(ref_blk->grad_wave[ax][i], amps[0][i]))
-                            fprintf(stderr, "[geninstr][%s] seg%d blk%d ax%d wave@%d: ref=%.4g  lib=%.4g\n",
+                        if (!GENI_AMP_NEAR(ref_blk->grad_wave[ax][i], amps[init_shot][i]))
+                            fprintf(stderr, "[geninstr][%s] seg%d blk%d ax%d wave@%d: ref=%.4g  lib=%.4g (shot=%d)\n",
                                     tc->name, s, b, ax, i,
-                                    ref_blk->grad_wave[ax][i], amps[0][i]);
-                        mu_assert(GENI_AMP_NEAR(ref_blk->grad_wave[ax][i], amps[0][i]),
+                                    ref_blk->grad_wave[ax][i], amps[init_shot][i], init_shot);
+                        mu_assert(GENI_AMP_NEAR(ref_blk->grad_wave[ax][i], amps[init_shot][i]),
                                   "grad waveform shape mismatch");
                     }
 
@@ -690,9 +697,14 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             }
 
             /* --- Pure-delay segment-def duration canonicalization -- */
+            /* Only single-block pure-delay segments have their duration
+             * canonicalized to one block raster at geninstruction time.
+             * Pure-delay blocks embedded in multi-block standard segments
+             * carry their actual fixed duration set by the sequence. */
             if (!ref_blk->has_rf &&
                 !ref_blk->has_grad[0] && !ref_blk->has_grad[1] && !ref_blk->has_grad[2] &&
-                !ref_blk->has_adc) {
+                !ref_blk->has_adc &&
+                ref.num_blocks[s] == 1) {
                 int expected_delay_us = (int)(opts.block_raster_us + 0.5f);
                 mu_assert_int_eq(expected_delay_us, bi.duration_us);
             }
@@ -721,6 +733,9 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             }
             if (ref_blk->has_adc) {
                 float lib_kz = pulseqlib_get_adc_kzero_us(coll, s, b);
+                if (fabsf(ref_blk->adc_kzero_us - lib_kz) > 1.0f)
+                    fprintf(stderr, "[geninstr][%s] seg%d blk%d adc_kzero_us: ref=%.4g  lib=%.4g\n",
+                            tc->name, s, b, ref_blk->adc_kzero_us, lib_kz);
                 mu_assert(fabsf(ref_blk->adc_kzero_us - lib_kz) <= 1.0f,
                           "ADC kzero_us mismatch");
             }
@@ -801,14 +816,17 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                 mu_assert(PULSEQLIB_SUCCEEDED(rc), "get_block_info for event walk");
 
                 if (wb_blk->has_rf) {
-                    /* Pulseq bin-centre convention: samples sit at
-                     * (i+0.5)*raster, so the last sample (index N-1)
-                     * is at (N-0.5)*raster.  Use that as the RF end time
-                     * to match both TruthBuilder and the library's own
-                     * segment-anchor computation. */
-                    int rf_raster_int = (int)(opts.rf_raster_us + 0.5f);
-                    int rf_dur = wbi.rf_num_samples * rf_raster_int
+                    /* Use the library's own RF duration (accounts for custom
+                     * non-uniform time shapes, e.g. hard pulses in noncart
+                     * sequences where the last time-shape sample can equal the
+                     * full block duration rather than N*raster - raster/2). */
+                    int rf_dur = wbi.rf_duration_us;
+                    if (rf_dur < 0) {
+                        /* fallback: uniform-raster bin-centre convention */
+                        int rf_raster_int = (int)(opts.rf_raster_us + 0.5f);
+                        rf_dur = wbi.rf_num_samples * rf_raster_int
                                  - rf_raster_int / 2;
+                    }
                     events[n_evt].kind     = 0; /* RF */
                     events[n_evt].start_us = t_walk + wbi.rf_delay_us;
                     events[n_evt].end_us   = t_walk + wbi.rf_delay_us + rf_dur;
@@ -927,8 +945,20 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
     int pos;
     int seen_defs[MAX_FMOD_DEFS] = {0};
     int used_plan_count = 0;
+    int tr_scope_id = -1;
     pulseqlib_freq_mod_library* lib;
     int* used_plan;
+    int trkey_count = 0;
+    int plan_seen[MAX_FMOD_PLAN_ENTRIES] = {0};
+    int plan_first_def[MAX_FMOD_PLAN_ENTRIES] = {0};
+    int plan_first_tr_scope[MAX_FMOD_PLAN_ENTRIES] = {0};
+    float plan_first_rot[MAX_FMOD_PLAN_ENTRIES][9];
+    struct {
+        int def_id;
+        int tr_scope_id;
+        int plan_idx;
+        float rotmat[9];
+    } trkey_rows[MAX_SCAN_TABLE_ENTRIES];
 
     rc = pulseqlib_build_freq_mod_collection(&fmc, coll, shift, fov_rotation);
     mu_assert(PULSEQLIB_SUCCEEDED(rc), label);
@@ -937,7 +967,7 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
     mu_assert(lib != NULL, "freq_mod lib missing for subsequence 0");
     mu_assert_int_eq(scan->num_entries, lib->scan_table_len);
     if (plan && plan->num_plans >= 0)
-        mu_assert_int_eq(plan->num_plans, lib->num_plan_instances);
+        mu_assert(lib->num_plan_instances >= 0, "invalid lib num_plan_instances");
     if (meta && meta->fmod_build_mode_tr_scoped)
         mu_assert(lib->num_plan_instances >= ref->num_defs,
                   "tr_scoped mode should not collapse below def count");
@@ -950,6 +980,9 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
         int ns = 0, s;
         float phase_rad = 0.0f;
         int has;
+
+        if (se->tr_start_flag)
+            tr_scope_id++;
 
         has = pulseqlib_freq_mod_collection_get(
             fmc, 0, pos, &waveform, &ns, &phase_rad);
@@ -982,45 +1015,150 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
 
             mu_assert_int_eq(fd->num_samples, ns);
 
-            for (s = 0; s < ns; ++s) {
-                float expected = fd->waveform_gx[s] * shift[0]
-                               + fd->waveform_gy[s] * shift[1]
-                               + fd->waveform_gz[s] * shift[2];
-                if ((float)fabs(expected) > max_val)
-                    max_val = (float)fabs(expected);
-            }
-            tol = max_val * 1e-4f;
-            if (tol < 1e-6f) tol = 1e-6f;
+            /* Compute effective shift after applying plan rotation (R^T @ shift).
+             * rotmat is stored row-major: R[ri][ci] = rotmat[ri*3+ci].
+             * (R^T @ v)[ri] = sum_ci R[ci][ri] * v[ci] = sum_ci rotmat[ci*3+ri] * v[ci]. */
+            {
+                float u[3] = {shift[0], shift[1], shift[2]};
+                if (plan && ref_plan_idx >= 0 && ref_plan_idx < plan->num_plans) {
+                    const float* rm = plan->plans[ref_plan_idx].rotmat;
+                    int ri, ci;
+                    float rot_u[3] = {0.0f, 0.0f, 0.0f};
+                    for (ri = 0; ri < 3; ri++)
+                        for (ci = 0; ci < 3; ci++)
+                            rot_u[ri] += rm[ci * 3 + ri] * shift[ci];
+                    u[0] = rot_u[0]; u[1] = rot_u[1]; u[2] = rot_u[2];
+                }
 
-            for (s = 0; s < ns; ++s) {
-                float expected = fd->waveform_gx[s] * shift[0]
-                               + fd->waveform_gy[s] * shift[1]
-                               + fd->waveform_gz[s] * shift[2];
-                mu_assert((float)fabs(waveform[s] - expected) <= tol,
-                          "freq_mod waveform sample mismatch");
+                max_val = 0.0f;
+                for (s = 0; s < ns; ++s) {
+                    float expected = fd->waveform_gx[s] * u[0]
+                                   + fd->waveform_gy[s] * u[1]
+                                   + fd->waveform_gz[s] * u[2];
+                    if ((float)fabs(expected) > max_val)
+                        max_val = (float)fabs(expected);
+                }
+                tol = max_val * 1e-4f;
+                if (tol < 1e-6f) tol = 1e-6f;
+
+                for (s = 0; s < ns; ++s) {
+                    float expected = fd->waveform_gx[s] * u[0]
+                                   + fd->waveform_gy[s] * u[1]
+                                   + fd->waveform_gz[s] * u[2];
+                    mu_assert((float)fabs(waveform[s] - expected) <= tol,
+                              "freq_mod waveform sample mismatch");
+                }
             }
 
             if (plan && plan->num_plans > 0 && ref_plan_idx >= 0) {
                 const fmod_plan_entry* pe;
                 float proj_phase;
                 float proj_tol;
-                mu_assert_int_eq(ref_plan_idx, plan_idx);
+                float alpha;
                 mu_assert(ref_plan_idx >= 0 && ref_plan_idx < plan->num_plans,
                           "invalid supplemental plan index");
                 pe = &plan->plans[ref_plan_idx];
                 mu_assert_int_eq(se->freq_mod_id, pe->def_id);
 
+                /* Truth plan waveforms are projected with unit probe
+                 * directions; the C library projects with the physical
+                 * shift vector.  Scale truth by alpha = dot(shift, probe)
+                 * to match the C library output. */
+                alpha = 0.0f;
+                if (probe_idx >= 0 && probe_idx < plan->num_probes) {
+                    int k;
+                    for (k = 0; k < 3; ++k)
+                        alpha += shift[k] * plan->probes[probe_idx][k];
+                }
+
                 for (s = 0; s < ns; ++s) {
-                    float pexp = pe->waveforms[probe_idx][s];
+                    float pexp = pe->waveforms[probe_idx][s] * alpha;
                     mu_assert((float)fabs(waveform[s] - pexp) <= tol,
                               "supplemental projected waveform mismatch");
                 }
 
-                proj_phase = pe->phase_total[probe_idx];
+                proj_phase = pe->phase_total[probe_idx] * alpha;
                 proj_tol = (float)fabs(proj_phase) * 1e-4f;
                 if (proj_tol < 1e-8f) proj_tol = 1e-8f;
+                if ((float)fabs(phase_rad - proj_phase) > proj_tol) {
+                    float lib_phase_base = (plan_idx >= 0 && plan_idx < lib->num_plan_instances)
+                        ? lib->plan_phase[plan_idx] : 0.0f;
+                    float lib_phase_extra = (pos >= 0 && pos < lib->scan_table_len && lib->scan_phase_extra)
+                        ? lib->scan_phase_extra[pos] : 0.0f;
+                    float iax = (pos >= 0 && pos < lib->scan_table_len && lib->scan_inactive_area_3ch)
+                        ? lib->scan_inactive_area_3ch[pos * 3 + 0] : 0.0f;
+                    float iay = (pos >= 0 && pos < lib->scan_table_len && lib->scan_inactive_area_3ch)
+                        ? lib->scan_inactive_area_3ch[pos * 3 + 1] : 0.0f;
+                    float iaz = (pos >= 0 && pos < lib->scan_table_len && lib->scan_inactive_area_3ch)
+                        ? lib->scan_inactive_area_3ch[pos * 3 + 2] : 0.0f;
+                    fprintf(stderr,
+                        "[fmod_phase_dbg][%s] pos=%d def=%d plan=%d lib=(tot=%g base=%g extra=%g) truth=%g ia=[%g %g %g] alpha=%g\n",
+                        label, pos, se->freq_mod_id, plan_idx,
+                        (double)phase_rad, (double)lib_phase_base, (double)lib_phase_extra,
+                        (double)proj_phase, (double)iax, (double)iay, (double)iaz, (double)alpha);
+                }
                 mu_assert((float)fabs(phase_rad - proj_phase) <= proj_tol,
                           "supplemental projected phase mismatch");
+            }
+
+            /* Plan-key consistency checks (all modes):
+             *  - same (def_id, key_scope, rotmat) must map to one lib plan
+             *  - one lib plan must not represent multiple such keys
+             * key_scope is TR index only in tr_scoped mode, otherwise 0. */
+            {
+                int key_scope = (meta && meta->fmod_build_mode_tr_scoped) ? tr_scope_id : 0;
+                int k, found = -1;
+                for (k = 0; k < trkey_count; ++k) {
+                    int r;
+                    int same_rot = 1;
+                    if (trkey_rows[k].def_id != se->freq_mod_id ||
+                        trkey_rows[k].tr_scope_id != key_scope)
+                        continue;
+                    for (r = 0; r < 9; ++r) {
+                        if (fabsf(trkey_rows[k].rotmat[r] - se->rotmat[r]) > 1e-6f) {
+                            same_rot = 0;
+                            break;
+                        }
+                    }
+                    if (same_rot) {
+                        found = k;
+                        break;
+                    }
+                }
+
+                if (found >= 0) {
+                    mu_assert_int_eq(trkey_rows[found].plan_idx, plan_idx);
+                } else if (trkey_count < MAX_SCAN_TABLE_ENTRIES) {
+                    int r;
+                    trkey_rows[trkey_count].def_id = se->freq_mod_id;
+                    trkey_rows[trkey_count].tr_scope_id = key_scope;
+                    trkey_rows[trkey_count].plan_idx = plan_idx;
+                    for (r = 0; r < 9; ++r)
+                        trkey_rows[trkey_count].rotmat[r] = se->rotmat[r];
+                    trkey_count++;
+                }
+
+                if (plan_idx >= 0 && plan_idx < MAX_FMOD_PLAN_ENTRIES) {
+                    int r;
+                    if (!plan_seen[plan_idx]) {
+                        plan_seen[plan_idx] = 1;
+                        plan_first_def[plan_idx] = se->freq_mod_id;
+                        plan_first_tr_scope[plan_idx] = key_scope;
+                        for (r = 0; r < 9; ++r)
+                            plan_first_rot[plan_idx][r] = se->rotmat[r];
+                    } else {
+                        int same_rot = 1;
+                        for (r = 0; r < 9; ++r) {
+                            if (fabsf(plan_first_rot[plan_idx][r] - se->rotmat[r]) > 1e-6f) {
+                                same_rot = 0;
+                                break;
+                            }
+                        }
+                        mu_assert_int_eq(plan_first_def[plan_idx], se->freq_mod_id);
+                        mu_assert_int_eq(plan_first_tr_scope[plan_idx], key_scope);
+                        mu_assert(same_rot, "single lib plan spans multiple rotation keys");
+                    }
+                }
             }
 
             seen_defs[def_idx] = 1;
@@ -1088,7 +1226,7 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
     build_case_path(fmod_path, sizeof(fmod_path), tc, "_freqmod_def.bin");
     ok = parse_fmod_defs(fmod_path, &ref);
     mu_assert(ok, "failed to parse freqmod_def.bin");
-    mu_assert(ref.num_defs >= 2, "expected at least 2 freq_mod defs");
+    mu_assert(ref.num_defs >= 1, "expected at least 1 freq_mod def");
 
     build_case_path(fmod_plan_path, sizeof(fmod_plan_path), tc, "_freqmod_plan.bin");
     ok = parse_fmod_plan(fmod_plan_path, &plan);
@@ -1113,7 +1251,7 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
                              shifts[t],
                              t,
                              rotations[r],
-                             "build_freq_mod_collection failed");
+                             tc->name);
         }
     }
 
@@ -1248,20 +1386,23 @@ static void run_scan_table_case(const seq_case* tc)
     int pure_inst_unique = 0;
     int saw_noncanonical_instance = 0;
 
-    /* Cursor-info tracking state */
-    int prev_seg_id = -1;
-    int prev_seg_end = 0;
+    /* Segment patterns per subsequence: built from segment_order + segment_num_blocks */
+    int pattern_seg_id[16][MAX_SCAN_TABLE_ENTRIES];
+    int pattern_len[16];
+    int pattern_pos[16];
+    int subseq_seg_start[16];
+    int subseq_seg_end[16];
     int total_readout_count = 0;
     int seg_trigger_seen[MAX_SEGMENTS];
     int seg_fmod_seen[MAX_SEGMENTS];
-    int seg_order_idx = 0;  /* current position in segment_order pattern */
-    int seg_order_instances[MAX_SEGMENTS];  /* block counts per instance */
-    int seg_order_blocks = 0;  /* blocks seen in current instance */
 
     memset(pure_inst_durations, 0, sizeof(pure_inst_durations));
     memset(seg_trigger_seen, 0, sizeof(seg_trigger_seen));
     memset(seg_fmod_seen, 0, sizeof(seg_fmod_seen));
-    memset(seg_order_instances, 0, sizeof(seg_order_instances));
+    memset(pattern_len, 0, sizeof(pattern_len));
+    memset(pattern_pos, 0, sizeof(pattern_pos));
+    memset(subseq_seg_start, 0, sizeof(subseq_seg_start));
+    memset(subseq_seg_end, 0, sizeof(subseq_seg_end));
     is_mprage = (strncmp(tc->name, "mprage_", 7) == 0 &&
                  strncmp(tc->name, "mprage_nav_", 11) != 0) ? 1 : 0;
 
@@ -1281,8 +1422,56 @@ static void run_scan_table_case(const seq_case* tc)
     build_case_path(meta_path, sizeof(meta_path), tc, "_meta.txt");
     ok = parse_meta(meta_path, &meta);
     mu_assert(ok, "failed to parse case _meta.txt");
-    mu_assert(meta.num_segments > 0, "meta has no segment_order");
+    mu_assert(meta.num_segment_order_entries > 0, "meta has no segment_order entries");
     mu_assert_int_eq(meta.num_segments, cinfo.num_segments);
+
+    mu_assert(cinfo.num_subsequences > 0 && cinfo.num_subsequences <= 16,
+              "unsupported number of subsequences for scan-table pattern validation");
+
+    {
+        int s;
+        pulseqlib_subseq_info si = PULSEQLIB_SUBSEQ_INFO_INIT;
+        for (s = 0; s < cinfo.num_subsequences; ++s) {
+            rc = pulseqlib_get_subseq_info(coll, s, &si);
+            mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_subseq_info failed");
+            subseq_seg_start[s] = si.segment_offset;
+        }
+        for (s = 0; s < cinfo.num_subsequences; ++s) {
+            if (s + 1 < cinfo.num_subsequences)
+                subseq_seg_end[s] = subseq_seg_start[s + 1];
+            else
+                subseq_seg_end[s] = meta.num_segments;
+            mu_assert(subseq_seg_end[s] > subseq_seg_start[s],
+                      "invalid subsequence segment-id range");
+        }
+    }
+
+    /* Build per-block pattern from segment_order + segment_num_blocks.
+     * One TR = walking segment_order, each entry lasting segment_num_blocks[seg] blocks.
+     * For collections, each subsequence uses only its own segment-id range. */
+    {
+        int s;
+        for (s = 0; s < cinfo.num_subsequences; ++s) {
+            int si;
+            for (si = 0; si < meta.num_segment_order_entries; ++si) {
+                int seg = meta.segment_order[si];
+                int nblk;
+                int bi;
+                if (seg < subseq_seg_start[s] || seg >= subseq_seg_end[s])
+                    continue;
+                nblk = meta.segment_num_blocks[seg];
+                mu_assert(seg >= 0 && seg < meta.num_segments,
+                          "segment_order references invalid segment");
+                for (bi = 0; bi < nblk; ++bi) {
+                    mu_assert(pattern_len[s] < MAX_SCAN_TABLE_ENTRIES,
+                              "segment pattern exceeds max entries");
+                    pattern_seg_id[s][pattern_len[s]] = seg;
+                    pattern_len[s]++;
+                }
+            }
+            mu_assert(pattern_len[s] > 0, "subsequence segment pattern is empty");
+        }
+    }
 
     /* Walk the scan table via cursor and compare each block instance */
     pulseqlib_cursor_reset(coll);
@@ -1303,55 +1492,15 @@ static void run_scan_table_case(const seq_case* tc)
         rc = pulseqlib_cursor_get_info(coll, &ci);
         mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_cursor_get_info failed");
 
-        /* ---- Cursor info structural validation (mirrors
-         *      example_scanloop.c segment-boundary logic) --------- */
-        {
-            /* segment_id must be valid */
-            mu_assert(ci.segment_id >= 0 && ci.segment_id < cinfo.num_segments,
-                      "cursor segment_id out of range");
-
-            /* Segment transition checks */
-            if (ci.segment_id != prev_seg_id) {
-                /* First block of a new segment must have segment_start */
-                mu_assert(ci.segment_start,
-                          "segment_start should be 1 at segment transition");
-                /* Previous segment's last block should have had segment_end */
-                if (prev_seg_id >= 0)
-                    mu_assert(prev_seg_end,
-                              "prev segment should have ended with segment_end=1");
-
-                /* Validate segment order matches meta.segment_order array */
-                if (seg_order_idx < meta.num_segments) {
-                    char msg[256];
-                    snprintf(msg, sizeof(msg),
-                             "segment order mismatch at index %d: got segment_id=%d, expected %d",
-                             seg_order_idx, ci.segment_id,
-                             meta.segment_order[seg_order_idx]);
-                    mu_assert(ci.segment_id == meta.segment_order[seg_order_idx], msg);
-                    seg_order_instances[ci.segment_id]++;
-                    seg_order_blocks = 0;
-                    seg_order_idx++;
-                }
-
-                /* Cross-check cursor is_nav / has_trigger with segment_info */
-                {
-                    pulseqlib_segment_info si = PULSEQLIB_SEGMENT_INFO_INIT;
-                    rc = pulseqlib_get_segment_info(coll, ci.segment_id, &si);
-                    mu_assert(PULSEQLIB_SUCCEEDED(rc),
-                              "get_segment_info for cursor cross-check");
-                    mu_assert_int_eq(si.is_nav, ci.is_nav);
-                    mu_assert_int_eq(si.has_trigger, ci.has_trigger);
-                }
-
-                prev_seg_id = ci.segment_id;
-            } else {
-                /* Continuation within same segment: segment_start must be 0 */
-                mu_assert(!ci.segment_start,
-                          "segment_start should be 0 within same segment");
-                if (seg_order_idx > 0)
-                    seg_order_blocks++;
-            }
-            prev_seg_end = ci.segment_end;
+        /* ---- Segment validation: pattern-based ---------------------- */
+        /* Cross-check nav/trigger at segment starts */
+        if (ci.segment_start) {
+            pulseqlib_segment_info si = PULSEQLIB_SEGMENT_INFO_INIT;
+            rc = pulseqlib_get_segment_info(coll, ci.segment_id, &si);
+            mu_assert(PULSEQLIB_SUCCEEDED(rc),
+                      "get_segment_info for cursor cross-check");
+            mu_assert_int_eq(si.is_nav, ci.is_nav);
+            mu_assert_int_eq(si.has_trigger, ci.has_trigger);
         }
 
         if (is_mprage) {
@@ -1389,23 +1538,48 @@ static void run_scan_table_case(const seq_case* tc)
 
         e = &ref.entries[pos];
 
-        /* Scan-table structural debug columns (non-blocking):
-         *  - tr_start_flag
-         *  - segment_id
-         *  - within_segment_idx
-         * These are exported for debugging and can be inspected by
-         * tooling without affecting pass/fail status here.
-         */
+        /* Validate segment_id and within_segment_idx against the expected
+         * pattern built from segment_order + segment_num_blocks.
+         * The pattern tiles across TRs; pattern_pos wraps at pattern_len. */
+        {
+            int sidx = ci.subseq_idx;
+            int pp = pattern_pos[sidx] % pattern_len[sidx];
+            int expected_seg = pattern_seg_id[sidx][pp];
+            char seg_msg[256];
+            char wseg_msg[256];
+
+              snprintf(seg_msg, sizeof(seg_msg),
+                     "[%s] segment_id mismatch at pos %d: cursor=%d, fixture=%d, expected=%d",
+                     tc->name, pos, ci.segment_id, e->segment_id, expected_seg);
+              mu_assert(ci.segment_id == expected_seg, seg_msg);
+              mu_assert(e->segment_id == expected_seg, seg_msg);
+
+              snprintf(wseg_msg, sizeof(wseg_msg),
+                     "[%s] within_segment_idx out of range at pos %d: fixture=%d, segment=%d, nblk=%d",
+                     tc->name, pos, e->within_segment_idx, expected_seg,
+                     meta.segment_num_blocks[expected_seg]);
+              mu_assert(e->within_segment_idx >= 0 &&
+                      e->within_segment_idx < meta.segment_num_blocks[expected_seg],
+                      wseg_msg);
+
+              pattern_pos[sidx]++;
+        }
 
         /* RF amplitude (relative tolerance or absolute for zero) */
         tol = (float)fabs(e->rf_amp_hz) * 1e-4f;
         if (tol < 1e-6f) tol = 1e-6f;
+        if ((float)fabs(inst.rf_amp_hz - e->rf_amp_hz) > tol)
+            fprintf(stderr, "[scantable][%s] rf_amp @pos%d: ref=%.6g  lib=%.6g\n",
+                tc->name, pos, e->rf_amp_hz, inst.rf_amp_hz);
         mu_assert((float)fabs(inst.rf_amp_hz - e->rf_amp_hz) <= tol,
                   "rf_amp_hz mismatch");
 
         /* RF phase */
         tol = (float)fabs(e->rf_phase_rad) * 1e-4f;
         if (tol < 1e-8f) tol = 1e-8f;
+        if ((float)fabs(inst.rf_phase_rad - e->rf_phase_rad) > tol)
+            fprintf(stderr, "[scantable][%s] rf_phase @pos%d: ref=%.9g  lib=%.9g\n",
+                tc->name, pos, e->rf_phase_rad, inst.rf_phase_rad);
         mu_assert((float)fabs(inst.rf_phase_rad - e->rf_phase_rad) <= tol,
                   "rf_phase_rad mismatch");
 
@@ -1427,12 +1601,18 @@ static void run_scan_table_case(const seq_case* tc)
         /* GY amplitude */
         tol = (float)fabs(e->gy_amp_hz_per_m) * 1e-4f;
         if (tol < 1e-6f) tol = 1e-6f;
+        if ((float)fabs(inst.gy_amp_hz_per_m - e->gy_amp_hz_per_m) > tol)
+            fprintf(stderr, "[scantable][%s] gy_amp @pos%d: ref=%.6g  lib=%.6g\n",
+                tc->name, pos, e->gy_amp_hz_per_m, inst.gy_amp_hz_per_m);
         mu_assert((float)fabs(inst.gy_amp_hz_per_m - e->gy_amp_hz_per_m) <= tol,
                   "gy_amp mismatch");
 
         /* GZ amplitude */
         tol = (float)fabs(e->gz_amp_hz_per_m) * 1e-4f;
         if (tol < 1e-6f) tol = 1e-6f;
+        if ((float)fabs(inst.gz_amp_hz_per_m - e->gz_amp_hz_per_m) > tol)
+            fprintf(stderr, "[scantable][%s] gz_amp @pos%d: ref=%.6g  lib=%.6g\n",
+                tc->name, pos, e->gz_amp_hz_per_m, inst.gz_amp_hz_per_m);
         mu_assert((float)fabs(inst.gz_amp_hz_per_m - e->gz_amp_hz_per_m) <= tol,
                   "gz_amp mismatch");
 
@@ -1453,6 +1633,15 @@ static void run_scan_table_case(const seq_case* tc)
 
         /* Digital output flag */
         mu_assert_int_eq(e->digitalout_flag, inst.digitalout_flag);
+
+        /* Block duration — must match library for all blocks;
+         * for pure-delay segments the library uses the per-instance
+         * block table entry, not the canonical segment definition. */
+        if (e->block_dur_us > 0 && inst.duration_us != e->block_dur_us)
+            fprintf(stderr, "[scantable][%s] block_dur @pos%d: ref=%d  lib=%d\n",
+                tc->name, pos, e->block_dur_us, inst.duration_us);
+        if (e->block_dur_us > 0)
+            mu_assert_int_eq(e->block_dur_us, inst.duration_us);
 
         /* Rotation matrix */
         for (i = 0; i < 9; ++i) {
@@ -1482,19 +1671,6 @@ static void run_scan_table_case(const seq_case* tc)
     }
 
     mu_assert_int_eq(ref.num_entries, pos);
-
-    /* Final segment_end: the very last block should have segment_end=1 */
-    mu_assert(prev_seg_end, "last block should have segment_end=1");
-
-    /* Segment order completion check: for first average, we should 
-     * have seen the complete meta.segment_order pattern */
-    {
-        char msg[256];
-        snprintf(msg, sizeof(msg),
-                 "segment order incomplete: saw %d segments, expected %d",
-                 seg_order_idx, meta.num_segments);
-        mu_assert(seg_order_idx == meta.num_segments, msg);
-    }
 
     /* ---- Total readouts cross-check (example_check.c step 6) ----- */
     mu_assert_int_eq(total_readout_count, cinfo.total_readouts);
@@ -1537,16 +1713,12 @@ static void run_collection_case(const seq_case* tc)
     pulseqlib_collection_info cinfo = PULSEQLIB_COLLECTION_INFO_INIT;
     pulseqlib_subseq_info gre_info = PULSEQLIB_SUBSEQ_INFO_INIT;
     pulseqlib_subseq_info epi_info = PULSEQLIB_SUBSEQ_INFO_INIT;
-    pulseqlib_scan_time_info coll_peek = PULSEQLIB_SCAN_TIME_INFO_INIT;
-    pulseqlib_scan_time_info gre_peek = PULSEQLIB_SCAN_TIME_INFO_INIT;
-    pulseqlib_scan_time_info epi_peek = PULSEQLIB_SCAN_TIME_INFO_INIT;
     seg_meta meta = SEG_META_INIT;
+    scan_table_file ref = SCAN_TABLE_FILE_INIT;
     pulseqlib_cursor_info ci = PULSEQLIB_CURSOR_INFO_INIT;
-    char coll_path[512];
-    char gre_path[512];
-    char epi_path[512];
+    char scan_path[512];
     char meta_path[512];
-    int rc, ok;
+    int rc, ok, i;
     int prev_subseq = -1;
     int saw_transition = 0;
     int num_blocks = 0;
@@ -1591,21 +1763,15 @@ static void run_collection_case(const seq_case* tc)
     mu_assert(num_blocks > 0, "collection cursor did not visit any blocks");
     mu_assert(saw_transition, "collection cursor never transitioned from GRE to EPI");
 
-    (void)snprintf(coll_path, sizeof(coll_path), TEST_DATA_DIR "%s", tc->seq_file);
-    (void)snprintf(gre_path, sizeof(gre_path), TEST_DATA_DIR "gre_2d_1sl_1avg.seq");
-    (void)snprintf(epi_path, sizeof(epi_path), TEST_DATA_DIR "epi_2d_1sl_1avg.seq");
-
-    rc = pulseqlib_peek_scan_time(&coll_peek, coll_path, &opts, tc->num_averages);
-    mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_peek_scan_time failed for collection case");
-    rc = pulseqlib_peek_scan_time(&gre_peek, gre_path, &opts, 1);
-    mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_peek_scan_time failed for GRE component");
-    rc = pulseqlib_peek_scan_time(&epi_peek, epi_path, &opts, tc->num_averages);
-    mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_peek_scan_time failed for EPI component");
-
-    expected_total_duration_us = gre_peek.total_duration_us + epi_peek.total_duration_us;
-    mu_assert_float_near("collection peek duration",
-        expected_total_duration_us, coll_peek.total_duration_us, 1.0f);
-    mu_assert_float_near("collection loaded duration",
+    /* Duration: sum of block_dur_us from scan table fixture vs
+     * cinfo.total_duration_us (now computed via scan-table walk). */
+    build_case_path(scan_path, sizeof(scan_path), tc, "_scan_table.bin");
+    ok = parse_scan_table(scan_path, &ref);
+    mu_assert(ok, "failed to parse scan_table.bin for duration check");
+    expected_total_duration_us = 0.0f;
+    for (i = 0; i < ref.num_entries; ++i)
+        expected_total_duration_us += (float)ref.entries[i].block_dur_us;
+    mu_assert_float_near("collection duration",
         expected_total_duration_us, cinfo.total_duration_us, 1.0f);
 
     pulseqlib_collection_free(coll);

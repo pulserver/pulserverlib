@@ -201,6 +201,7 @@ int pulseqlib__build_scan_table(
 
     if (!desc) { diag->code = PULSEQLIB_ERR_NULL_POINTER; return diag->code; }
     if (num_averages < 1) num_averages = 1;
+    if (desc->ignore_averages) num_averages = 1;
     num_passes = (desc->num_passes > 1) ? desc->num_passes : 1;
 
     has_nd_prep = (desc->tr_descriptor.num_prep_blocks > 0 &&
@@ -431,7 +432,7 @@ int pulseqlib__get_tr_in_sequence(pulseqlib_sequence_descriptor* desc, pulseqlib
         block_dur[n] = desc->block_definitions[desc->block_table[n].id].duration_us;
         seq_pat[n] = (desc->block_table[n].duration_us >= 0)
             ? block_dur[n]
-            : -1 * desc->block_table[desc->block_table[n].id].id;
+            : -1 * desc->block_table[n].id;
     }
 
     /* Save a copy of seq_pat before RF augmentation (used for VFA check) */
@@ -1859,11 +1860,13 @@ int pulseqlib__get_scan_table_segments(
         desc->segment_definitions[i].norot_flag   = (int*)PULSEQLIB_ALLOC(nb * sizeof(int));
         desc->segment_definitions[i].nopos_flag   = (int*)PULSEQLIB_ALLOC(nb * sizeof(int));
         desc->segment_definitions[i].has_freq_mod = (int*)PULSEQLIB_ALLOC(nb * sizeof(int));
+        desc->segment_definitions[i].has_adc      = (int*)PULSEQLIB_ALLOC(nb * sizeof(int));
         if (!desc->segment_definitions[i].has_digitalout ||
             !desc->segment_definitions[i].has_rotation ||
             !desc->segment_definitions[i].norot_flag ||
             !desc->segment_definitions[i].nopos_flag ||
-            !desc->segment_definitions[i].has_freq_mod) {
+            !desc->segment_definitions[i].has_freq_mod ||
+            !desc->segment_definitions[i].has_adc) {
             diag->code = PULSEQLIB_ERR_ALLOC_FAILED;
             goto scan_seg_fail;
         }
@@ -1873,6 +1876,7 @@ int pulseqlib__get_scan_table_segments(
             desc->segment_definitions[i].norot_flag[n]   = 0;
             desc->segment_definitions[i].nopos_flag[n]   = 0;
             desc->segment_definitions[i].has_freq_mod[n] = 0;
+            desc->segment_definitions[i].has_adc[n]      = 0;
         }
         desc->segment_definitions[i].trigger_id = -1;
     }
@@ -1881,8 +1885,8 @@ int pulseqlib__get_scan_table_segments(
     max_energy = (float*)PULSEQLIB_ALLOC((size_t)num_unique * sizeof(float));
     if (!max_energy) { diag->code = PULSEQLIB_ERR_ALLOC_FAILED; goto scan_seg_fail; }
     for (i = 0; i < num_unique; ++i) {
-        max_energy[i] = 0.0f;
-        desc->segment_definitions[i].max_energy_start_block = 0;
+        max_energy[i] = -1.0f;
+        desc->segment_definitions[i].max_energy_start_block = -1;
     }
 
     for (n = 0; n < num_total; ++n) {
@@ -1945,8 +1949,12 @@ int pulseqlib__get_scan_table_segments(
 
         if (inst_energy > max_energy[unique_idx]) {
             max_energy[unique_idx] = inst_energy;
+            /* Store scan-table start index of the representative instance.
+             * In average-expanded passes, consecutive local block positions do
+             * not map to consecutive block_table indices, so getters must
+             * resolve through scan_table_block_idx[start + local_blk]. */
             desc->segment_definitions[unique_idx].max_energy_start_block =
-                desc->scan_table_block_idx[exp_segs[n].start_block];
+                exp_segs[n].start_block;
         }
     }
 
@@ -2025,7 +2033,7 @@ int pulseqlib__get_scan_table_segments(
      * can walk the entire scan table, group consecutive blocks into
      * segment instances, compute their energy, and update
      * max_energy_start_block when a higher-energy repetition is found. */
-    for (i = 0; i < num_unique; ++i) max_energy[i] = 0.0f;
+    for (i = 0; i < num_unique; ++i) max_energy[i] = -1.0f;
 
     for (n = 0; n < scan_len; /* advance inside */) {
         int seg_id = desc->scan_table_seg_id[n];
@@ -2072,8 +2080,8 @@ int pulseqlib__get_scan_table_segments(
 
         if (inst_energy > max_energy[seg_id]) {
             max_energy[seg_id] = inst_energy;
-            desc->segment_definitions[seg_id].max_energy_start_block =
-                desc->scan_table_block_idx[n];
+            /* Same semantics as step 10: scan-table start index. */
+            desc->segment_definitions[seg_id].max_energy_start_block = n;
         }
 
         n += nb;
@@ -2102,6 +2110,7 @@ int pulseqlib__get_scan_table_segments(
             desc->segment_definitions[i].norot_flag[n]     = 0;
             desc->segment_definitions[i].nopos_flag[n]     = 0;
             desc->segment_definitions[i].has_freq_mod[n]   = 0;
+            desc->segment_definitions[i].has_adc[n]        = 0;
         }
         desc->segment_definitions[i].trigger_id = -1;
     }
@@ -2153,6 +2162,10 @@ int pulseqlib__get_scan_table_segments(
                 if ((has_rf_b || has_adc_b) && has_grad_b)
                     desc->segment_definitions[seg_id].has_freq_mod[b] = 1;
             }
+
+            /* has_adc: OR-reduce — true if any instance at this position has ADC */
+            if (bte->adc_id >= 0)
+                desc->segment_definitions[seg_id].has_adc[b] = 1;
         }
 
         n += nb;
