@@ -624,7 +624,7 @@ static void free_base_defs(pulseqlib_freq_mod_definition* defs, int n)
 #define FREQ_MOD_BASE_COLS  7   /* freq_mod_id, active_start_us, active_dur_us, gx_def_shot, gy_def_shot, gz_def_shot, effective_duration_us */
 
 typedef struct { int base_idx; float amp[3]; } entry_key_t;
-typedef struct { int entry_idx; int rot_idx; } plan_key_t;
+typedef struct { int entry_idx; int rot_idx; int tr_scope_id; } plan_key_t;
 
 /* ================================================================== */
 /*  Build                                                             */
@@ -1173,8 +1173,9 @@ static int build_freq_mod_library(
     /* ==== Pass 3: build plan dedup keys ==== */
     for (n = 0; n < count; ++n) {
         memset(&plan_keys[n], 0, sizeof(plan_keys[n]));
-        plan_keys[n].entry_idx = entry_map[n];
-        plan_keys[n].rot_idx   = block_rotation[n];
+        plan_keys[n].entry_idx   = entry_map[n];
+        plan_keys[n].rot_idx     = block_rotation[n];
+        plan_keys[n].tr_scope_id = 0;
     }
 
     num_plan = dedup_keys(plan_unique, plan_map,

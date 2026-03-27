@@ -1200,7 +1200,7 @@ classdef TruthBuilder < handle
             probes = [1, 0, 0; 0, 1, 0; 0, 0, 1; oblique];
 
             plan_map = -1 * ones(nscan, 1);
-            plans = struct('def_id', {}, 'rot', {}, 'scan_row', {});
+            plans = struct('def_id', {}, 'rot', {}, 'scan_row', {}, 'tr_scope_id', {});
 
             for i = 1:nscan
                 def_id = obj.freq_mod_table(i);
