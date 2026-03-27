@@ -1365,7 +1365,7 @@ classdef TruthBuilder < handle
 
             nprobe = size(p.probes, 1);
             fwrite(fid, int32(nprobe), 'int32');
-            fwrite(fid, single(p.probes(:)), 'float32');
+            fwrite(fid, single(p.probes'), 'float32');
 
             fwrite(fid, int32(p.num_plans), 'int32');
             fwrite(fid, int32(p.max_samples), 'int32');

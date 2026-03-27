@@ -1026,19 +1026,31 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
                 const fmod_plan_entry* pe;
                 float proj_phase;
                 float proj_tol;
+                float alpha;
                 mu_assert_int_eq(ref_plan_idx, plan_idx);
                 mu_assert(ref_plan_idx >= 0 && ref_plan_idx < plan->num_plans,
                           "invalid supplemental plan index");
                 pe = &plan->plans[ref_plan_idx];
                 mu_assert_int_eq(se->freq_mod_id, pe->def_id);
 
+                /* Truth plan waveforms are projected with unit probe
+                 * directions; the C library projects with the physical
+                 * shift vector.  Scale truth by alpha = dot(shift, probe)
+                 * to match the C library output. */
+                alpha = 0.0f;
+                if (probe_idx >= 0 && probe_idx < plan->num_probes) {
+                    int k;
+                    for (k = 0; k < 3; ++k)
+                        alpha += shift[k] * plan->probes[probe_idx][k];
+                }
+
                 for (s = 0; s < ns; ++s) {
-                    float pexp = pe->waveforms[probe_idx][s];
+                    float pexp = pe->waveforms[probe_idx][s] * alpha;
                     mu_assert((float)fabs(waveform[s] - pexp) <= tol,
                               "supplemental projected waveform mismatch");
                 }
 
-                proj_phase = pe->phase_total[probe_idx];
+                proj_phase = pe->phase_total[probe_idx] * alpha;
                 proj_tol = (float)fabs(proj_phase) * 1e-4f;
                 if (proj_tol < 1e-8f) proj_tol = 1e-8f;
                 mu_assert((float)fabs(phase_rad - proj_phase) <= proj_tol,
