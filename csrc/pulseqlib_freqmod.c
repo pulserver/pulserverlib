@@ -621,7 +621,7 @@ static void free_base_defs(pulseqlib_freq_mod_definition* defs, int n)
 /*  Dedup key types                                                   */
 /* ================================================================== */
 
-#define FREQ_MOD_BASE_COLS  7   /* freq_mod_id, rf_def_id, adc_def_id, gx_evt_id, gy_evt_id, gz_evt_id, effective_duration_us */
+#define FREQ_MOD_BASE_COLS  7   /* freq_mod_id, active_start_us, active_dur_us, gx_def_shot, gy_def_shot, gz_def_shot, effective_duration_us */
 
 typedef struct { int base_idx; float amp[3]; } entry_key_t;
 typedef struct { int entry_idx; int rot_idx; } plan_key_t;
@@ -725,23 +725,93 @@ static int build_freq_mod_library(
         for (n = 0; n < desc->num_blocks; ++n) {
             const pulseqlib_block_table_element* bte = &desc->block_table[n];
             const pulseqlib_block_definition* bdef = &desc->block_definitions[bte->id];
-            int has_adc, adc_def_id;
+            int has_rf, has_adc, adc_def_id_local;
             int effective_duration_us;
+            int gx_key, gy_key, gz_key;
+            int active_start_key, active_dur_key;
 
             if (bte->freq_mod_id < 0) continue;
 
             block_indices[idx] = n;
-
-            /* Base dedup key */
-            base_rows[idx][0] = bte->freq_mod_id;
-            base_rows[idx][1] = bdef->rf_id;
-            has_adc = (bte->adc_id >= 0 && bte->adc_id < desc->adc_table_size);
-            adc_def_id = has_adc ? desc->adc_table[bte->adc_id].id : -1;
-            base_rows[idx][2] = adc_def_id;
-            base_rows[idx][3] = bte->gx_id;
-            base_rows[idx][4] = bte->gy_id;
-            base_rows[idx][5] = bte->gz_id;
             effective_duration_us = bdef->duration_us;
+
+            /* Compute active window timing for the base key.  Two blocks
+             * that use different RF definitions but have the same active
+             * window and gradient shapes will produce identical base
+             * waveforms and should share the same base index. */
+            has_rf  = (bdef->rf_id >= 0 && bdef->rf_id < desc->num_unique_rfs);
+            has_adc = (bte->adc_id >= 0 && bte->adc_id < desc->adc_table_size);
+            active_start_key = 0;
+            active_dur_key   = 0;
+
+            if (has_rf) {
+                const pulseqlib_rf_definition* rdef =
+                    &desc->rf_definitions[bdef->rf_id];
+                float rf_end_us = (float)rdef->delay + rdef->stats.duration_us;
+                float a_start = (float)rdef->delay;
+                float a_end;
+                adc_def_id_local = has_adc
+                    ? desc->adc_table[bte->adc_id].id : -1;
+                if (!has_adc && rf_end_us < 0.75f * (float)effective_duration_us)
+                    a_end = (float)effective_duration_us;
+                else
+                    a_end = rf_end_us;
+                if (a_start < 0.0f) a_start = 0.0f;
+                if (a_end > (float)effective_duration_us)
+                    a_end = (float)effective_duration_us;
+                active_start_key = (int)(a_start + 0.5f);
+                active_dur_key   = (int)(a_end - a_start + 0.5f);
+            } else if (has_adc) {
+                adc_def_id_local = desc->adc_table[bte->adc_id].id;
+                if (adc_def_id_local >= 0 &&
+                    adc_def_id_local < desc->num_unique_adcs) {
+                    const pulseqlib_adc_definition* adef =
+                        &desc->adc_definitions[adc_def_id_local];
+                    float a_start = (float)adef->delay;
+                    float a_end = a_start +
+                        (float)adef->num_samples * (float)adef->dwell_time * 1e-3f;
+                    if (a_start < 0.0f) a_start = 0.0f;
+                    if (a_end > (float)effective_duration_us)
+                        a_end = (float)effective_duration_us;
+                    active_start_key = (int)(a_start + 0.5f);
+                    active_dur_key   = (int)(a_end - a_start + 0.5f);
+                }
+            }
+
+            /* Encode gradient base key as (def_id, shot_index) pair so that
+             * blocks sharing the same gradient *shape* but differing only in
+             * amplitude map to the same base waveform.  Amplitude differences
+             * are handled at the entry dedup level.  */
+            {
+                int ax_id[3];
+                int ax_key[3];
+                int a;
+                ax_id[0] = bte->gx_id;
+                ax_id[1] = bte->gy_id;
+                ax_id[2] = bte->gz_id;
+                for (a = 0; a < 3; ++a) {
+                    if (ax_id[a] >= 0 && ax_id[a] < desc->grad_table_size) {
+                        int g_def = desc->grad_table[ax_id[a]].id;
+                        int shot  = desc->grad_table[ax_id[a]].shot_index;
+                        ax_key[a] = g_def * PULSEQLIB_MAX_GRAD_SHOTS + shot;
+                    } else {
+                        ax_key[a] = -1;
+                    }
+                }
+                gx_key = ax_key[0];
+                gy_key = ax_key[1];
+                gz_key = ax_key[2];
+            }
+
+            /* Base dedup key: active-window timing + gradient shape IDs.
+             * Using active window (start, duration) instead of rf_id/adc_id
+             * merges blocks whose RF definitions differ only in amplitude. */
+            base_rows[idx][0] = bte->freq_mod_id;
+            base_rows[idx][1] = active_start_key;
+            base_rows[idx][2] = active_dur_key;
+            base_rows[idx][3] = gx_key;
+            base_rows[idx][4] = gy_key;
+            base_rows[idx][5] = gz_key;
             base_rows[idx][6] = effective_duration_us;
 
             /* Rotation: record both rotation_id and norot_flag */
@@ -834,12 +904,67 @@ static int build_freq_mod_library(
             max_samples = base_defs[n].num_samples;
     }
 
+    /* ==== Merge bases with identical waveforms ====
+     * The integer base key may over-distinguish bases (e.g. different gradient
+     * event IDs for channels that are all-zero within the active window).
+     * Remap base_map so that waveform-identical bases share one index.  */
+    {
+        int* base_remap = (int*)PULSEQLIB_ALLOC((size_t)num_base * sizeof(int));
+        if (base_remap) {
+            int b, b2, ch2, s2;
+            for (b = 0; b < num_base; ++b) base_remap[b] = b;
+
+            for (b = 1; b < num_base; ++b) {
+                for (b2 = 0; b2 < b; ++b2) {
+                    const pulseqlib_freq_mod_definition* da = &base_defs[b];
+                    const pulseqlib_freq_mod_definition* db = &base_defs[b2];
+                    int identical = 1;
+                    if (da->num_samples != db->num_samples ||
+                        da->raster_us  != db->raster_us) {
+                        identical = 0;
+                    } else {
+                        const float* wa[3] = {da->waveform_gx, da->waveform_gy, da->waveform_gz};
+                        const float* wb[3] = {db->waveform_gx, db->waveform_gy, db->waveform_gz};
+                        for (ch2 = 0; ch2 < 3 && identical; ++ch2) {
+                            if (!wa[ch2] && !wb[ch2]) continue;
+                            if (!wa[ch2] || !wb[ch2]) { identical = 0; break; }
+                            for (s2 = 0; s2 < da->num_samples; ++s2) {
+                                if (wa[ch2][s2] != wb[ch2][s2]) {
+                                    identical = 0; break;
+                                }
+                            }
+                        }
+                        /* Also compare ref_integral and ref_time */
+                        if (identical) {
+                            for (ch2 = 0; ch2 < 3; ++ch2) {
+                                if (da->ref_integral[ch2] != db->ref_integral[ch2]) {
+                                    identical = 0; break;
+                                }
+                            }
+                        }
+                    }
+                    if (identical) {
+                        base_remap[b] = base_remap[b2];
+                        break;
+                    }
+                }
+            }
+
+            /* Apply remap to base_map */
+            for (b = 0; b < count; ++b)
+                base_map[b] = base_remap[base_map[b]];
+
+            PULSEQLIB_FREE(base_remap);
+        }
+    }
+
     /* ==== Pass 2: build entry dedup keys ==== */
     for (n = 0; n < count; ++n) {
         int blk_idx = block_indices[n];
         const pulseqlib_block_table_element* bte = &desc->block_table[blk_idx];
         int bi = base_map[n];
         float amp[3];
+        int ch;
 
         amp[0] = (bte->gx_id >= 0 && bte->gx_id < desc->grad_table_size)
                  ? desc->grad_table[bte->gx_id].amplitude : 0.0f;
@@ -847,6 +972,29 @@ static int build_freq_mod_library(
                  ? desc->grad_table[bte->gy_id].amplitude : 0.0f;
         amp[2] = (bte->gz_id >= 0 && bte->gz_id < desc->grad_table_size)
                  ? desc->grad_table[bte->gz_id].amplitude : 0.0f;
+
+        /* Zero out amplitudes for channels whose base waveform is all-zero
+         * within the active window.  This ensures blocks that differ only in
+         * inactive-window gradient amplitudes (e.g. varying phase-encode with
+         * GY=0 during the RF window) map to the same entry. */
+        if (bi >= 0 && bi < num_base) {
+            const pulseqlib_freq_mod_definition* bd = &base_defs[bi];
+            const float* waves[3];
+            waves[0] = bd->waveform_gx;
+            waves[1] = bd->waveform_gy;
+            waves[2] = bd->waveform_gz;
+            for (ch = 0; ch < 3; ++ch) {
+                if (waves[ch]) {
+                    int all_zero = 1, s;
+                    for (s = 0; s < bd->num_samples; ++s) {
+                        if (waves[ch][s] != 0.0f) { all_zero = 0; break; }
+                    }
+                    if (all_zero) amp[ch] = 0.0f;
+                } else {
+                    amp[ch] = 0.0f;
+                }
+            }
+        }
 
         memset(&entry_keys[n], 0, sizeof(entry_keys[n]));
         entry_keys[n].base_idx = bi;

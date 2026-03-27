@@ -2141,7 +2141,7 @@ classdef TruthBuilder < handle
                     pts = [wstart; tk; wend];
                     vals = interp1(t, w, pts, 'linear', 0);
 
-                    if any(abs(vals) > 0)
+                    if any(abs(vals) > 1.0)
                         waveforms{ch} = vals;
                     else
                         waveforms{ch} = [];
@@ -2205,7 +2205,7 @@ classdef TruthBuilder < handle
             tk = t(t > wstart & t < wend);
             pts = [wstart; tk; wend];
             vals = interp1(t, w, pts, 'linear', 0);
-            result = any(abs(vals) > 0);
+            result = any(abs(vals) > 1.0);
         end
 
         function [t, w] = gradToKnots(grad)

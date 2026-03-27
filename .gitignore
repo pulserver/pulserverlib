@@ -33,3 +33,4 @@ bridge/pypulseq_host
 bridge/matlab_host
 tests/ctests/build_asan/
 octave-workspace
+tests/ctests/build/
