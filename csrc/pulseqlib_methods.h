@@ -606,6 +606,24 @@ int pulseqlib_get_main_segment_table(const pulseqlib_collection* coll,
 int pulseqlib_get_cooldown_segment_table(const pulseqlib_collection* coll,
                                          int subseq_idx, int* out_ids);
 
+/**
+ * @brief Get canonical segment-ID sequence for vendor gradient-heating checks.
+ *
+ * Canonical-sequence rules:
+ *   - Non-degenerate prep/cooldown: prep + (main repeated num_passes) + cooldown.
+ *   - Degenerate prep/cooldown: main only (no pass expansion).
+ *
+ * If @p out_ids is NULL, the function returns the required count only.
+ * Otherwise, @p out_ids must point to a buffer of at least that many ints.
+ *
+ * @param[in]  coll        Loaded collection.
+ * @param[in]  subseq_idx  Subsequence index.
+ * @param[out] out_ids     Output buffer, or NULL for count query.
+ * @return Number of IDs (>= 0), or negative error code.
+ */
+int pulseqlib_get_canonical_segment_sequence(const pulseqlib_collection* coll,
+                                             int subseq_idx, int* out_ids);
+
 /* ================================================================== */
 /*  RF getters                                                        */
 /* ================================================================== */

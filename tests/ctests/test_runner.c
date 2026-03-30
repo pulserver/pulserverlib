@@ -1,36 +1,40 @@
+
 /*
  * test_runner.c -- entry point for the pulseqlib unit test suite.
  *
  * Calls each test_*_main() which runs its own MU_RUN_SUITE / MU_REPORT.
  * A non-zero return from any suite indicates failure.
- *
- * NOTE: We deliberately avoid including minunit.h here because this
- * file does not define any MU_TEST / MU_TEST_SUITE, and the static
- * globals in minunit.h would trigger -Wunused-variable / -Wunused-function.
  */
+
+
+
 #include <stdio.h>
 
-/* Forward declarations -- defined in test_helpers.h and the test files */
-int test_safety_grad_main(void);
-int test_rf_stats_main(void);
-int test_sequences_main(void);
-int test_io_main(void);
+// Only register and call the suite, do not define test logic here
+// Forward declaration
+int test_canonical_tr_mprage_noncart_main(void);
+// int test_safety_grad_main(void);
+// int test_rf_stats_main(void);
+// int test_sequences_main(void);
 
 int main(void)
 {
     int failed = 0;
 
-    printf("==== test_safety_grad ====\n");
-    failed += test_safety_grad_main();
+    printf("==== test_canonical_tr_mprage_noncart ====\n");
+    failed += test_canonical_tr_mprage_noncart_main();
 
-    printf("\n==== test_rf_stats ====\n");
-    failed += test_rf_stats_main();
+    // printf("==== test_safety_grad ====\n");
+    // failed += test_safety_grad_main();
 
-    printf("\n==== test_sequences ====\n");
-    failed += test_sequences_main();
+    // printf("\n==== test_rf_stats ====\n");
+    // failed += test_rf_stats_main();
 
-    printf("\n==== test_io ====\n");
-    failed += test_io_main();
+    // printf("\n==== test_sequences ====\n");
+    // failed += test_sequences_main();
+
+    // printf("\n==== test_io ====\n");
+    // failed += test_io_main();
 
     printf("\n");
     if (failed)

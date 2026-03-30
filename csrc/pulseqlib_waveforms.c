@@ -117,12 +117,15 @@ static int count_grad_samples_for_block(
  */
 static int compute_position_max_amplitudes_filtered(
     const pulseqlib_sequence_descriptor* desc,
+    int block_start,
+    int block_count,
     float* pos_max_gx, float* pos_max_gy, float* pos_max_gz,
     const int* tr_group_labels, int target_group)
 {
     const pulseqlib_tr_descriptor* tr;
     int tr_start, tr_size, num_trs;
     int tr_idx, pos, block_idx;
+    int use_full_pass_layout, num_passes, pass_size, pass_idx, st_pos;
     const pulseqlib_block_table_element* bte;
     const pulseqlib_grad_table_element* gte;
     float abs_amp;
@@ -131,11 +134,74 @@ static int compute_position_max_amplitudes_filtered(
     tr       = &desc->tr_descriptor;
     tr_size  = tr->tr_size;
     num_trs  = tr->num_trs;
+    use_full_pass_layout = !(block_start == (tr->num_prep_blocks + tr->imaging_tr_start)
+                             && block_count == tr_size);
+    num_passes = (desc->num_passes > 1) ? desc->num_passes : 1;
+    pass_size = (num_passes > 0) ? (desc->scan_table_len / num_passes) : 0;
 
-    for (n = 0; n < tr_size * PULSEQLIB_MAX_GRAD_SHOTS; ++n) {
+    for (n = 0; n < block_count * PULSEQLIB_MAX_GRAD_SHOTS; ++n) {
         pos_max_gx[n] = 0.0f;
         pos_max_gy[n] = 0.0f;
         pos_max_gz[n] = 0.0f;
+    }
+
+    if (use_full_pass_layout && pass_size > 0 && desc->scan_table_block_idx) {
+        for (pass_idx = 0; pass_idx < num_passes; ++pass_idx) {
+            if (tr_group_labels &&
+                tr_group_labels[pass_idx] != target_group)
+                continue;
+
+            for (pos = 0; pos < block_count; ++pos) {
+                st_pos = pass_idx * pass_size + block_start + pos;
+                if (st_pos < 0 || st_pos >= desc->scan_table_len)
+                    continue;
+
+                block_idx = desc->scan_table_block_idx[st_pos];
+                if (block_idx < 0 || block_idx >= desc->num_blocks)
+                    continue;
+                bte = &desc->block_table[block_idx];
+
+                raw_id = bte->gx_id;
+                if (raw_id >= 0 && raw_id < desc->grad_table_size) {
+                    gte = &desc->grad_table[raw_id];
+                    shot_idx = gte->shot_index;
+                    if (shot_idx >= 0 && shot_idx < PULSEQLIB_MAX_GRAD_SHOTS) {
+                        abs_amp = gte->amplitude;
+                        if (abs_amp < 0.0f) abs_amp = -abs_amp;
+                        arr_idx = pos * PULSEQLIB_MAX_GRAD_SHOTS + shot_idx;
+                        if (abs_amp > pos_max_gx[arr_idx])
+                            pos_max_gx[arr_idx] = abs_amp;
+                    }
+                }
+
+                raw_id = bte->gy_id;
+                if (raw_id >= 0 && raw_id < desc->grad_table_size) {
+                    gte = &desc->grad_table[raw_id];
+                    shot_idx = gte->shot_index;
+                    if (shot_idx >= 0 && shot_idx < PULSEQLIB_MAX_GRAD_SHOTS) {
+                        abs_amp = gte->amplitude;
+                        if (abs_amp < 0.0f) abs_amp = -abs_amp;
+                        arr_idx = pos * PULSEQLIB_MAX_GRAD_SHOTS + shot_idx;
+                        if (abs_amp > pos_max_gy[arr_idx])
+                            pos_max_gy[arr_idx] = abs_amp;
+                    }
+                }
+
+                raw_id = bte->gz_id;
+                if (raw_id >= 0 && raw_id < desc->grad_table_size) {
+                    gte = &desc->grad_table[raw_id];
+                    shot_idx = gte->shot_index;
+                    if (shot_idx >= 0 && shot_idx < PULSEQLIB_MAX_GRAD_SHOTS) {
+                        abs_amp = gte->amplitude;
+                        if (abs_amp < 0.0f) abs_amp = -abs_amp;
+                        arr_idx = pos * PULSEQLIB_MAX_GRAD_SHOTS + shot_idx;
+                        if (abs_amp > pos_max_gz[arr_idx])
+                            pos_max_gz[arr_idx] = abs_amp;
+                    }
+                }
+            }
+        }
+        return PULSEQLIB_SUCCESS;
     }
 
     for (tr_idx = tr->imaging_tr_start / tr_size;
@@ -685,6 +751,7 @@ int pulseqlib__get_gradient_waveforms_range(
             return diag->code;
         }
         compute_position_max_amplitudes_filtered(desc,
+            block_start, block_count,
             pos_max_gx, pos_max_gy, pos_max_gz,
             tr_group_labels, target_group);
 
@@ -1121,6 +1188,8 @@ int pulseqlib_get_tr_waveforms(
     const pulseqlib_tr_descriptor* tr;
     pulseqlib_diagnostic local_diag;
     int block_start, block_count, tr_block_start;
+    int has_nd_prep, has_nd_cool;
+    int main_region_start, main_region_end;
     int n, block_idx, k;
     int total_gx, total_gy, total_gz, total_rf, total_adc;
     int idx_gx, idx_gy, idx_gz, idx_rf, idx_adc;
@@ -1158,6 +1227,8 @@ int pulseqlib_get_tr_waveforms(
 
     desc = &coll->descriptors[subseq_idx];
     tr   = &desc->tr_descriptor;
+    has_nd_prep = (tr->num_prep_blocks > 0 && !tr->degenerate_prep);
+    has_nd_cool = (tr->num_cooldown_blocks > 0 && !tr->degenerate_cooldown);
 
     if (tr->tr_size <= 0) {
         diag->code = PULSEQLIB_ERR_TR_NO_BLOCKS;
@@ -1171,24 +1242,27 @@ int pulseqlib_get_tr_waveforms(
             return diag->code;
         }
         tr_block_start = tr->num_prep_blocks + tr_index * tr->tr_size;
+        block_start = tr_block_start;
+        block_count = tr->tr_size;
     } else {
-        /* canonical main TR (first imaging instance) */
+        /* Canonical main TR (first imaging instance) */
         tr_block_start = tr->num_prep_blocks + tr->imaging_tr_start;
-    }
-
-    block_start = tr_block_start;
-    block_count = tr->tr_size;
-
-    if (include_prep && (amplitude_mode != PULSEQLIB_AMP_ACTUAL || tr_index == 0)) {
-        block_start = 0;
-        block_count = tr_block_start + tr->tr_size - block_start;
-    }
-    if (include_cooldown &&
-        (amplitude_mode != PULSEQLIB_AMP_ACTUAL || tr_index == tr->num_trs - 1)) {
-        block_count = (desc->num_blocks - desc->num_cooldown_blocks
-                       + desc->num_cooldown_blocks) - block_start;
-        /* simpler: */
-        block_count = desc->num_blocks - block_start;
+        /*
+         * Patch: For degenerate prep/cooldown (GRE), always return only a single canonical TR.
+         * For non-degenerate, retain full-pass behavior if both include_prep/cooldown and (has_nd_prep || has_nd_cool).
+         */
+        if (!(has_nd_prep || has_nd_cool)) {
+            // Degenerate: only a single canonical TR
+            block_start = tr_block_start;
+            block_count = tr->tr_size;
+        } else if (include_prep && include_cooldown && (has_nd_prep || has_nd_cool)) {
+            // Non-degenerate: full pass
+            block_start = 0;
+            block_count = desc->pass_len;
+        } else {
+            block_start = tr_block_start;
+            block_count = tr->tr_size;
+        }
     }
 
     if (block_start < 0 || block_start + block_count > desc->num_blocks) {
@@ -1200,13 +1274,14 @@ int pulseqlib_get_tr_waveforms(
     if (amplitude_mode == PULSEQLIB_AMP_MAX_POS ||
         amplitude_mode == PULSEQLIB_AMP_ZERO_VAR) {
         pos_max_gx = (float*)PULSEQLIB_ALLOC(
-            (size_t)tr->tr_size * PULSEQLIB_MAX_GRAD_SHOTS * sizeof(float));
+            (size_t)block_count * PULSEQLIB_MAX_GRAD_SHOTS * sizeof(float));
         pos_max_gy = (float*)PULSEQLIB_ALLOC(
-            (size_t)tr->tr_size * PULSEQLIB_MAX_GRAD_SHOTS * sizeof(float));
+            (size_t)block_count * PULSEQLIB_MAX_GRAD_SHOTS * sizeof(float));
         pos_max_gz = (float*)PULSEQLIB_ALLOC(
-            (size_t)tr->tr_size * PULSEQLIB_MAX_GRAD_SHOTS * sizeof(float));
+            (size_t)block_count * PULSEQLIB_MAX_GRAD_SHOTS * sizeof(float));
         if (!pos_max_gx || !pos_max_gy || !pos_max_gz) goto alloc_fail;
         compute_position_max_amplitudes_filtered(desc,
+            block_start, block_count,
             pos_max_gx, pos_max_gy, pos_max_gz, NULL, 0);
 
         /* ZERO_VAR: zero out positions whose gradients vary across TRs */
@@ -1299,6 +1374,9 @@ int pulseqlib_get_tr_waveforms(
     t0 = 0.0f;
     idx_gx = 0; idx_gy = 0; idx_gz = 0; idx_rf = 0; idx_adc = 0;
 
+    main_region_start = tr->num_prep_blocks + tr->imaging_tr_start;
+    main_region_end = main_region_start + tr->num_trs * tr->tr_size;
+
     for (n = 0; n < block_count; ++n) {
         int pos_in_tr;
         block_idx = block_start + n;
@@ -1323,14 +1401,16 @@ int pulseqlib_get_tr_waveforms(
         out->blocks[n].start_us    = t0;
         out->blocks[n].duration_us = block_dur_us;
 
-        /* segment assignment: only for blocks within the main TR range */
-        pos_in_tr = block_idx - tr_block_start;
-        if (pos_in_tr >= 0 && pos_in_tr < tr->tr_size) {
+        /* Segment assignment for any block that falls in the main-TR region.
+         * For repeated TRs, map absolute block index to position within one TR. */
+        if (block_idx >= main_region_start && block_idx < main_region_end) {
+            pos_in_tr = (block_idx - main_region_start) % tr->tr_size;
             out->blocks[n].segment_idx = find_segment_for_block_pos(
                 desc->segment_definitions,
                 desc->segment_table.num_unique_segments,
                 pos_in_tr);
         } else {
+            pos_in_tr = -1;
             out->blocks[n].segment_idx = -1;
         }
 

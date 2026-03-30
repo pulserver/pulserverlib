@@ -1488,6 +1488,172 @@ static int calc_acoustic_spectra_from_uniform(
     return PULSEQLIB_SUCCESS;
 }
 
+/* Select canonical TR window for safety/plotting wrappers.
+ * Canonical geometry is always extracted with AMP_MAX_POS.
+ * Non-degenerate prep/cooldown: full-pass canonical TR (pass-expanded).
+ * Degenerate prep/cooldown: imaging TR canonical window (no pass expansion). */
+static void pulseqlib__select_canonical_tr_window(
+    const pulseqlib_sequence_descriptor* desc,
+    int* start_block,
+    int* block_count,
+    int* amplitude_mode,
+    int* num_instances,
+    float* tr_duration_us)
+{
+    const pulseqlib_tr_descriptor* trd;
+    int has_nd_prep, has_nd_cool, n;
+
+    trd = &desc->tr_descriptor;
+    has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
+    has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
+
+    if (has_nd_prep || has_nd_cool) {
+        *start_block = 0;
+        *block_count = desc->pass_len;
+        *amplitude_mode = PULSEQLIB_AMP_MAX_POS;
+        *num_instances = (desc->num_passes > 1) ? desc->num_passes : 1;
+
+        *tr_duration_us = 0.0f;
+        for (n = 0; n < desc->pass_len; ++n) {
+            const pulseqlib_block_table_element* bte = &desc->block_table[n];
+            const pulseqlib_block_definition* bdef = &desc->block_definitions[bte->id];
+            *tr_duration_us += (bte->duration_us >= 0)
+                ? (float)bte->duration_us
+                : (float)bdef->duration_us;
+        }
+        return;
+    }
+
+    *start_block = trd->num_prep_blocks + trd->imaging_tr_start;
+    *block_count = trd->tr_size;
+    *amplitude_mode = PULSEQLIB_AMP_MAX_POS;
+    *num_instances = trd->num_trs;
+    *tr_duration_us = trd->tr_duration_us;
+}
+
+/* Find unique shot-index patterns across pass-expanded canonical windows.
+ * Returns number of unique pass patterns, 0 on allocation/shape failure.
+ * Caller must free out arrays when return > 0. */
+static int pulseqlib__find_unique_shot_passes(
+    const pulseqlib_sequence_descriptor* desc,
+    int** out_unique_pass_indices,
+    int** out_pass_group_labels)
+{
+    int num_passes, pass_size, num_cols;
+    int* rows;
+    int* unique_defs;
+    int* event_table;
+    int* result_indices;
+    int p, pos, col, bt_pos, block_idx, raw_id;
+    int num_unique, g, match, c;
+    const pulseqlib_block_table_element* bte;
+    const pulseqlib_grad_table_element* gte;
+
+    *out_unique_pass_indices = NULL;
+    *out_pass_group_labels = NULL;
+
+    num_passes = (desc->num_passes > 1) ? desc->num_passes : 1;
+    pass_size = (num_passes > 0) ? (desc->scan_table_len / num_passes) : 0;
+    if (num_passes <= 0 || pass_size <= 0 || !desc->scan_table_block_idx)
+        return 0;
+
+    num_cols = pass_size * 3;
+    rows = (int*)PULSEQLIB_ALLOC((size_t)num_passes * (size_t)num_cols * sizeof(int));
+    unique_defs = (int*)PULSEQLIB_ALLOC((size_t)num_passes * sizeof(int));
+    event_table = (int*)PULSEQLIB_ALLOC((size_t)num_passes * sizeof(int));
+    if (!rows || !unique_defs || !event_table) {
+        if (rows) PULSEQLIB_FREE(rows);
+        if (unique_defs) PULSEQLIB_FREE(unique_defs);
+        if (event_table) PULSEQLIB_FREE(event_table);
+        return 0;
+    }
+
+    for (p = 0; p < num_passes; ++p) {
+        col = 0;
+        for (pos = 0; pos < pass_size; ++pos) {
+            bt_pos = p * pass_size + pos;
+            if (bt_pos < 0 || bt_pos >= desc->scan_table_len) {
+                rows[p * num_cols + col++] = -1;
+                rows[p * num_cols + col++] = -1;
+                rows[p * num_cols + col++] = -1;
+                continue;
+            }
+            block_idx = desc->scan_table_block_idx[bt_pos];
+            if (block_idx < 0 || block_idx >= desc->num_blocks) {
+                rows[p * num_cols + col++] = -1;
+                rows[p * num_cols + col++] = -1;
+                rows[p * num_cols + col++] = -1;
+                continue;
+            }
+
+            bte = &desc->block_table[block_idx];
+
+            raw_id = bte->gx_id;
+            if (raw_id >= 0 && raw_id < desc->grad_table_size) {
+                gte = &desc->grad_table[raw_id];
+                rows[p * num_cols + col] = gte->shot_index;
+            } else rows[p * num_cols + col] = -1;
+            col++;
+
+            raw_id = bte->gy_id;
+            if (raw_id >= 0 && raw_id < desc->grad_table_size) {
+                gte = &desc->grad_table[raw_id];
+                rows[p * num_cols + col] = gte->shot_index;
+            } else rows[p * num_cols + col] = -1;
+            col++;
+
+            raw_id = bte->gz_id;
+            if (raw_id >= 0 && raw_id < desc->grad_table_size) {
+                gte = &desc->grad_table[raw_id];
+                rows[p * num_cols + col] = gte->shot_index;
+            } else rows[p * num_cols + col] = -1;
+            col++;
+        }
+    }
+
+    num_unique = 0;
+    for (p = 0; p < num_passes; ++p) {
+        match = -1;
+        for (g = 0; g < num_unique; ++g) {
+            int rep = unique_defs[g];
+            int equal = 1;
+            for (c = 0; c < num_cols; ++c) {
+                if (rows[p * num_cols + c] != rows[rep * num_cols + c]) {
+                    equal = 0;
+                    break;
+                }
+            }
+            if (equal) {
+                match = g;
+                break;
+            }
+        }
+        if (match >= 0) {
+            event_table[p] = match;
+        } else {
+            unique_defs[num_unique] = p;
+            event_table[p] = num_unique;
+            num_unique++;
+        }
+    }
+
+    result_indices = (int*)PULSEQLIB_ALLOC((size_t)num_unique * sizeof(int));
+    if (!result_indices) {
+        PULSEQLIB_FREE(rows);
+        PULSEQLIB_FREE(unique_defs);
+        PULSEQLIB_FREE(event_table);
+        return 0;
+    }
+    for (g = 0; g < num_unique; ++g) result_indices[g] = unique_defs[g];
+
+    *out_unique_pass_indices = result_indices;
+    *out_pass_group_labels = event_table;
+
+    PULSEQLIB_FREE(rows);
+    PULSEQLIB_FREE(unique_defs);
+    return num_unique;
+}
+
 /* ================================================================== */
 /*  Acoustic spectra (public wrapper)                                 */
 /* ================================================================== */
@@ -1505,10 +1671,10 @@ int pulseqlib_calc_acoustic_spectra(
     const pulseqlib_forbidden_band* forbidden_bands)
 {
     const pulseqlib_sequence_descriptor* desc;
-    const pulseqlib_tr_descriptor* trd;
     pulseqlib__uniform_grad_waveforms uw;
     pulseqlib_diagnostic local_diag;
-    int rc;
+    int rc, start_block, block_count, amplitude_mode, num_instances;
+    float tr_duration_us;
 
     (void)opts;
     memset(&uw, 0, sizeof(uw));
@@ -1519,14 +1685,25 @@ int pulseqlib_calc_acoustic_spectra(
         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; return diag->code;
     }
     desc = &coll->descriptors[subseq_idx];
-    trd = &desc->tr_descriptor;
+    pulseqlib__select_canonical_tr_window(
+        desc,
+        &start_block,
+        &block_count,
+        &amplitude_mode,
+        &num_instances,
+        &tr_duration_us);
+
     rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
-        trd->num_prep_blocks + trd->imaging_tr_start,
-        trd->tr_size, PULSEQLIB_AMP_MAX_POS, NULL, 0);
+        start_block,
+        block_count,
+        amplitude_mode,
+        NULL,
+        0);
     if (PULSEQLIB_FAILED(rc)) return rc;
     rc = calc_acoustic_spectra_from_uniform(spectra, diag, &uw,
         target_window_size, target_resolution_hz, max_freq_hz,
-        trd->num_trs, trd->tr_duration_us,
+        num_instances,
+        tr_duration_us,
         num_forbidden_bands, forbidden_bands);
     pulseqlib__uniform_grad_waveforms_free(&uw);
     return rc;
@@ -1762,7 +1939,8 @@ int pulseqlib_calc_pns(
     const pulseqlib_sequence_descriptor* desc;
     pulseqlib__uniform_grad_waveforms uw;
     pulseqlib_diagnostic local_diag;
-    int rc;
+    int rc, start_block, block_count, amplitude_mode, num_instances;
+    float tr_duration_us;
 
     (void)opts;
     memset(&uw, 0, sizeof(uw));
@@ -1773,10 +1951,22 @@ int pulseqlib_calc_pns(
         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; return diag->code;
     }
     desc = &coll->descriptors[subseq_idx];
+    pulseqlib__select_canonical_tr_window(
+        desc,
+        &start_block,
+        &block_count,
+        &amplitude_mode,
+        &num_instances,
+        &tr_duration_us);
+    (void)num_instances;
+    (void)tr_duration_us;
+
     rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
-        desc->tr_descriptor.num_prep_blocks
-            + desc->tr_descriptor.imaging_tr_start,
-        desc->tr_descriptor.tr_size, PULSEQLIB_AMP_MAX_POS, NULL, 0);
+        start_block,
+        block_count,
+        amplitude_mode,
+        NULL,
+        0);
     if (PULSEQLIB_FAILED(rc)) return rc;
     rc = calc_pns_from_uniform(result, diag, opts->gamma_hz_per_t, &uw, params);
     pulseqlib__uniform_grad_waveforms_free(&uw);
@@ -2120,7 +2310,8 @@ int pulseqlib_check_safety(
     pulseqlib__uniform_grad_waveforms uw;
     pulseqlib_acoustic_spectra spectra;
     pulseqlib_pns_result pns_result;
-    int cd_start, cd_size;
+    int start_block, block_count, amplitude_mode, num_instances;
+    float tr_duration_us;
     float pns_combined, max_pns;
 
     if (!coll || !opts) {
@@ -2141,75 +2332,39 @@ int pulseqlib_check_safety(
     rc = check_max_slew(coll, diag, opts);
     if (PULSEQLIB_FAILED(rc)) return rc;
 
-    /* ---- 4. per-subsequence acoustic + PNS ---- */
+    /* ---- 4. per-subsequence canonical-TR acoustic + PNS ---- */
     for (s = 0; s < coll->num_subsequences; ++s) {
         desc = &coll->descriptors[s];
-        trd  = &desc->tr_descriptor;
+        trd = &desc->tr_descriptor;
 
-        /* --- prep TR (if not degenerate) --- */
-        if (trd->num_prep_blocks > 0 && !trd->degenerate_prep) {
-            memset(&uw, 0, sizeof(uw));
-            rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
-                0, trd->num_prep_blocks + trd->tr_size, PULSEQLIB_AMP_ACTUAL,
-                NULL, 0);
-            if (PULSEQLIB_FAILED(rc)) return rc;
+        pulseqlib__select_canonical_tr_window(
+            desc,
+            &start_block,
+            &block_count,
+            &amplitude_mode,
+            &num_instances,
+            &tr_duration_us);
+        (void)amplitude_mode;
 
-            if (num_forbidden_bands > 0) {
-                memset(&spectra, 0, sizeof(spectra));
-                rc = calc_acoustic_spectra_from_uniform(
-                    &spectra, diag, &uw,
-                    0, 0.0f, 0.0f,
-                    1, 0.0f,
-                    num_forbidden_bands, forbidden_bands);
-                pulseqlib_acoustic_spectra_free(&spectra);
-                if (PULSEQLIB_FAILED(rc)) {
-                    pulseqlib__uniform_grad_waveforms_free(&uw);
-                    return rc;
-                }
-            }
-
-            if (pns_params) {
-                memset(&pns_result, 0, sizeof(pns_result));
-                rc = calc_pns_from_uniform(
-                    &pns_result, diag, opts->gamma_hz_per_t,
-                    &uw, pns_params);
-                if (!PULSEQLIB_FAILED(rc) && pns_result.num_samples > 0) {
-                    max_pns = 0.0f;
-                    for (i = 0; i < pns_result.num_samples; ++i) {
-                        pns_combined = 0.0f;
-                        if (pns_result.slew_x_hz_per_m_per_s)
-                            pns_combined += pns_result.slew_x_hz_per_m_per_s[i] * pns_result.slew_x_hz_per_m_per_s[i];
-                        if (pns_result.slew_y_hz_per_m_per_s)
-                            pns_combined += pns_result.slew_y_hz_per_m_per_s[i] * pns_result.slew_y_hz_per_m_per_s[i];
-                        if (pns_result.slew_z_hz_per_m_per_s)
-                            pns_combined += pns_result.slew_z_hz_per_m_per_s[i] * pns_result.slew_z_hz_per_m_per_s[i];
-                        pns_combined = (float)sqrt((double)pns_combined);
-                        if (pns_combined > max_pns) max_pns = pns_combined;
-                    }
-                    if (max_pns > pns_threshold_percent) rc = PULSEQLIB_ERR_PNS_THRESHOLD_EXCEEDED;
-                }
-                pulseqlib_pns_result_free(&pns_result);
-                if (PULSEQLIB_FAILED(rc)) {
-                    pulseqlib__uniform_grad_waveforms_free(&uw);
-                    return rc;
-                }
-            }
-
-            pulseqlib__uniform_grad_waveforms_free(&uw);
-        }
-
-        /* --- main TR (unique shot-index variants) --- */
+        /* Evaluate one canonical TR per shot-ID combination. */
         unique_tr_indices = NULL;
         tr_group_labels   = NULL;
-        num_unique_trs = pulseqlib__find_unique_shot_trs(desc,
-            &unique_tr_indices, &tr_group_labels);
+        if ((trd->num_prep_blocks > 0 && !trd->degenerate_prep) ||
+            (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown)) {
+            num_unique_trs = pulseqlib__find_unique_shot_passes(
+                desc, &unique_tr_indices, &tr_group_labels);
+        } else {
+            num_unique_trs = pulseqlib__find_unique_shot_trs(
+                desc, &unique_tr_indices, &tr_group_labels);
+        }
         if (num_unique_trs <= 0) num_unique_trs = 1;
 
         for (u = 0; u < num_unique_trs; ++u) {
             memset(&uw, 0, sizeof(uw));
             rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
-                trd->num_prep_blocks + trd->imaging_tr_start,
-                trd->tr_size, PULSEQLIB_AMP_MAX_POS,
+                start_block,
+                block_count,
+                PULSEQLIB_AMP_MAX_POS,
                 tr_group_labels, u);
             if (PULSEQLIB_FAILED(rc)) {
                 if (unique_tr_indices) PULSEQLIB_FREE(unique_tr_indices);
@@ -2222,7 +2377,8 @@ int pulseqlib_check_safety(
                 rc = calc_acoustic_spectra_from_uniform(
                     &spectra, diag, &uw,
                     0, 0.0f, 0.0f,
-                    trd->num_trs, trd->tr_duration_us,
+                    num_instances,
+                    tr_duration_us,
                     num_forbidden_bands, forbidden_bands);
                 pulseqlib_acoustic_spectra_free(&spectra);
                 if (PULSEQLIB_FAILED(rc)) {
@@ -2267,61 +2423,6 @@ int pulseqlib_check_safety(
 
         if (unique_tr_indices) PULSEQLIB_FREE(unique_tr_indices);
         if (tr_group_labels)   PULSEQLIB_FREE(tr_group_labels);
-
-        /* --- cooldown TR (if not degenerate) --- */
-        if (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown) {
-            cd_size  = trd->tr_size + trd->num_cooldown_blocks;
-            cd_start = desc->num_blocks - cd_size;
-
-            memset(&uw, 0, sizeof(uw));
-            rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
-                cd_start, cd_size, PULSEQLIB_AMP_ACTUAL,
-                NULL, 0);
-            if (PULSEQLIB_FAILED(rc)) return rc;
-
-            if (num_forbidden_bands > 0) {
-                memset(&spectra, 0, sizeof(spectra));
-                rc = calc_acoustic_spectra_from_uniform(
-                    &spectra, diag, &uw,
-                    0, 0.0f, 0.0f,
-                    1, 0.0f,
-                    num_forbidden_bands, forbidden_bands);
-                pulseqlib_acoustic_spectra_free(&spectra);
-                if (PULSEQLIB_FAILED(rc)) {
-                    pulseqlib__uniform_grad_waveforms_free(&uw);
-                    return rc;
-                }
-            }
-
-            if (pns_params) {
-                memset(&pns_result, 0, sizeof(pns_result));
-                rc = calc_pns_from_uniform(
-                    &pns_result, diag, opts->gamma_hz_per_t,
-                    &uw, pns_params);
-                if (!PULSEQLIB_FAILED(rc) && pns_result.num_samples > 0) {
-                    max_pns = 0.0f;
-                    for (i = 0; i < pns_result.num_samples; ++i) {
-                        pns_combined = 0.0f;
-                        if (pns_result.slew_x_hz_per_m_per_s)
-                            pns_combined += pns_result.slew_x_hz_per_m_per_s[i] * pns_result.slew_x_hz_per_m_per_s[i];
-                        if (pns_result.slew_y_hz_per_m_per_s)
-                            pns_combined += pns_result.slew_y_hz_per_m_per_s[i] * pns_result.slew_y_hz_per_m_per_s[i];
-                        if (pns_result.slew_z_hz_per_m_per_s)
-                            pns_combined += pns_result.slew_z_hz_per_m_per_s[i] * pns_result.slew_z_hz_per_m_per_s[i];
-                        pns_combined = (float)sqrt((double)pns_combined);
-                        if (pns_combined > max_pns) max_pns = pns_combined;
-                    }
-                    if (max_pns > pns_threshold_percent) rc = PULSEQLIB_ERR_PNS_THRESHOLD_EXCEEDED;
-                }
-                pulseqlib_pns_result_free(&pns_result);
-                if (PULSEQLIB_FAILED(rc)) {
-                    pulseqlib__uniform_grad_waveforms_free(&uw);
-                    return rc;
-                }
-            }
-
-            pulseqlib__uniform_grad_waveforms_free(&uw);
-        }
     }
 
     return PULSEQLIB_SUCCESS;

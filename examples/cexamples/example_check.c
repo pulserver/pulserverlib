@@ -10,7 +10,7 @@
  *   2. Consistency check.
  *   3. Hardware safety check (gmax, slewmax, continuity, acoustic, PNS).
  *   4. Build canonical-TR RF stat arrays; run vendor RF safety + find max B1.
- *   5. Gradient safety per segment.
+ *   5. Gradient safety per canonical segment sequence.
  *   6. Set up echo filters and data storage dimensions.
  *
  * Compile:
@@ -83,11 +83,13 @@ static float vendor_find_rf_max(const pulseqlib_rf_stats* pulses,
 /**
  * @brief Vendor gradient safety per segment — returns min duration (us).
  */
-static float vendor_check_grad_safety(const pulseqlib_collection* coll,
-                                   int seg_idx)
+static float vendor_check_grad_safety_canonical(const pulseqlib_collection* coll,
+                                             const int* seg_ids,
+                                             int num_segments,
+                                             float canonical_tr_us)
 {
     /* Placeholder: return 0 = no constraint */
-    (void)coll; (void)seg_idx;
+    (void)coll; (void)seg_ids; (void)num_segments; (void)canonical_tr_us;
     return 0.0f;
 }
 
@@ -194,33 +196,51 @@ int main(int argc, char** argv)
     }
 
     /* ============================================================= */
-    /*  5. Gradient safety per segment                               */
+    /*  5. Gradient safety per canonical segment sequence             */
     /* ============================================================= */
     {
         pulseqlib_collection_info ci = PULSEQLIB_COLLECTION_INFO_INIT;
         rc = pulseqlib_get_collection_info(coll, &ci);
         CHECK(rc, &g_diag);
-        nseg = ci.num_segments;
+        nsub = ci.num_subsequences;
     }
 
-    for (s = 0; s < nseg; ++s) {
-        pulseqlib_segment_info segi = PULSEQLIB_SEGMENT_INFO_INIT;
-        float min_dur;
+    for (s = 0; s < nsub; ++s) {
+        pulseqlib_subseq_info si = PULSEQLIB_SUBSEQ_INFO_INIT;
+        int ncanon;
+        int* canon_seg_ids = NULL;
+        float min_tr_us;
 
-        rc = pulseqlib_get_segment_info(coll, s, &segi);
+        rc = pulseqlib_get_subseq_info(coll, s, &si);
         CHECK(rc, &g_diag);
 
-        min_dur = vendor_check_grad_safety(coll, s);
+        ncanon = pulseqlib_get_canonical_segment_sequence(coll, s, NULL);
+        if (ncanon < 0) { rc = ncanon; CHECK(rc, &g_diag); }
 
-        if (min_dur > (float)segi.duration_us) {
+        if (ncanon > 0) {
+            canon_seg_ids = (int*)malloc((size_t)ncanon * sizeof(int));
+            if (!canon_seg_ids) {
+                fprintf(stderr, "alloc failed for canonical segment ids\n");
+                goto fail;
+            }
+            rc = pulseqlib_get_canonical_segment_sequence(coll, s, canon_seg_ids);
+            CHECK(rc, &g_diag);
+        }
+
+        min_tr_us = vendor_check_grad_safety_canonical(
+            coll, canon_seg_ids, ncanon, si.tr_duration_us);
+        if (min_tr_us > si.tr_duration_us) {
+            free(canon_seg_ids);
             fprintf(stderr,
-                "Gradient safety: segment %d too short "
+                "Gradient safety: subseq %d canonical TR too short "
                 "(%.0f us < %.0f us min)\n",
-                s, (float)segi.duration_us, min_dur);
+                s, si.tr_duration_us, min_tr_us);
             goto fail;
         }
+
+        free(canon_seg_ids);
     }
-    printf("Gradient safety check PASSED (%d segments).\n", nseg);
+    printf("Gradient safety check PASSED (%d subsequences).\n", nsub);
 
     /* ============================================================= */
     /*  6. Echo filters and data storage dimensions                  */

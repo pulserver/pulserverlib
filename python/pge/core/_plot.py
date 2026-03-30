@@ -168,7 +168,7 @@ def plot(
     """
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
-
+    
     is_collection = isinstance(source, SequenceCollection)
 
     # Lazy check for pypulseq
@@ -212,6 +212,76 @@ def plot(
         amplitude_mode = 'actual' if tr_idx > 0 else 'max_pos'
         tr_index = int(tr_idx)
 
+    # Always plot the canonical TR window(s) as defined by the C backend
+    from ._extension._pulseqlib_wrapper import _find_tr
+    tr_info = None
+    if is_collection:
+        tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
+        # For 'max_pos' or 'zero_var', plot all canonical TRs (one per unique shot pattern)
+        # For 'actual', plot only the requested TR
+        if amplitude_mode in ('max_pos', 'zero_var'):
+            wf = get_tr_waveforms(
+                source,
+                subsequence_idx=subsequence_idx,
+                amplitude_mode=amplitude_mode,
+                tr_index=0,
+                include_prep=True,
+                include_cooldown=True,
+                collapse_delays=collapse_delays,
+            )
+            # Diagnostic: print block info for debugging canonical TR window
+            print(f"[DEBUG] Number of waveform blocks: {len(wf.blocks)}")
+            if wf.blocks:
+                print(f"[DEBUG] Block start_us: {[b.start_us for b in wf.blocks]}")
+                print(f"[DEBUG] Block duration_us: {[b.duration_us for b in wf.blocks]}")
+            tr_dur = tr_info['tr_duration_us']
+            num_trs = tr_info['num_trs']
+            first_tr_start_us = wf.blocks[0].start_us if wf.blocks else 0.0
+            from ._validate import _abs_tr_start_s
+            _abs_s = _abs_tr_start_s(
+                source._seqs[subsequence_idx],
+                tr_info['num_prep_blocks'],
+                0,
+                tr_info['tr_duration_us'],
+                tr_info.get('imaging_tr_start'),
+            )
+        else:
+            wf = get_tr_waveforms(
+                source,
+                subsequence_idx=subsequence_idx,
+                amplitude_mode=amplitude_mode,
+                tr_index=tr_index,
+                include_prep=True,
+                include_cooldown=True,
+                collapse_delays=collapse_delays,
+            )
+            # Mask to the TR window for the requested TR
+            tr_dur = tr_info['tr_duration_us']
+            t0 = wf.blocks[0].start_us if wf.blocks else 0.0
+            t1 = t0 + tr_dur
+            def _mask_tr(t, a):
+                t = np.asarray(t)
+                a = np.asarray(a)
+                mask = (t >= t0 - 1e-3) & (t <= t1 + 1e-3)
+                return t[mask], a[mask]
+            wf.rf_mag.time_us, wf.rf_mag.amplitude = _mask_tr(wf.rf_mag.time_us, wf.rf_mag.amplitude)
+            wf.rf_phase.time_us, wf.rf_phase.amplitude = _mask_tr(wf.rf_phase.time_us, wf.rf_phase.amplitude)
+            wf.gx.time_us, wf.gx.amplitude = _mask_tr(wf.gx.time_us, wf.gx.amplitude)
+            wf.gy.time_us, wf.gy.amplitude = _mask_tr(wf.gy.time_us, wf.gy.amplitude)
+            wf.gz.time_us, wf.gz.amplitude = _mask_tr(wf.gz.time_us, wf.gz.amplitude)
+            wf.adc_events = [adc for adc in wf.adc_events if t0 <= adc.onset_us <= t1]
+            wf.blocks = [blk for blk in wf.blocks if t0 <= blk.start_us < t1]
+            num_trs = 1
+            first_tr_start_us = t0
+            from ._validate import _abs_tr_start_s
+            _abs_s = _abs_tr_start_s(
+                source._seqs[subsequence_idx],
+                tr_info['num_prep_blocks'],
+                tr_index,
+                tr_info['tr_duration_us'],
+                tr_info.get('imaging_tr_start'),
+            )
+
     # ── Time helpers ──
     t_scale = 1e-3 if time_unit == 'ms' else 1.0
     t_label = 'Time (ms)' if time_unit == 'ms' else 'Time (us)'
@@ -224,12 +294,8 @@ def plot(
         from ._extension._pulseqlib_wrapper import _find_tr
 
         tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
-        include_prep = (
-            tr_info['num_prep_blocks'] > 0 and not tr_info['degenerate_prep']
-        )
-        include_cooldown = (
-            tr_info['num_cooldown_blocks'] > 0 and not tr_info['degenerate_cooldown']
-        )
+        include_prep = True
+        include_cooldown = True
 
         wf = get_tr_waveforms(
             source,

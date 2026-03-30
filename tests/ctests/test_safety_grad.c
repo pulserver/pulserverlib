@@ -281,7 +281,104 @@ MU_TEST_SUITE(suite_grad_continuity)
 }
 
 /* ================================================================== */
-/*  Suite C — Acoustic forbidden-frequency safety tests              */
+/*  Suite C -- Canonical segment-sequence API (gradient safety path)  */
+/* ================================================================== */
+
+static void assert_canonical_sequence_matches_expected(
+    const pulseqlib_collection* coll,
+    int subseq_idx,
+    int expect_full_pass)
+{
+    const pulseqlib_sequence_descriptor* desc;
+    const pulseqlib_tr_descriptor* trd;
+    int n_prep, n_main, n_cool;
+    int ncanon, expected, p, i, w;
+    int* canon_ids = NULL;
+
+    desc = &coll->descriptors[subseq_idx];
+    trd = &desc->tr_descriptor;
+
+    n_prep = desc->segment_table.num_prep_segments;
+    n_main = desc->segment_table.num_main_segments;
+    n_cool = desc->segment_table.num_cooldown_segments;
+
+    if (expect_full_pass) {
+        expected = n_prep + n_main * ((desc->num_passes > 1) ? desc->num_passes : 1) + n_cool;
+        mu_assert(trd->num_prep_blocks > 0, "expected non-zero prep blocks");
+        mu_assert(!trd->degenerate_prep, "expected non-degenerate prep");
+    } else {
+        expected = n_main;
+    }
+
+    ncanon = pulseqlib_get_canonical_segment_sequence(coll, subseq_idx, NULL);
+    mu_assert_int_eq(expected, ncanon);
+
+    if (ncanon > 0) {
+        canon_ids = (int*)malloc((size_t)ncanon * sizeof(int));
+        mu_assert(canon_ids != NULL, "malloc failed for canonical segment ids");
+    }
+
+    ncanon = pulseqlib_get_canonical_segment_sequence(coll, subseq_idx, canon_ids);
+    mu_assert_int_eq(expected, ncanon);
+
+    if (expect_full_pass) {
+        w = 0;
+        for (i = 0; i < n_prep; ++i)
+            mu_assert_int_eq(desc->segment_table.prep_segment_table[i], canon_ids[w++]);
+
+        for (p = 0; p < ((desc->num_passes > 1) ? desc->num_passes : 1); ++p)
+            for (i = 0; i < n_main; ++i)
+                mu_assert_int_eq(desc->segment_table.main_segment_table[i], canon_ids[w++]);
+
+        for (i = 0; i < n_cool; ++i)
+            mu_assert_int_eq(desc->segment_table.cooldown_segment_table[i], canon_ids[w++]);
+
+        mu_assert_int_eq(expected, w);
+    } else {
+        for (i = 0; i < n_main; ++i)
+            mu_assert_int_eq(desc->segment_table.main_segment_table[i], canon_ids[i]);
+    }
+
+    free(canon_ids);
+}
+
+MU_TEST(test_canonical_segment_sequence_degenerate_main_only)
+{
+    pulseqlib_collection* coll = NULL;
+    int rc;
+
+    default_opts_init(&s_opts);
+    rc = load_seq(&coll, "00_basic_rfstat.seq", &s_opts);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "load_seq failed");
+
+    assert_canonical_sequence_matches_expected(coll, 0, 0);
+
+    pulseqlib_collection_free(coll);
+}
+
+MU_TEST(test_canonical_segment_sequence_nondegenerate_fullpass)
+{
+    pulseqlib_collection* coll = NULL;
+    int rc;
+
+    default_opts_init(&s_opts);
+    rc = load_seq_with_averages(
+        &coll, "05_rfprep_ok_canonical_fullpass.seq", &s_opts, 3);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "load_seq_with_averages failed");
+
+    assert_canonical_sequence_matches_expected(coll, 0, 1);
+
+    pulseqlib_collection_free(coll);
+}
+
+MU_TEST_SUITE(suite_grad_canonical_sequence)
+{
+    MU_RUN_TEST(test_canonical_segment_sequence_degenerate_main_only);
+    MU_RUN_TEST(test_canonical_segment_sequence_nondegenerate_fullpass);
+}
+
+/* ================================================================== */
+/*  Suite D — Acoustic forbidden-frequency safety tests              */
 /* ================================================================== */
 
 #if 0  /* Temporary: acoustic checks are known stub work-in-progress. */
@@ -370,6 +467,7 @@ int test_safety_grad_main(void)
 
     MU_RUN_SUITE(suite_grad_limits);
     MU_RUN_SUITE(suite_grad_continuity);
+    MU_RUN_SUITE(suite_grad_canonical_sequence);
     MU_REPORT();
     return MU_EXIT_CODE;
 }

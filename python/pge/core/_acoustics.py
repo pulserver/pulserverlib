@@ -22,13 +22,16 @@ def grad_spectrum(
     max_frequency: float = 3000.0,
     threshold_percent: float | list[float] | tuple[float, ...] | None = None,
 ) -> None:
-    """Plot acoustic spectra for gradient waveforms in a TR.
+    """Plot acoustic spectra for gradient waveforms in the canonical TR.
 
     Creates a two-row figure:
 
     * **Top row** — three sliding-window spectrograms (Gx, Gy, Gz).
-    * **Bottom row** — full-TR harmonic spectrum (max envelope across
+        * **Bottom row** — canonical-TR harmonic spectrum (max envelope across
       windows) with forbidden-band overlays.
+
+        Canonical-TR selection follows the C safety backend per shot-ID
+        combination, using shot-filtered ``AMP_MAX_POS`` for each group.
 
     No pass/fail check is performed — use
     :meth:`SequenceCollection.check` for that.
@@ -96,7 +99,7 @@ def grad_spectrum(
             dtype=np.int32,
         ).reshape(num_windows, num_freq_bins)
 
-    # Full-TR spectra
+    # Canonical-TR spectra
     spectrum_full = {}
     peaks_full = {}
     for ax_name in ('gx', 'gy', 'gz'):
@@ -115,74 +118,83 @@ def grad_spectrum(
     axis_labels = {'gx': 'Gx', 'gy': 'Gy', 'gz': 'Gz'}
     colors = {'gx': 'C0', 'gy': 'C1', 'gz': 'C2'}
 
-    # ── Two-row figure: spectrograms (top), harmonics (bottom) ──
-    fig, axes = plt.subplots(
-        2,
-        3,
-        figsize=(16, 8),
-        gridspec_kw={'height_ratios': [1, 1]},
-    )
+    use_sliding_windows = num_windows > 1
 
-    # ── Top row: sliding-window spectrograms ──────────────────
-    for col, ax_name in enumerate(('gx', 'gy', 'gz')):
-        ax = axes[0, col]
-        sg = spectrograms[ax_name]
-        pk = peaks[ax_name]
-
-        ax.pcolormesh(
-            frequencies,
-            np.arange(num_windows),
-            sg,
-            cmap='viridis',
-            shading='auto',
-            norm=Normalize(vmin=sg.min(), vmax=sg.max()),
+    if use_sliding_windows:
+        # ── Two-row figure: spectrograms (top), harmonics (bottom) ──
+        fig, axes = plt.subplots(
+            2,
+            3,
+            figsize=(16, 8),
+            gridspec_kw={'height_ratios': [1, 1]},
         )
 
-        # Mark peaks
-        peak_coords = np.where(pk > 0)
-        if len(peak_coords[0]) > 0:
-            ax.plot(
-                frequencies[peak_coords[1]],
-                peak_coords[0],
-                marker='*',
-                color='red',
-                linestyle='none',
-                markersize=10,
-                markeredgewidth=0,
+        # ── Top row: sliding-window spectrograms ──────────────────
+        for col, ax_name in enumerate(('gx', 'gy', 'gz')):
+            ax = axes[0, col]
+            sg = spectrograms[ax_name]
+            pk = peaks[ax_name]
+
+            ax.pcolormesh(
+                frequencies,
+                np.arange(num_windows),
+                sg,
+                cmap='viridis',
+                shading='auto',
+                norm=Normalize(vmin=sg.min(), vmax=sg.max()),
             )
 
-        # Forbidden bands as vertical lines
-        for band in forbidden_bands:
-            ax.axvline(band[0], color='white', ls='--', lw=1.2, alpha=0.8)
-            ax.axvline(band[1], color='white', ls='--', lw=1.2, alpha=0.8)
+            # Mark peaks
+            peak_coords = np.where(pk > 0)
+            if len(peak_coords[0]) > 0:
+                ax.plot(
+                    frequencies[peak_coords[1]],
+                    peak_coords[0],
+                    marker='*',
+                    color='red',
+                    linestyle='none',
+                    markersize=10,
+                    markeredgewidth=0,
+                )
 
-        ax.set_xlim(freq_min, freq_max)
-        ax.set_ylim(-0.5, num_windows - 0.5)
-        ax.set_xlabel('Frequency (Hz)')
-        ax.set_ylabel('Window Index')
-        ax.set_title(f'{axis_labels[ax_name]} Spectrogram')
-        _add_echo_spacing_axis(ax, freq_min, freq_max)
+            # Forbidden bands as vertical lines
+            for band in forbidden_bands:
+                ax.axvline(band[0], color='white', ls='--', lw=1.2, alpha=0.8)
+                ax.axvline(band[1], color='white', ls='--', lw=1.2, alpha=0.8)
 
-    # ── Bottom row: full-TR harmonic spectra + forbidden bands ──
+            ax.set_xlim(freq_min, freq_max)
+            ax.set_ylim(-0.5, num_windows - 0.5)
+            ax.set_xlabel('Frequency (Hz)')
+            ax.set_ylabel('Window Index')
+            ax.set_title(f'{axis_labels[ax_name]} Spectrogram')
+            _add_echo_spacing_axis(ax, freq_min, freq_max)
+    else:
+        # Window shorter than requested analysis interval: skip spectrogram row.
+        fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
+
+    # ── Harmonic spectra + forbidden bands ──
     for col, ax_name in enumerate(('gx', 'gy', 'gz')):
-        ax = axes[1, col]
+        ax = axes[1, col] if use_sliding_windows else axes[col]
         color = colors[ax_name]
 
         # Max envelope across windows
-        max_env = spectrograms[ax_name].max(axis=0)
+        if num_windows > 0:
+            max_env = spectrograms[ax_name].max(axis=0)
+        else:
+            max_env = np.zeros_like(frequencies, dtype=np.float32)
         ax.plot(frequencies, max_env, color=color, lw=1.5, label='Max envelope')
 
-        # Full-TR spectrum
+        # Canonical-TR spectrum
         ax.plot(
             frequencies,
             spectrum_full[ax_name],
             color=color,
             lw=0.8,
             alpha=0.5,
-            label='Full TR',
+            label='Canonical TR',
         )
 
-        # Mark full-TR peaks
+        # Mark canonical-TR peaks
         peak_mask = peaks_full[ax_name] > 0
         if np.any(peak_mask):
             ax.plot(

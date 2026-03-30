@@ -389,7 +389,7 @@ class SequenceCollection(pp.Sequence):
         stim_threshold: float = 0.0,
         decay_constant_us: float = 0.0,
         forbidden_bands: list[tuple[float, float, float]] | None = None,
-        pns_threshold_percent: float = 100.0,
+        pns_threshold_percent: float = 80.0,
     ) -> None:
         """Run consistency and safety checks.
 
@@ -444,7 +444,7 @@ class SequenceCollection(pp.Sequence):
         sequence_idx: int = 0,
         stim_threshold: float,
         decay_constant_us: float,
-        threshold_percent: float | list[float] | tuple[float, ...] = 80.0,
+        threshold_percent: float | list[float] | tuple[float, ...] = [80.0, 100.0],
     ) -> None:
         """Plot convolved PNS waveforms for a representative TR.
 
@@ -461,7 +461,7 @@ class SequenceCollection(pp.Sequence):
         decay_constant_us : float
             PNS decay constant / chronaxie (us).
         threshold_percent : float or sequence of float
-            Threshold line(s) to draw (default 80 %).
+            Threshold line(s) to draw (default 80 % and 100 %).
         """
         from ._pns import pns as _pns_impl
 

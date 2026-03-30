@@ -107,15 +107,25 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
     channels = result[0]
 
     hz_to_mT_per_m = 1.0 / (gamma * 1e-3)
-    hz_to_uT = 1e6 / gamma
 
     def _clip_window(time_us, amp):
         t = np.asarray(time_us)
         a = np.asarray(amp)
         if t.size == 0:
-            return np.empty(0), np.empty(0)
+            # Pad with zeros for the full window
+            return np.array([0.0, window_duration_us]), np.zeros(2)
         mask = (t >= -1e-6) & (t <= window_duration_us + 1e-6)
-        return t[mask], a[mask]
+        t_clipped = t[mask]
+        a_clipped = a[mask]
+        # Pad start if needed
+        if len(t_clipped) == 0 or t_clipped[0] > 0:
+            t_clipped = np.insert(t_clipped, 0, 0.0)
+            a_clipped = np.insert(a_clipped, 0, 0.0)
+        # Pad end if needed
+        if t_clipped[-1] < window_duration_us:
+            t_clipped = np.append(t_clipped, window_duration_us)
+            a_clipped = np.append(a_clipped, 0.0)
+        return t_clipped, a_clipped
 
     ref: dict[str, tuple] = {}
     for ch_idx, ch_name in enumerate(('gx', 'gy', 'gz')):
@@ -132,7 +142,7 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
         arr = channels[3]
         if arr.shape[1] > 0:
             t_rel = (arr[0] - abs_t0_s) * 1e6
-            a_rel = np.abs(arr[1]) * hz_to_uT
+            a_rel = np.abs(arr[1])  # Hz, match C-backend
             ref['rf_mag'] = _clip_window(t_rel, a_rel)
         else:
             ref['rf_mag'] = (np.empty(0), np.empty(0))
@@ -235,6 +245,12 @@ def validate(
     the C backend (using :func:`_plot.plot` Branch 1) and the reference
     is overlaid (Branch 2 for pypulseq, Branch 3 for XML).
 
+    # Print first 20 values of RF time and amplitude for reference and test
+    print("\n[DEBUG] Reference RF time_us (first 20):", ref_t[:20])
+    print("[DEBUG] Reference RF amplitude (first 20):", ref_a[:20])
+    print("[DEBUG] Test RF time_us (first 20):", wf.rf_mag.time_us[:20])
+    print("[DEBUG] Test RF amplitude (first 20):", wf.rf_mag.amplitude[:20])
+
     Parameters
     ----------
     seq : SequenceCollection
@@ -314,24 +330,20 @@ def validate(
     messages: list[str] = []
 
     for tr_idx in range(tr_start, tr_stop):
-        # C-backend waveforms
+        # C-backend waveforms (actual amplitudes for this TR)
         wf = get_tr_waveforms(
             seq,
             subsequence_idx=sequence_idx,
-            amplitude_mode='actual',
+            amplitude_mode='actual',  # use actual amplitudes for validation
             tr_index=tr_idx,
-            include_prep=include_prep,
-            include_cooldown=include_cooldown,
+            include_prep=True,
+            include_cooldown=True,
         )
 
         # Reference waveforms
         if xml_path is None:
-            # For full-pass TR with prep/cooldown, start from block 0
-            # Otherwise, start from the TR's first block
-            if include_prep:
-                block_start = 0
-            else:
-                block_start = tr_info['num_prep_blocks'] + tr_idx * tr_info['tr_size']
+            # Always use full-pass window: start from block 0
+            block_start = 0
             abs_t0 = _abs_block_start_s(seq._seqs[sequence_idx], block_start)
             ref = _pypulseq_reference_window(
                 seq,
@@ -339,6 +351,12 @@ def validate(
                 abs_t0,
                 wf.total_duration_us,
             )
+            # Print windowing info for reference and test
+            ref_t, ref_a = ref['rf_mag']
+            print(f"[DEBUG] TR {tr_idx} abs_t0: {abs_t0}")
+            print(f"[DEBUG] TR {tr_idx} wf.total_duration_us: {wf.total_duration_us}")
+            print(f"[DEBUG] TR {tr_idx} REF RF time_us: first={ref_t[:5]}, last={ref_t[-5:] if len(ref_t) > 5 else ref_t}")
+            print(f"[DEBUG] TR {tr_idx} TEST RF time_us: first={wf.rf_mag.time_us[:5]}, last={wf.rf_mag.time_us[-5:] if len(wf.rf_mag.time_us) > 5 else wf.rf_mag.time_us}")
         else:
             ref = _xml_reference(xml_path)
 
@@ -357,10 +375,20 @@ def validate(
                     f'(tol {grad_atol:.4f} mT/m)'
                 )
 
-        # Compare RF
-        ref_t, ref_a = ref['rf_mag']
-        r, t = _interp_to_ref(ref_t, ref_a, wf.rf_mag.time_us, wf.rf_mag.amplitude)
-        rf_err = _rms_error(r, t)
+
+        # Force reference RF arrays to be real
+        ref_t_real = np.real(ref_t)
+        ref_a_real = np.real(ref_a)
+        test_t = wf.rf_mag.time_us
+        test_a = wf.rf_mag.amplitude
+
+        # Print diagnostics
+        print(f"[DEBUG] TR {tr_idx} REF RF: len={len(ref_t_real)}, min={ref_t_real.min() if len(ref_t_real) else 'NA'}, max={ref_t_real.max() if len(ref_t_real) else 'NA'}")
+        print(f"[DEBUG] TR {tr_idx} TEST RF: len={len(test_t)}, min={test_t.min() if len(test_t) else 'NA'}, max={test_t.max() if len(test_t) else 'NA'}")
+
+        # Interpolate reference onto test time base
+        ref_interp = np.interp(test_t, ref_t_real, ref_a_real, left=0.0, right=0.0)
+        rf_err = _rms_error(ref_interp, test_a)
         tr_err['rf_mag'] = rf_err
         if rf_err > rf_rms_percent:
             pfx = f'TR {tr_idx}: ' if multi_tr else ''

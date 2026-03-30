@@ -470,7 +470,7 @@ int pulseqlib_get_rf_array(
         num_instances = num_passes;
         use_scan_table = 1;
     } else {
-        start = trd->num_prep_blocks;
+        start = trd->num_prep_blocks + trd->imaging_tr_start;
         count = trd->tr_size;
         num_instances = trd->num_trs;
         if (num_instances < 0) num_instances = 0;
@@ -798,6 +798,58 @@ int pulseqlib_get_cooldown_segment_table(
     if (n > 0 && desc->segment_table.cooldown_segment_table)
         memcpy(out_ids, desc->segment_table.cooldown_segment_table, n * sizeof(int));
     return n;
+}
+
+int pulseqlib_get_canonical_segment_sequence(
+    const pulseqlib_collection* coll, int subseq_idx, int* out_ids)
+{
+    const pulseqlib_sequence_descriptor* desc;
+    const pulseqlib_tr_descriptor* trd;
+    int n_prep, n_main, n_cool, num_passes;
+    int has_nd_prep, has_nd_cool;
+    int total, w, p, i;
+
+    if (!coll) return PULSEQLIB_ERR_NULL_POINTER;
+    if (subseq_idx < 0 || subseq_idx >= coll->num_subsequences)
+        return PULSEQLIB_ERR_INVALID_ARGUMENT;
+
+    desc = &coll->descriptors[subseq_idx];
+    trd = &desc->tr_descriptor;
+
+    n_prep = desc->segment_table.num_prep_segments;
+    n_main = desc->segment_table.num_main_segments;
+    n_cool = desc->segment_table.num_cooldown_segments;
+
+    has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
+    has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
+
+    if (has_nd_prep || has_nd_cool) {
+        num_passes = (desc->num_passes > 1) ? desc->num_passes : 1;
+        total = n_prep + n_main * num_passes + n_cool;
+    } else {
+        num_passes = 1;
+        total = n_main;
+    }
+
+    if (!out_ids) return total;
+
+    w = 0;
+    if (has_nd_prep || has_nd_cool) {
+        for (i = 0; i < n_prep; ++i)
+            out_ids[w++] = desc->segment_table.prep_segment_table[i];
+
+        for (p = 0; p < num_passes; ++p)
+            for (i = 0; i < n_main; ++i)
+                out_ids[w++] = desc->segment_table.main_segment_table[i];
+
+        for (i = 0; i < n_cool; ++i)
+            out_ids[w++] = desc->segment_table.cooldown_segment_table[i];
+    } else {
+        for (i = 0; i < n_main; ++i)
+            out_ids[w++] = desc->segment_table.main_segment_table[i];
+    }
+
+    return w;
 }
 
 /* ================================================================== */

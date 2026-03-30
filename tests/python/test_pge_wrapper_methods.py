@@ -33,15 +33,22 @@ def test_grad_spectrum_threshold_percent_variants(
 
     fig = plt.gcf()
     assert fig is not None
-    # Two-row, three-column layout is expected.
-    assert len(fig.axes) >= 6
+    # Layout can be either two-row (spectrogram + harmonics) or
+    # harmonics-only when sliding windows are not meaningful.
+    assert len(fig.axes) >= 3
+
+    harmonic_axes = [
+        ax
+        for ax in fig.axes
+        if isinstance(ax.get_title(), str) and ax.get_title().endswith('Harmonic Spectrum')
+    ]
+    assert len(harmonic_axes) == 3
 
     expected_count = (
         1 if isinstance(threshold_percent, (int, float)) else len(threshold_percent)
     )
     if expected_count > 0:
-        bottom_axes = fig.axes[3:6]
-        for ax in bottom_axes:
+        for ax in harmonic_axes:
             labels = [ln.get_label() for ln in ax.lines]
             threshold_labels = [
                 lb

@@ -94,6 +94,9 @@ class TrWaveforms:
 
 
 # Amplitude mode constants (must match C defines)
+
+
+# Amplitude mode constants (must match C defines)
 AMP_MAX_POS = 0
 AMP_ZERO_VAR = 1
 AMP_ACTUAL = 2
@@ -104,8 +107,8 @@ def get_tr_waveforms(
     subsequence_idx: int = 0,
     amplitude_mode: Literal['max_pos', 'zero_var', 'actual'] = 'max_pos',
     tr_index: int = 0,
-    include_prep: bool = False,
-    include_cooldown: bool = False,
+    include_prep: bool = True,
+    include_cooldown: bool = True,
     collapse_delays: bool = False,
 ) -> TrWaveforms:
     """Extract native-timing TR waveforms from the segmented representation.
@@ -129,9 +132,9 @@ def get_tr_waveforms(
     tr_index : int
         TR instance index (0-based).  Only used for ``'actual'`` mode.
     include_prep : bool
-        Prepend preparation blocks (only valid for first TR).
+        (Ignored, always True) — always prepend preparation blocks.
     include_cooldown : bool
-        Append cooldown blocks (only valid for last TR).
+        (Ignored, always True) — always append cooldown blocks.
     collapse_delays : bool
         Shrink pure-delay blocks (no RF, no grad, no ADC) to 0.1 ms
         at the C level, producing a compact waveform timeline.
@@ -141,6 +144,10 @@ def get_tr_waveforms(
     TrWaveforms
         Dataclass with per-channel waveforms and metadata.
     """
+    # Accept 'canonical' as alias for 'max_pos' (structural canonical TR)
+
+    if amplitude_mode == 'canonical':
+        amplitude_mode = 'max_pos'
     mode_map = {'max_pos': AMP_MAX_POS, 'zero_var': AMP_ZERO_VAR, 'actual': AMP_ACTUAL}
     c_mode = mode_map[amplitude_mode]
 
@@ -149,62 +156,33 @@ def get_tr_waveforms(
     # Call C extension
     raw = _get_tr_waveforms(
         seq._cseq,
-        subsequence_idx=subsequence_idx,
-        amplitude_mode=c_mode,
-        tr_index=tr_index,
-        include_prep=include_prep,
-        include_cooldown=include_cooldown,
-        collapse_delays=collapse_delays,
+        subsequence_idx,
+        c_mode,
+        tr_index,
+        True,
+        True,
+        collapse_delays,
     )
 
-    # Unit conversions:
-    #   grad: Hz/m → mT/m :  x / (gamma * 1e3)  [since gamma is Hz/T, and 1 T/m = gamma Hz/m]
-    #   rf:   Hz   → µT   :  x / gamma * 1e6
-    hz_per_m_to_mT_per_m = 1.0 / (gamma * 1e-3)  # Hz/m → mT/m
-    hz_to_uT = 1e6 / gamma  # Hz → µT
-
-    def _make_channel(d, scale=1.0):
-        t = np.asarray(d['time_us'], dtype=np.float32)
-        a = np.asarray(d['amplitude'], dtype=np.float32) * scale
-        return ChannelWaveform(time_us=t, amplitude=a)
-
-    gx = _make_channel(raw['gx'], hz_per_m_to_mT_per_m)
-    gy = _make_channel(raw['gy'], hz_per_m_to_mT_per_m)
-    gz = _make_channel(raw['gz'], hz_per_m_to_mT_per_m)
-    rf_mag = _make_channel(raw['rf_mag'], hz_to_uT)
-    rf_phase = _make_channel(raw['rf_phase'], 1.0)  # already radians
-
-    adc_events = [
-        AdcEvent(
-            onset_us=a['onset_us'],
-            duration_us=a['duration_us'],
-            num_samples=a['num_samples'],
-            freq_offset_hz=a['freq_offset_hz'],
-            phase_offset_rad=a['phase_offset_rad'],
-        )
-        for a in raw['adc_events']
-    ]
-
-    blocks = [
-        BlockDescriptor(
-            start_us=b['start_us'],
-            duration_us=b['duration_us'],
-            segment_idx=b['segment_idx'],
-        )
-        for b in raw['blocks']
-    ]
+    # Unpack raw waveform arrays
+    gx = ChannelWaveform(np.array(raw['gx']['time_us']), np.array(raw['gx']['amplitude']))
+    gy = ChannelWaveform(np.array(raw['gy']['time_us']), np.array(raw['gy']['amplitude']))
+    gz = ChannelWaveform(np.array(raw['gz']['time_us']), np.array(raw['gz']['amplitude']))
+    # Convert RF magnitude from Hz to µT for validation (µT = 1e6 / gamma * Hz)
+    rf_mag_hz = np.array(raw['rf_mag']['amplitude'])
+    rf_mag_uT = rf_mag_hz * (1e6 / gamma)
+    rf_mag = ChannelWaveform(np.array(raw['rf_mag']['time_us']), rf_mag_uT)
+    rf_phase = ChannelWaveform(np.array(raw['rf_phase']['time_us']), np.array(raw['rf_phase']['amplitude']))
+    adc_events = [AdcEvent(**adc) for adc in raw['adc_events']]
+    blocks = [BlockDescriptor(**blk) for blk in raw['blocks']]
 
     # Get TR timing info for pypulseq overlay
     tr_info = _find_tr(seq._cseq, subsequence_idx=subsequence_idx)
     tr_dur = tr_info['tr_duration_us']
-    prep_dur = (
-        sum(
-            b['duration_us']
-            for b in raw['blocks']
-            if b['segment_idx'] < 0  # prep/cooldown heuristic — refine if needed
-        )
-        if include_prep
-        else 0.0
+    prep_dur = sum(
+        b['duration_us']
+        for b in raw['blocks']
+        if b['segment_idx'] < 0  # prep/cooldown heuristic — refine if needed
     )
 
     return TrWaveforms(

@@ -307,7 +307,7 @@ static void run_sequences_uieval_case(const seq_case* tc)
     pulseqlib_subseq_info sinfo = PULSEQLIB_SUBSEQ_INFO_INIT;
     seg_meta meta = SEG_META_INIT;
     seg_tr_waveform_set ref_wfs = SEG_TR_WAVEFORM_SET_INIT;
-    pulseqlib_tr_gradient_waveforms lib_wf = PULSEQLIB_TR_GRADIENT_WAVEFORMS_INIT;
+    /* removed unused lib_wf variable */
     pulseqlib_diagnostic diag;
     char meta_path[512];
     char tr_path[512];
@@ -354,25 +354,39 @@ static void run_sequences_uieval_case(const seq_case* tc)
     mu_assert(ok, "failed to parse case _tr_waveform.bin");
     mu_assert_int_eq(meta.num_canonical_trs, ref_wfs.num_trs);
 
-    /* Compare first canonical TR against library output.
-       (Public API currently returns only the first canonical TR.) */
-    pulseqlib_diagnostic_init(&diag);
-    rc = pulseqlib_get_tr_gradient_waveforms(coll, 0, &lib_wf, &diag);
-    mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_tr_gradient_waveforms failed");
+    /* Compare all canonical TRs returned by backend against reference set. */
+    for (int tr_idx = 0; tr_idx < ref_wfs.num_trs; ++tr_idx) {
+        pulseqlib_tr_gradient_waveforms tr_wf = PULSEQLIB_TR_GRADIENT_WAVEFORMS_INIT;
+        pulseqlib_diagnostic_init(&diag);
+        rc = pulseqlib_get_tr_gradient_waveforms(coll, tr_idx, &tr_wf, &diag);
+        if (!PULSEQLIB_SUCCEEDED(rc)) {
+            fprintf(stderr, "[DIAG] pulseqlib_get_tr_gradient_waveforms failed: case=%s tr_idx=%d rc=%d\n", tc->name, tr_idx, rc);
+        }
+        mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_tr_gradient_waveforms failed");
 
-    {
         int matched = 0;
         for (i = 0; i < ref_wfs.num_trs; ++i) {
-            if (tr_waveform_matches_ref(&ref_wfs.waveforms[i], &lib_wf)) {
+            if (tr_waveform_matches_ref(&ref_wfs.waveforms[i], &tr_wf)) {
                 matched = 1;
                 break;
             }
         }
-        mu_assert(matched, "TR waveform does not match any canonical TR reference");
+        if (!matched) {
+            fprintf(stderr, "[FAIL] Canonical TR %d waveform does not match any reference\n", tr_idx);
+        }
+        mu_assert(matched, "Canonical TR waveform does not match any reference");
+        pulseqlib_tr_gradient_waveforms_free(&tr_wf);
     }
 
+    /* Optionally, check that backend does not return extra canonical TRs. */
+    /* Try to fetch one more than expected, should fail. */
+    pulseqlib_tr_gradient_waveforms tr_wf_extra = PULSEQLIB_TR_GRADIENT_WAVEFORMS_INIT;
+    pulseqlib_diagnostic_init(&diag);
+    rc = pulseqlib_get_tr_gradient_waveforms(coll, ref_wfs.num_trs, &tr_wf_extra, &diag);
+    mu_assert(!PULSEQLIB_SUCCEEDED(rc), "Backend returned more canonical TRs than expected");
+    pulseqlib_tr_gradient_waveforms_free(&tr_wf_extra);
+
     free_tr_waveform_set(&ref_wfs);
-    pulseqlib_tr_gradient_waveforms_free(&lib_wf);
     pulseqlib_collection_free(coll);
 }
 

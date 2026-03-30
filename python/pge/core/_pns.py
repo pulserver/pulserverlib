@@ -18,11 +18,14 @@ def pns(
     decay_constant_us: float,
     threshold_percent: float | list[float] | tuple[float, ...] = [80.0, 100.0],
 ) -> None:
-    """Plot convolved PNS waveforms for a representative TR.
+    """Plot convolved PNS waveforms for the canonical TR.
 
     Displays per-axis (X, Y, Z) and combined PNS percentage waveforms
     together with a horizontal threshold line.  No pass/fail check is
     performed — use :meth:`SequenceCollection.check` for that.
+
+    Canonical-TR selection follows the C safety backend per shot-ID
+    combination, using shot-filtered ``AMP_MAX_POS`` for each group.
 
     Parameters
     ----------
@@ -61,7 +64,7 @@ def pns(
     pns_total = np.sqrt(pns_x**2 + pns_y**2 + pns_z**2)
 
     grad_raster_time = seq.system.grad_raster_time  # seconds
-    time_ms = np.arange(num_samples) * 0.5 * grad_raster_time * 1e3
+    time_ms = np.arange(num_samples, dtype=np.float32) * grad_raster_time * 1e3
 
     # ── Single-panel figure ──────────────────────────────────
     fig, ax = plt.subplots(figsize=(12, 5))
