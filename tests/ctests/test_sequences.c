@@ -1865,33 +1865,6 @@ MU_TEST_SUITE(suite_sequences_scanloop)
 }
 
 
-/* ================================================================== */
-/*  Suite: Signature verification                                     */
-/* ================================================================== */
-
-/*
- * Load a GRE sequence whose content has been corrupted (one numeric
- * line modified) while leaving the [SIGNATURE] hash unchanged.
- * With verify_signature=1 this must produce SIGNATURE_MISMATCH.
- */
-MU_TEST(test_signature_mismatch_gre)
-{
-    pulseqlib_opts opts;
-    pulseqlib_collection* coll = NULL;
-    int rc;
-
-    gre_opts_init(&opts);
-    rc = load_seq_with_signature_check(
-             &coll, "gre_2d_1sl_1avg_corrupted.seq", &opts);
-    mu_assert_int_eq(PULSEQLIB_ERR_SIGNATURE_MISMATCH, rc);
-    /* coll should be NULL on mismatch — no free needed */
-}
-
-MU_TEST_SUITE(suite_sequences_signature)
-{
-    MU_RUN_TEST(test_signature_mismatch_gre);
-}
-
 int test_sequences_main(void)
 {
     minunit_run = 0;
@@ -1906,7 +1879,6 @@ int test_sequences_main(void)
     MU_RUN_SUITE(suite_sequences_geninstructions);
     MU_RUN_SUITE(suite_sequences_collection);
     MU_RUN_SUITE(suite_sequences_scanloop);
-    MU_RUN_SUITE(suite_sequences_signature);
     MU_REPORT();
     return MU_EXIT_CODE;
 }

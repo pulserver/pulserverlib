@@ -114,10 +114,13 @@ int main(int argc, char** argv)
     vendor_opts_init(&opts, 42577478.0f, 3.0f, 50.0f, 200.0f);
 
     /* ============================================================== */
-    /*  1. Load (with cache + labels)                                 */
+    /*  1. Prefer scanloop cache, fallback to full parse              */
     /* ============================================================== */
-    rc = pulseqlib_read(&coll, &diag, seq_path, &opts, 1, 1, 0, 1);
-    CHECK(rc, &diag);
+    rc = pulseqlib_load_scanloop_cache(&coll, seq_path);
+    if (PULSEQLIB_FAILED(rc)) {
+        rc = pulseqlib_read(&coll, &diag, seq_path, &opts, 1, 1, 0, 1);
+        CHECK(rc, &diag);
+    }
 
     {
         pulseqlib_collection_info ci = PULSEQLIB_COLLECTION_INFO_INIT;

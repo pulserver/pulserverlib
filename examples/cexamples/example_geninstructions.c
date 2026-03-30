@@ -526,13 +526,16 @@ int main(int argc, char** argv)
 
     vendor_opts_init(&opts, 42577478.0f, 3.0f, 50.0f, 200.0f);
 
-    /* -- Load (with cache, no labels needed) ---------------------- */
-    rc = pulseqlib_read(&coll, &diag, seq_path, &opts,
-                        1,   /* cache_binary     */
-                        1,   /* verify_signature */
-                        0,   /* parse_labels     */
-                        1);  /* num_averages     */
-    CHECK(rc, &diag);
+    /* -- Prefer stage cache, then fall back to full parse --------- */
+    rc = pulseqlib_load_geninstructions_cache(&coll, seq_path);
+    if (PULSEQLIB_FAILED(rc)) {
+        rc = pulseqlib_read(&coll, &diag, seq_path, &opts,
+                            1,   /* cache_binary     */
+                            1,   /* verify_signature */
+                            0,   /* parse_labels     */
+                            1);  /* num_averages     */
+        CHECK(rc, &diag);
+    }
 
     rc = pulseqlib_get_collection_info(coll, &ci);
     CHECK(rc, &diag);

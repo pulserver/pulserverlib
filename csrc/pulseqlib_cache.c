@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 
 #include "pulseqlib_internal.h"
 #include "pulseqlib_methods.h"
@@ -12,7 +13,18 @@
 /* ================================================================== */
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER  0x01020304
-#define PULSEQLIB_CACHE_VERSION        15
+#define PULSEQLIB_CACHE_VERSION_MAJOR  16
+#define PULSEQLIB_CACHE_VERSION_MINOR  0
+
+#define PULSEQLIB_CACHE_SECTION_CHECK            1
+#define PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS  2
+#define PULSEQLIB_CACHE_SECTION_SCANLOOP         3
+
+typedef struct pulseqlib_cache_section_entry {
+    int section_id;
+    int offset;
+    int size;
+} pulseqlib_cache_section_entry;
 
 /* ------ Byte-swap helpers ------ */
 
@@ -604,8 +616,16 @@ static int read_descriptor(FILE* f, pulseqlib_sequence_descriptor* d, int do_swa
             seg->has_rotation = NULL;
             seg->norot_flag = NULL;
             seg->nopos_flag = NULL;
+            seg->has_freq_mod = NULL;
+            seg->has_adc = NULL;
             seg->trigger_id = -1;
             seg->is_nav = 0;
+            seg->timing.num_rf_anchors = 0;
+            seg->timing.rf_anchors = NULL;
+            seg->timing.num_adc_anchors = 0;
+            seg->timing.adc_anchors = NULL;
+            seg->timing.num_kzero_crossings = 0;
+            seg->timing.kzero_crossing_indices = NULL;
 
             if (!read4(f, &seg->start_block, 1)) return 0;
             if (!read4(f, &seg->num_blocks, 1)) return 0;
@@ -619,14 +639,19 @@ static int read_descriptor(FILE* f, pulseqlib_sequence_descriptor* d, int do_swa
                 seg->has_rotation = (int*)PULSEQLIB_ALLOC((size_t)n * sizeof(int));
                 seg->norot_flag   = (int*)PULSEQLIB_ALLOC((size_t)n * sizeof(int));
                 seg->nopos_flag   = (int*)PULSEQLIB_ALLOC((size_t)n * sizeof(int));
+                seg->has_freq_mod = (int*)PULSEQLIB_ALLOC((size_t)n * sizeof(int));
+                seg->has_adc = (int*)PULSEQLIB_ALLOC((size_t)n * sizeof(int));
                 if (!seg->unique_block_indices || !seg->has_digitalout ||
-                    !seg->has_rotation || !seg->norot_flag || !seg->nopos_flag)
+                    !seg->has_rotation || !seg->norot_flag || !seg->nopos_flag ||
+                    !seg->has_freq_mod || !seg->has_adc)
                     return 0;
                 if (!read4(f, seg->unique_block_indices, n)) return 0;
                 if (!read4(f, seg->has_digitalout, n)) return 0;
                 if (!read4(f, seg->has_rotation, n)) return 0;
                 if (!read4(f, seg->norot_flag, n)) return 0;
                 if (!read4(f, seg->nopos_flag, n)) return 0;
+                memset(seg->has_freq_mod, 0, (size_t)n * sizeof(int));
+                memset(seg->has_adc, 0, (size_t)n * sizeof(int));
                 if (do_swap) {
                     swap4_array(seg->unique_block_indices, n);
                     swap4_array(seg->has_digitalout, n);
@@ -713,93 +738,126 @@ static int read_descriptor(FILE* f, pulseqlib_sequence_descriptor* d, int do_swa
     return 1;
 }
 
-/* ------ Write full collection to cache ------ */
+/* ------ Write collection payload (header handled by caller) ------ */
+
+static int write_collection_payload(FILE* f,
+                                    const pulseqlib_collection* coll)
+{
+    int i;
+
+    /* collection scalars */
+    if (!write4(f, &coll->num_subsequences, 1))      { return 0; }
+    if (!write4(f, &coll->num_repetitions, 1))        { return 0; }
+    if (!write4(f, &coll->total_unique_segments, 1))  { return 0; }
+    if (!write4(f, &coll->total_unique_adcs, 1))      { return 0; }
+    if (!write4(f, &coll->total_blocks, 1))           { return 0; }
+    if (!write4(f, &coll->total_duration_us, 1))      { return 0; }
+
+    /* subsequence info */
+    for (i = 0; i < coll->num_subsequences; ++i) {
+        if (!write4(f, &coll->subsequence_info[i].sequence_index, 1))     { return 0; }
+        if (!write4(f, &coll->subsequence_info[i].adc_id_offset, 1))     { return 0; }
+        if (!write4(f, &coll->subsequence_info[i].segment_id_offset, 1)) { return 0; }
+        if (!write4(f, &coll->subsequence_info[i].block_index_offset, 1)){ return 0; }
+    }
+
+    /* per-subsequence descriptors */
+    for (i = 0; i < coll->num_subsequences; ++i) {
+        if (!write_descriptor(f, &coll->descriptors[i])) { return 0; }
+    }
+
+    return 1;
+}
+
+/* ------ Write full collection to sectioned cache ------ */
 
 static int write_cache(const char* cache_path,
                        const pulseqlib_collection* coll,
                        int seq_file_size)
 {
     FILE* f;
-    int marker, version, vendor, i;
+    int marker, vendor;
+    int version_major, version_minor;
+    int num_sections, i;
+    long entries_pos, end_pos;
+    pulseqlib_cache_section_entry entries[3];
 
     f = fopen(cache_path, "wb");
     if (!f) return 0;
 
-    marker  = PULSEQLIB_CACHE_ENDIAN_MARKER;
-    version = PULSEQLIB_CACHE_VERSION;
-    vendor  = PULSEQLIB_VENDOR;
+    marker        = PULSEQLIB_CACHE_ENDIAN_MARKER;
+    vendor        = PULSEQLIB_VENDOR;
+    version_major = PULSEQLIB_CACHE_VERSION_MAJOR;
+    version_minor = PULSEQLIB_CACHE_VERSION_MINOR;
+    num_sections  = 3;
 
-    if (!write4(f, &marker, 1))  { fclose(f); return 0; }
-    if (!write4(f, &version, 1)) { fclose(f); return 0; }
-    if (!write4(f, &vendor, 1))  { fclose(f); return 0; }
-    if (!write4(f, &seq_file_size, 1)) { fclose(f); return 0; }
+    if (!write4(f, &marker, 1))         { fclose(f); return 0; }
+    if (!write4(f, &version_major, 1))  { fclose(f); return 0; }
+    if (!write4(f, &version_minor, 1))  { fclose(f); return 0; }
+    if (!write4(f, &vendor, 1))         { fclose(f); return 0; }
+    if (!write4(f, &seq_file_size, 1))  { fclose(f); return 0; }
+    if (!write4(f, &num_sections, 1))   { fclose(f); return 0; }
 
-    /* collection scalars */
-    if (!write4(f, &coll->num_subsequences, 1))      { fclose(f); return 0; }
-    if (!write4(f, &coll->num_repetitions, 1))        { fclose(f); return 0; }
-    if (!write4(f, &coll->total_unique_segments, 1))  { fclose(f); return 0; }
-    if (!write4(f, &coll->total_unique_adcs, 1))      { fclose(f); return 0; }
-    if (!write4(f, &coll->total_blocks, 1))           { fclose(f); return 0; }
-    if (!write4(f, &coll->total_duration_us, 1))      { fclose(f); return 0; }
+    entries_pos = ftell(f);
+    if (entries_pos < 0) { fclose(f); return 0; }
 
-    /* subsequence info */
-    for (i = 0; i < coll->num_subsequences; ++i) {
-        if (!write4(f, &coll->subsequence_info[i].sequence_index, 1))     { fclose(f); return 0; }
-        if (!write4(f, &coll->subsequence_info[i].adc_id_offset, 1))     { fclose(f); return 0; }
-        if (!write4(f, &coll->subsequence_info[i].segment_id_offset, 1)) { fclose(f); return 0; }
-        if (!write4(f, &coll->subsequence_info[i].block_index_offset, 1)){ fclose(f); return 0; }
+    for (i = 0; i < num_sections; ++i) {
+        int zero = 0;
+        if (!write4(f, &zero, 1)) { fclose(f); return 0; }
+        if (!write4(f, &zero, 1)) { fclose(f); return 0; }
+        if (!write4(f, &zero, 1)) { fclose(f); return 0; }
     }
 
-    /* per-subsequence descriptors */
-    for (i = 0; i < coll->num_subsequences; ++i) {
-        if (!write_descriptor(f, &coll->descriptors[i])) { fclose(f); return 0; }
+    entries[0].section_id = PULSEQLIB_CACHE_SECTION_CHECK;
+    entries[1].section_id = PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS;
+    entries[2].section_id = PULSEQLIB_CACHE_SECTION_SCANLOOP;
+
+    for (i = 0; i < num_sections; ++i) {
+        long start;
+        long stop;
+
+        start = ftell(f);
+        if (start < 0) { fclose(f); return 0; }
+        entries[i].offset = (int)start;
+
+        if (!write_collection_payload(f, coll)) { fclose(f); return 0; }
+
+        stop = ftell(f);
+        if (stop < 0) { fclose(f); return 0; }
+        entries[i].size = (int)(stop - start);
     }
+
+    end_pos = ftell(f);
+    if (end_pos < 0) { fclose(f); return 0; }
+    if (fseek(f, entries_pos, SEEK_SET) != 0) { fclose(f); return 0; }
+
+    for (i = 0; i < num_sections; ++i) {
+        if (!write4(f, &entries[i].section_id, 1)) { fclose(f); return 0; }
+        if (!write4(f, &entries[i].offset, 1))     { fclose(f); return 0; }
+        if (!write4(f, &entries[i].size, 1))       { fclose(f); return 0; }
+    }
+
+    if (fseek(f, end_pos, SEEK_SET) != 0) { fclose(f); return 0; }
 
     fclose(f);
     return 1;
 }
 
-/* ------ Read full collection from cache ------ */
+/* ------ Read collection payload from sectioned cache ------ */
 
-static int read_cache(const char* cache_path,
-                      pulseqlib_collection* coll,
-                      int expected_seq_file_size)
+static int read_collection_payload(FILE* f,
+                                   pulseqlib_collection* coll,
+                                   int do_swap)
 {
-    FILE* f;
-    int marker, version, vendor, stored_size;
-    int do_swap, i;
-
-    f = fopen(cache_path, "rb");
-    if (!f) return 0;
-
-    if (!read4(f, &marker, 1)) { fclose(f); return 0; }
-
-    do_swap = 0;
-    if (marker != PULSEQLIB_CACHE_ENDIAN_MARKER) {
-        swap4(&marker);
-        if (marker != PULSEQLIB_CACHE_ENDIAN_MARKER) { fclose(f); return 0; }
-        do_swap = 1;
-    }
-
-    if (!read4(f, &version, 1)) { fclose(f); return 0; }
-    if (do_swap) swap4(&version);
-    if (version != PULSEQLIB_CACHE_VERSION) { fclose(f); return 0; }
-
-    if (!read4(f, &vendor, 1)) { fclose(f); return 0; }
-    if (do_swap) swap4(&vendor);
-    if (vendor != PULSEQLIB_VENDOR) { fclose(f); return 0; }
-
-    if (!read4(f, &stored_size, 1)) { fclose(f); return 0; }
-    if (do_swap) swap4(&stored_size);
-    if (stored_size != expected_seq_file_size) { fclose(f); return 0; }
+    int i;
 
     /* collection scalars */
-    if (!read4(f, &coll->num_subsequences, 1))      { fclose(f); return 0; }
-    if (!read4(f, &coll->num_repetitions, 1))        { fclose(f); return 0; }
-    if (!read4(f, &coll->total_unique_segments, 1))  { fclose(f); return 0; }
-    if (!read4(f, &coll->total_unique_adcs, 1))      { fclose(f); return 0; }
-    if (!read4(f, &coll->total_blocks, 1))           { fclose(f); return 0; }
-    if (!read4(f, &coll->total_duration_us, 1))      { fclose(f); return 0; }
+    if (!read4(f, &coll->num_subsequences, 1))      { return 0; }
+    if (!read4(f, &coll->num_repetitions, 1))        { return 0; }
+    if (!read4(f, &coll->total_unique_segments, 1))  { return 0; }
+    if (!read4(f, &coll->total_unique_adcs, 1))      { return 0; }
+    if (!read4(f, &coll->total_blocks, 1))           { return 0; }
+    if (!read4(f, &coll->total_duration_us, 1))      { return 0; }
     if (do_swap) {
         swap4(&coll->num_subsequences);
         swap4(&coll->num_repetitions);
@@ -819,13 +877,12 @@ static int read_cache(const char* cache_path,
         if (coll->subsequence_info) PULSEQLIB_FREE(coll->subsequence_info);
         coll->descriptors = NULL;
         coll->subsequence_info = NULL;
-        fclose(f);
         return 0;
     }
 
     /* subsequence info */
     for (i = 0; i < coll->num_subsequences; ++i) {
-        if (!read4(f, &coll->subsequence_info[i].sequence_index, 4)) { fclose(f); return 0; }
+        if (!read4(f, &coll->subsequence_info[i].sequence_index, 4)) { return 0; }
         if (do_swap) swap4_array(&coll->subsequence_info[i].sequence_index, 4);
     }
 
@@ -841,7 +898,6 @@ static int read_cache(const char* cache_path,
             coll->descriptors = NULL;
             coll->subsequence_info = NULL;
             coll->num_subsequences = 0;
-            fclose(f);
             return 0;
         }
     }
@@ -849,6 +905,95 @@ static int read_cache(const char* cache_path,
     /* init cursor */
     memset(&coll->block_cursor, 0, sizeof(coll->block_cursor));
     coll->block_cursor.scan_table_position = -1;
+
+    return 1;
+}
+
+/* ------ Read full collection from sectioned cache ------ */
+
+static int read_cache(const char* cache_path,
+                      pulseqlib_collection* coll,
+                      int expected_seq_file_size,
+                      int required_section,
+                      int enforce_source_size)
+{
+    FILE* f;
+    int marker, vendor, stored_size, num_sections;
+    int version_major, version_minor;
+    int do_swap, i, found;
+    pulseqlib_cache_section_entry section;
+
+    f = fopen(cache_path, "rb");
+    if (!f) return 0;
+
+    if (!read4(f, &marker, 1)) { fclose(f); return 0; }
+
+    do_swap = 0;
+    if (marker != PULSEQLIB_CACHE_ENDIAN_MARKER) {
+        swap4(&marker);
+        if (marker != PULSEQLIB_CACHE_ENDIAN_MARKER) { fclose(f); return 0; }
+        do_swap = 1;
+    }
+
+    if (!read4(f, &version_major, 1)) { fclose(f); return 0; }
+    if (!read4(f, &version_minor, 1)) { fclose(f); return 0; }
+    if (do_swap) {
+        swap4(&version_major);
+        swap4(&version_minor);
+    }
+    if (version_major != PULSEQLIB_CACHE_VERSION_MAJOR ||
+        version_minor != PULSEQLIB_CACHE_VERSION_MINOR) {
+        fclose(f);
+        return 0;
+    }
+
+    if (!read4(f, &vendor, 1)) { fclose(f); return 0; }
+    if (do_swap) swap4(&vendor);
+    if (vendor != PULSEQLIB_VENDOR) { fclose(f); return 0; }
+
+    if (!read4(f, &stored_size, 1)) { fclose(f); return 0; }
+    if (do_swap) swap4(&stored_size);
+    if (enforce_source_size && stored_size != expected_seq_file_size) {
+        fclose(f);
+        return 0;
+    }
+
+    if (!read4(f, &num_sections, 1)) { fclose(f); return 0; }
+    if (do_swap) swap4(&num_sections);
+    if (num_sections <= 0 || num_sections > 16) { fclose(f); return 0; }
+
+    found = 0;
+    memset(&section, 0, sizeof(section));
+    for (i = 0; i < num_sections; ++i) {
+        pulseqlib_cache_section_entry entry;
+        if (!read4(f, &entry.section_id, 1)) { fclose(f); return 0; }
+        if (!read4(f, &entry.offset, 1))     { fclose(f); return 0; }
+        if (!read4(f, &entry.size, 1))       { fclose(f); return 0; }
+        if (do_swap) {
+            swap4(&entry.section_id);
+            swap4(&entry.offset);
+            swap4(&entry.size);
+        }
+        if (entry.section_id == required_section) {
+            section = entry;
+            found = 1;
+        }
+    }
+
+    if (!found || section.offset <= 0 || section.size <= 0) {
+        fclose(f);
+        return 0;
+    }
+
+    if (fseek(f, (long)section.offset, SEEK_SET) != 0) {
+        fclose(f);
+        return 0;
+    }
+
+    if (!read_collection_payload(f, coll, do_swap)) {
+        fclose(f);
+        return 0;
+    }
 
     fclose(f);
     return 1;
@@ -896,7 +1041,11 @@ int pulseqlib__try_read_cache(pulseqlib_collection* coll,
     sz = get_file_size(seq_path);
     if (sz < 0) { PULSEQLIB_FREE(cache_path); return 0; }
 
-    ok = read_cache(cache_path, coll, (int)sz);
+    ok = read_cache(cache_path,
+                    coll,
+                    (int)sz,
+                    PULSEQLIB_CACHE_SECTION_CHECK,
+                    1);
     PULSEQLIB_FREE(cache_path);
     return ok;
 }
@@ -921,6 +1070,104 @@ int pulseqlib_load_cache(pulseqlib_collection* coll,
 {
     if (!coll || !path) return PULSEQLIB_ERR_NULL_POINTER;
     if (source_size <= 0) return PULSEQLIB_ERR_INVALID_ARGUMENT;
-    return read_cache(path, coll, source_size)
+    return read_cache(path,
+                      coll,
+                      source_size,
+                      PULSEQLIB_CACHE_SECTION_CHECK,
+                      1)
          ? PULSEQLIB_SUCCESS : PULSEQLIB_ERR_FILE_READ_FAILED;
+}
+
+static int load_cache_from_seq_path(
+    pulseqlib_collection** out_coll,
+    const char* seq_path,
+    int section_id,
+    int enforce_source_size)
+{
+    pulseqlib_collection* coll;
+    char* cache_path;
+    long source_size;
+    int ok;
+
+    if (!out_coll || !seq_path) return PULSEQLIB_ERR_NULL_POINTER;
+
+    *out_coll = NULL;
+
+    coll = (pulseqlib_collection*)PULSEQLIB_ALLOC(sizeof(pulseqlib_collection));
+    if (!coll) return PULSEQLIB_ERR_ALLOC_FAILED;
+    memset(coll, 0, sizeof(*coll));
+
+    cache_path = make_cache_path(seq_path);
+    if (!cache_path) {
+        PULSEQLIB_FREE(coll);
+        return PULSEQLIB_ERR_ALLOC_FAILED;
+    }
+
+    source_size = get_file_size(seq_path);
+    if (source_size < 0 && enforce_source_size) {
+        PULSEQLIB_FREE(cache_path);
+        PULSEQLIB_FREE(coll);
+        return PULSEQLIB_ERR_FILE_NOT_FOUND;
+    }
+
+    ok = read_cache(cache_path,
+                    coll,
+                    source_size < 0 ? 0 : (int)source_size,
+                    section_id,
+                    enforce_source_size);
+    PULSEQLIB_FREE(cache_path);
+    if (!ok) {
+        pulseqlib_collection_free(coll);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
+
+    *out_coll = coll;
+    return PULSEQLIB_SUCCESS;
+}
+
+int pulseqlib_load_check_cache(
+    pulseqlib_collection** out_coll,
+    const char* seq_path)
+{
+    return load_cache_from_seq_path(out_coll,
+                                    seq_path,
+                                    PULSEQLIB_CACHE_SECTION_CHECK,
+                                    1);
+}
+
+int pulseqlib_load_geninstructions_cache(
+    pulseqlib_collection** out_coll,
+    const char* seq_path)
+{
+    return load_cache_from_seq_path(out_coll,
+                                    seq_path,
+                                    PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS,
+                                    0);
+}
+
+int pulseqlib_load_scanloop_cache(
+    pulseqlib_collection** out_coll,
+    const char* seq_path)
+{
+    return load_cache_from_seq_path(out_coll,
+                                    seq_path,
+                                    PULSEQLIB_CACHE_SECTION_SCANLOOP,
+                                    0);
+}
+
+int pulseqlib_clear_cache(const char* seq_path)
+{
+    char* cache_path;
+    int rc;
+
+    if (!seq_path) return PULSEQLIB_ERR_NULL_POINTER;
+
+    cache_path = make_cache_path(seq_path);
+    if (!cache_path) return PULSEQLIB_ERR_ALLOC_FAILED;
+
+    rc = remove(cache_path);
+    PULSEQLIB_FREE(cache_path);
+
+    if (rc == 0 || errno == ENOENT) return PULSEQLIB_SUCCESS;
+    return PULSEQLIB_ERR_FILE_READ_FAILED;
 }

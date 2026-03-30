@@ -5,7 +5,8 @@
  * Assumes globals from example_startup.c are initialised.
  *
  * Workflow:
- *   1. Load with signature check + caching (no label parsing).
+ *   1. Clear stale cache, load with signature check + caching.
+ *   2. Demonstrate check-stage cache reload.
  *   2. Consistency check.
  *   3. Hardware safety check (gmax, slewmax, continuity, acoustic, PNS).
  *   4. Build canonical-TR RF stat arrays; run vendor RF safety + find max B1.
@@ -117,11 +118,20 @@ int main(int argc, char** argv)
     /*  1. Load — signature + cache, no label parsing                */
     /* ============================================================= */
 
+    rc = pulseqlib_clear_cache(seq_path);
+    CHECK(rc, &g_diag);
+
     rc = pulseqlib_read(&coll, &g_diag, seq_path, &g_opts,
                         1,   /* cache_binary     */
                         1,   /* verify_signature */
                         0,   /* parse_labels     */
                         1);  /* num_averages     */
+    CHECK(rc, &g_diag);
+
+    /* Re-open from check cache to show stage-specific cache usage. */
+    pulseqlib_collection_free(coll);
+    coll = NULL;
+    rc = pulseqlib_load_check_cache(&coll, seq_path);
     CHECK(rc, &g_diag);
 
     /* ============================================================= */

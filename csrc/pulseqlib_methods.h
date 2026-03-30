@@ -196,6 +196,44 @@ void pulseqlib_collection_free(pulseqlib_collection* coll);
 /* ================================================================== */
 
 /**
+ * @brief Load check-stage cache for a sequence path.
+ *
+ * Uses the cache file derived from @p seq_path (same directory, .bin
+ * extension) and validates the cached source-size against the current
+ * .seq file size.
+ */
+int pulseqlib_load_check_cache(
+    pulseqlib_collection** out_coll,
+    const char*            seq_path);
+
+/**
+ * @brief Load geninstructions-stage cache for a sequence path.
+ *
+ * Uses the cache file derived from @p seq_path. This stage does not
+ * enforce source-size matching.
+ */
+int pulseqlib_load_geninstructions_cache(
+    pulseqlib_collection** out_coll,
+    const char*            seq_path);
+
+/**
+ * @brief Load scanloop-stage cache for a sequence path.
+ *
+ * Uses the cache file derived from @p seq_path. This stage does not
+ * enforce source-size matching.
+ */
+int pulseqlib_load_scanloop_cache(
+    pulseqlib_collection** out_coll,
+    const char*            seq_path);
+
+/**
+ * @brief Delete the cache file associated with a sequence path.
+ *
+ * It is not an error if the cache file does not exist.
+ */
+int pulseqlib_clear_cache(const char* seq_path);
+
+/**
  * @brief Save a loaded collection to a binary cache file.
  *
  * @param[in]  coll          Collection to save.
