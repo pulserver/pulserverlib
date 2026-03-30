@@ -12,26 +12,22 @@
 
 // Only register and call the suite, do not define test logic here
 // Forward declaration
-int test_canonical_tr_mprage_noncart_main(void);
-// int test_safety_grad_main(void);
-// int test_rf_stats_main(void);
-// int test_sequences_main(void);
+int test_safety_grad_main(void);
+int test_rf_stats_main(void);
+int test_sequences_main(void);
 
 int main(void)
 {
     int failed = 0;
 
-    printf("==== test_canonical_tr_mprage_noncart ====\n");
-    failed += test_canonical_tr_mprage_noncart_main();
+    printf("==== test_safety_grad ====\n");
+    failed += test_safety_grad_main();
 
-    // printf("==== test_safety_grad ====\n");
-    // failed += test_safety_grad_main();
+    printf("\n==== test_rf_stats ====\n");
+    failed += test_rf_stats_main();
 
-    // printf("\n==== test_rf_stats ====\n");
-    // failed += test_rf_stats_main();
-
-    // printf("\n==== test_sequences ====\n");
-    // failed += test_sequences_main();
+    printf("\n==== test_sequences ====\n");
+    failed += test_sequences_main();
 
     // printf("\n==== test_io ====\n");
     // failed += test_io_main();

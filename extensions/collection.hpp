@@ -220,11 +220,11 @@ public:
 
     // ── TR gradient waveforms ────────────────────────────────────
 
-    TrGradientWaveforms get_tr_gradient_waveforms(int ss = 0) const {
+    TrGradientWaveforms get_tr_gradient_waveforms(int canonical_tr_idx = 0) const {
         pulseqlib_tr_gradient_waveforms cw = PULSEQLIB_TR_GRADIENT_WAVEFORMS_INIT;
         pulseqlib_diagnostic diag;
         pulseqlib_diagnostic_init(&diag);
-        int code = pulseqlib_get_tr_gradient_waveforms(coll_, ss, &cw, &diag);
+        int code = pulseqlib_get_tr_gradient_waveforms(coll_, canonical_tr_idx, &cw, &diag);
         check(code, diag);
 
         TrGradientWaveforms w;

@@ -974,38 +974,97 @@ int pulseqlib__get_gradient_waveforms_range(
 
 int pulseqlib_get_tr_gradient_waveforms(
     const pulseqlib_collection* coll,
-    int subseq_idx,
+    int canonical_tr_idx,
     pulseqlib_tr_gradient_waveforms* waveforms,
     pulseqlib_diagnostic* diag)
 {
     const pulseqlib_sequence_descriptor* desc;
     pulseqlib__uniform_grad_waveforms uw;
-    int rc, i;
+    int* unique_indices = NULL;
+    int* group_labels   = NULL;
+    int  num_unique;
+    int  has_nd_prep, has_nd_cool;
+    int  rep_idx;
+    int  start_block, block_count;
+    int  rc, i;
     float* time_arr;
 
     memset(&uw, 0, sizeof(uw));
-    if (!coll || subseq_idx < 0 || subseq_idx >= coll->num_subsequences) {
+    if (!coll || canonical_tr_idx < 0) {
         if (diag) { pulseqlib_diagnostic_init(diag); diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; }
         return PULSEQLIB_ERR_INVALID_ARGUMENT;
     }
-    desc = &coll->descriptors[subseq_idx];
-    if (!desc->tr_descriptor.degenerate_prep ||
-        !desc->tr_descriptor.degenerate_cooldown) {
-        /* Non-degenerate: render the full single pass (prep + imaging loop +
-         * cooldown) from block_table[0 .. pass_len-1].  This mirrors the
-         * canonical TR waveform exported by TruthBuilder for pass_expanded
-         * sequences and is invariant to num_averages (gradients don't change
-         * between averages; only RF phase does). */
-        rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
-            0, desc->pass_len,
-            PULSEQLIB_AMP_ACTUAL, NULL, 0);
-    } else {
-        rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
-            desc->tr_descriptor.num_prep_blocks
-                + desc->tr_descriptor.imaging_tr_start,
-            desc->tr_descriptor.tr_size,
-            PULSEQLIB_AMP_ACTUAL, NULL, 0);
+
+    /*
+     * All current sequences are single-subsequence.  The second parameter
+     * was previously named `subseq_idx` but is now a canonical TR index
+     * (0-based) across the unique shot-ID combinations present in subseq 0.
+     * For single-canonical-TR sequences this is equivalent: only 0 is valid.
+     */
+    if (coll->num_subsequences < 1) {
+        if (diag) { pulseqlib_diagnostic_init(diag); diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; }
+        return PULSEQLIB_ERR_INVALID_ARGUMENT;
     }
+    desc = &coll->descriptors[0];
+
+    has_nd_prep = (desc->tr_descriptor.num_prep_blocks > 0 &&
+                   !desc->tr_descriptor.degenerate_prep);
+    has_nd_cool = (desc->tr_descriptor.num_cooldown_blocks > 0 &&
+                   !desc->tr_descriptor.degenerate_cooldown);
+
+    if (has_nd_prep || has_nd_cool) {
+        /* Non-degenerate (e.g. MPRAGE): one canonical TR per unique pass
+         * pattern.  Use find_unique_shot_passes to discover how many
+         * distinct passes exist and pick the representative for this index. */
+        num_unique = pulseqlib__find_unique_shot_passes(
+                         desc, &unique_indices, &group_labels);
+        if (num_unique <= 0) {
+            num_unique = 1;
+            rep_idx    = 0;
+        } else {
+            if (canonical_tr_idx >= num_unique) {
+                PULSEQLIB_FREE(unique_indices);
+                PULSEQLIB_FREE(group_labels);
+                if (diag) { pulseqlib_diagnostic_init(diag); diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; }
+                return PULSEQLIB_ERR_INVALID_ARGUMENT;
+            }
+            rep_idx = unique_indices[canonical_tr_idx];
+            PULSEQLIB_FREE(unique_indices);
+            PULSEQLIB_FREE(group_labels);
+        }
+        /* Render the representative pass: blocks [rep * pass_len, pass_len).
+         * For a single-pass sequence rep_idx=0 and this matches the old
+         * behaviour of rendering block_table[0..pass_len-1]. */
+        start_block = rep_idx * desc->pass_len;
+        block_count = desc->pass_len;
+    } else {
+        /* Degenerate (e.g. GRE): one canonical TR per unique shot pattern
+         * within the imaging region. */
+        num_unique = pulseqlib__find_unique_shot_trs(
+                         desc, &unique_indices, &group_labels);
+        if (num_unique <= 0) {
+            num_unique = 1;
+            rep_idx    = 0;
+        } else {
+            if (canonical_tr_idx >= num_unique) {
+                PULSEQLIB_FREE(unique_indices);
+                PULSEQLIB_FREE(group_labels);
+                if (diag) { pulseqlib_diagnostic_init(diag); diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; }
+                return PULSEQLIB_ERR_INVALID_ARGUMENT;
+            }
+            rep_idx = unique_indices[canonical_tr_idx];
+            PULSEQLIB_FREE(unique_indices);
+            PULSEQLIB_FREE(group_labels);
+        }
+        start_block = desc->tr_descriptor.num_prep_blocks
+                    + desc->tr_descriptor.imaging_tr_start
+                    + rep_idx * desc->tr_descriptor.tr_size;
+        block_count = desc->tr_descriptor.tr_size;
+    }
+
+    rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
+             start_block, block_count,
+             PULSEQLIB_AMP_ACTUAL, NULL, 0);
     if (PULSEQLIB_FAILED(rc)) return rc;
     if (!waveforms) { pulseqlib__uniform_grad_waveforms_free(&uw); return PULSEQLIB_ERR_NULL_POINTER; }
     memset(waveforms, 0, sizeof(*waveforms));

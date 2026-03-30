@@ -7,9 +7,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../csrc ${CMAKE_BINARY_DIR}/csrc
 
 
 
-# Collect all test source files (including test_canonical_tr_mprage_noncart.c for now; comment out removal for easy reversion)
+# Collect all test source files
 file(GLOB TEST_SOURCES "*.c")
-# list(REMOVE_ITEM TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/test_canonical_tr_mprage_noncart.c")  # <== Commented out to include all tests for easier toggling
 
 # Create an executable for the tests
 add_executable(run_tests ${TEST_SOURCES})
