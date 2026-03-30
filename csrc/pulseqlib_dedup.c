@@ -743,53 +743,33 @@ static int compute_rf_stats(
             PULSEQLIB_FREE(decomp_phase.samples); decomp_phase.samples = NULL;
         }
 
-        /* combine multichannel RF into single effective waveform
-         * using nominal coil phases (0, 2*pi/nch, 4*pi/nch, ...) */
+        /* Combine multichannel RF into a single effective waveform for
+         * stats by quadrature aggregation. RF shim phases are encoded
+         * elsewhere; stats should reflect the effective B1 envelope,
+         * not a coherent complex sum across transmit channels. */
         if (rd->num_channels > 1 && num_samples > 0) {
             int nch = rd->num_channels;
             int npts = num_samples / nch;
-            float *comb_re, *comb_im;
-            float *new_mag, *new_phs;
+            float *new_mag;
             int ch, s;
 
-            comb_re = (float*)PULSEQLIB_ALLOC(npts * sizeof(float));
-            comb_im = (float*)PULSEQLIB_ALLOC(npts * sizeof(float));
-            if (!comb_re || !comb_im) {
-                if (comb_re) PULSEQLIB_FREE(comb_re);
-                if (comb_im) PULSEQLIB_FREE(comb_im);
-                goto fail;
-            }
-            for (s = 0; s < npts; ++s) { comb_re[s] = 0.0f; comb_im[s] = 0.0f; }
-
-            for (ch = 0; ch < nch; ++ch) {
-                float coil_phi = (float)(PULSEQLIB__TWO_PI * ch / nch);
-                for (s = 0; s < npts; ++s) {
-                    float m = magnitude[ch * npts + s];
-                    float p = has_phase ? phase[ch * npts + s] : 0.0f;
-                    p += coil_phi;
-                    comb_re[s] += m * (float)cos(p);
-                    comb_im[s] += m * (float)sin(p);
-                }
-            }
-
             new_mag = (float*)PULSEQLIB_ALLOC(npts * sizeof(float));
-            new_phs = (float*)PULSEQLIB_ALLOC(npts * sizeof(float));
-            if (!new_mag || !new_phs) {
+            if (!new_mag) {
                 if (new_mag) PULSEQLIB_FREE(new_mag);
-                if (new_phs) PULSEQLIB_FREE(new_phs);
-                PULSEQLIB_FREE(comb_re); PULSEQLIB_FREE(comb_im);
                 goto fail;
             }
             for (s = 0; s < npts; ++s) {
-                new_mag[s] = (float)sqrt(comb_re[s]*comb_re[s] +
-                                         comb_im[s]*comb_im[s]);
-                new_phs[s] = (float)atan2(comb_im[s], comb_re[s]);
+                float rss = 0.0f;
+                for (ch = 0; ch < nch; ++ch) {
+                    float m = magnitude[ch * npts + s];
+                    rss += m * m;
+                }
+                new_mag[s] = (float)sqrt(rss);
             }
-            PULSEQLIB_FREE(comb_re); PULSEQLIB_FREE(comb_im);
             PULSEQLIB_FREE(magnitude); magnitude = new_mag;
             if (phase) PULSEQLIB_FREE(phase);
-            phase = new_phs;
-            has_phase = 1;
+            phase = NULL;
+            has_phase = 0;
             num_samples = npts;
         }
         rd->stats.num_samples = num_samples;

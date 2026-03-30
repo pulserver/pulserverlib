@@ -118,28 +118,25 @@ end
 seq.write(fullfile(dataDir, '04_rfshim_fail_gre.seq'));
 
 %% ------------------------------------------------------------------------
-% Invalid sequence: single-pass cooldown exceeds 100 ms threshold
-%   - Prep  (ONCE=1): 1 ms delay
-%   - Main  (ONCE=0): 4x RF90 + gradient, ~2 ms each
-%   - Cooldown (ONCE=2): 110 ms delay — exceeds PREP_COOLDOWN_THRESHOLD_US
-% Expected error: PULSEQLIB_ERR_TR_COOLDOWN_TOO_LONG (-105)
+% Canonical full-pass RF fixture for getter coverage.
+%   Single pass with RF in prep and cooldown once sections.
+%   When loaded with num_averages=3, canonical RF traversal must expand to:
+%     prep(once) + 3x main + cooldown(once)
 % ------------------------------------------------------------------------
 lbl_once1 = mr.makeLabel('SET', 'ONCE', 1);
 lbl_once0 = mr.makeLabel('SET', 'ONCE', 0);
 lbl_once2 = mr.makeLabel('SET', 'ONCE', 2);
 
-rf90_prep = mr.makeBlockPulse(pi/2, 'Duration', 1e-3, 'use', 'excitation');
-delay_prep  = mr.makeDelay(1e-3);    % 1 ms prep
-delay_cool  = mr.makeDelay(110e-3);  % 110 ms cooldown > 100 ms threshold
+rf_prep = mr.makeBlockPulse(0.25 * pi, 'Duration', 1e-3, 'use', 'excitation');
+rf_main = mr.makeBlockPulse(0.5 * pi,  'Duration', 1e-3, 'use', 'excitation');
+rf_cool = mr.makeBlockPulse(pi,        'Duration', 1e-3, 'use', 'refocusing');
 
 seq = mr.Sequence();
-seq.addBlock(delay_prep, lbl_once1);
-seq.addBlock(rf90_prep, gx_trap, lbl_once0);  % first main block clears ONCE flag
-seq.addBlock(rf90_prep, gx_trap);
-seq.addBlock(rf90_prep, gx_trap);
-seq.addBlock(rf90_prep, gx_trap);
-seq.addBlock(delay_cool, lbl_once2);
-seq.write(fullfile(dataDir, '05_rfprep_fail_cooldown_too_long.seq'));
+seq.addBlock(rf_prep, lbl_once1);
+seq.addBlock(rf_main, gx_trap, lbl_once0);
+seq.addBlock(rf_main, gx_trap);
+seq.addBlock(rf_cool, lbl_once2);
+seq.write(fullfile(dataDir, '05_rfprep_ok_canonical_fullpass.seq'));
 
 %% ------------------------------------------------------------------------
 % Invalid sequence: multipass with variable (non-periodic) RF across passes
@@ -148,7 +145,8 @@ seq.write(fullfile(dataDir, '05_rfprep_fail_cooldown_too_long.seq'));
 % ------------------------------------------------------------------------
 rf_pass1 = mr.makeBlockPulse(0.30 * pi, 'Duration', 1e-3, 'use', 'excitation');
 rf_pass2 = mr.makeBlockPulse(0.45 * pi, 'Duration', 1e-3, 'use', 'excitation');
-delay_cool_short = mr.makeDelay(10e-3);  % 10 ms cooldown — within threshold
+delay_prep = mr.makeDelay(1e-3);
+delay_cool_short = mr.makeDelay(10e-3);
 
 seq = mr.Sequence();
 % --- Pass 1 ---

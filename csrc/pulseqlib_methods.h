@@ -591,27 +591,31 @@ int pulseqlib_get_tr_rf_ids(const pulseqlib_collection* coll,
                             int* out_rf_ids, int subseq_idx);
 
 /**
- * @brief Build an ordered array of RF stats for a TR region.
+ * @brief Build an ordered array of RF stats for the canonical TR.
  *
- * Walks the block table for the specified region and, for each block
- * that carries an RF event, hard-copies the base rf_stats, then patches
- * act_amplitude_hz from the actual amplitude at that block position,
- * and sets num_instances to the repetition count for that region.
+ * Walks the canonical RF playback unit for the specified subsequence and,
+ * for each block that carries an RF event, hard-copies the base rf_stats,
+ * then patches event-specific amplitude-dependent fields from the actual
+ * amplitude at that block position, and sets num_instances to the
+ * repetition count for that canonical unit.
+ *
+ * Canonical-unit rules:
+ *   - Standard / degenerate prep-cooldown subsequences use one imaging TR.
+ *   - Non-degenerate prep/cooldown subsequences use one full pass including
+ *     average expansion.
  *
  * The library allocates @p *out_pulses via malloc(); the caller must
- * free() it when done.  On return @p *out_pulses is NULL if the region
- * contains no RF events.
+ * free() it when done.  On return @p *out_pulses is NULL if the canonical
+ * unit contains no RF events.
  *
  * @param[in]  coll          Loaded collection.
  * @param[out] out_pulses    Set to a malloc'd array; caller must free().
  * @param[in]  subseq_idx    Subsequence index.
- * @param[in]  region        PULSEQLIB_TR_REGION_PREP/_MAIN/_COOLDOWN.
  * @return Number of RF entries (>= 0), or negative error code.
  */
 int pulseqlib_get_rf_array(const pulseqlib_collection* coll,
                            pulseqlib_rf_stats** out_pulses,
-                           int subseq_idx,
-                           int region);
+                           int subseq_idx);
 
 /**
  * @brief Return decompressed RF magnitude waveform (multi-channel).

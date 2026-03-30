@@ -137,8 +137,8 @@ const char* pulseqlib_get_error_message(int code)
         case PULSEQLIB_ERR_GRAD_DISCONTINUITY:        return "Gradient discontinuity between blocks";
         case PULSEQLIB_ERR_MAX_SLEW_EXCEEDED:         return "Maximum slew rate exceeded";
         case PULSEQLIB_ERR_CONSISTENCY_SEG_MISMATCH:  return "Block definition IDs do not match segment table";
-        case PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC:   return "RF amplitude pattern is not periodic across main TRs";
-        case PULSEQLIB_ERR_CONSISTENCY_RF_SHIM_PERIODIC: return "RF shim ID pattern is not periodic across main TRs";
+        case PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC:   return "RF amplitude pattern is not periodic across canonical TRs";
+        case PULSEQLIB_ERR_CONSISTENCY_RF_SHIM_PERIODIC: return "RF shim ID pattern is not periodic across canonical TRs";
         default:                                       return "Unknown error";
     }
 }
@@ -208,12 +208,12 @@ const char* pulseqlib_get_error_hint(int code)
                 "Try scaling gradients to eps instead of zero to preserve "
                 "gradient continuity across segment boundaries";
         case PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC:
-            return "RF amplitudes differ between main TR instances that should "
-                "be identical. If variable flip angles across TRs are intended, "
+            return "RF amplitudes differ between canonical TR instances that should "
+                "be identical. If variable flip angles across canonical units are intended, "
                 "split volumes into separate subsequences";
         case PULSEQLIB_ERR_CONSISTENCY_RF_SHIM_PERIODIC:
-            return "RF shim IDs differ between main TR instances that should "
-                "be identical. If variable shimming across TRs is intended, "
+            return "RF shim IDs differ between canonical TR instances that should "
+                "be identical. If variable shimming across canonical units is intended, "
                 "split volumes into separate subsequences";
         default:
             return "Check sequence design for structural consistency.";

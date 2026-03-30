@@ -439,14 +439,15 @@ int pulseqlib_get_tr_rf_ids(
 int pulseqlib_get_rf_array(
     const pulseqlib_collection*  coll,
     pulseqlib_rf_stats**         out_pulses,
-    int                          subseq_idx,
-    int                          region)
+    int                          subseq_idx)
 {
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_descriptor* trd;
     const pulseqlib_block_table_element* bte;
     const pulseqlib_rf_definition* rfdef;
     int start, count, num_instances;
+    int use_scan_table;
+    int num_passes, pass_size;
     int i, n, num_rf;
 
     if (!coll || !out_pulses)
@@ -458,43 +459,39 @@ int pulseqlib_get_rf_array(
     desc = &coll->descriptors[subseq_idx];
     trd  = &desc->tr_descriptor;
 
-    /* Determine block range and instance count for the region */
-    switch (region) {
-    case PULSEQLIB_TR_REGION_PREP:
-        start = 0;
-        count = trd->num_prep_blocks + trd->tr_size;
-        num_instances = 1;
-        break;
+    use_scan_table = 0;
+    if ((!trd->degenerate_prep || !trd->degenerate_cooldown) &&
+        (trd->num_prep_blocks > 0 || trd->num_cooldown_blocks > 0)) {
+        num_passes = (desc->num_passes > 1) ? desc->num_passes : 1;
+        pass_size = (num_passes > 0) ? (desc->scan_table_len / num_passes) : 0;
 
-    case PULSEQLIB_TR_REGION_MAIN:
+        start = 0;
+        count = pass_size;
+        num_instances = num_passes;
+        use_scan_table = 1;
+    } else {
         start = trd->num_prep_blocks;
         count = trd->tr_size;
         num_instances = trd->num_trs;
-        if (!trd->degenerate_prep)    num_instances--;
-        if (!trd->degenerate_cooldown) num_instances--;
         if (num_instances < 0) num_instances = 0;
-        break;
-
-    case PULSEQLIB_TR_REGION_COOLDOWN:
-        start = trd->num_prep_blocks +
-                (trd->num_trs > 0 ? (trd->num_trs - 1) * trd->tr_size : 0);
-        count = trd->tr_size + trd->num_cooldown_blocks;
-        num_instances = 1;
-        break;
-
-    default:
-        return PULSEQLIB_ERR_INVALID_ARGUMENT;
     }
 
     /* Clamp to available block range */
-    if (start + count > desc->num_blocks)
+    if (use_scan_table) {
+        if (start + count > desc->scan_table_len)
+            count = desc->scan_table_len - start;
+    } else if (start + count > desc->num_blocks) {
         count = desc->num_blocks - start;
+    }
     if (count < 0) count = 0;
 
     /* Pass 1: count RF-bearing blocks */
     num_rf = 0;
     for (i = 0; i < count; ++i) {
-        bte = &desc->block_table[start + i];
+        int blk_idx = use_scan_table
+            ? desc->scan_table_block_idx[start + i]
+            : (start + i);
+        bte = &desc->block_table[blk_idx];
         if (bte->rf_id >= 0 && bte->rf_id < desc->rf_table_size) {
             int id = desc->rf_table[bte->rf_id].id;
             if (id >= 0 && id < desc->num_unique_rfs)
@@ -514,9 +511,12 @@ int pulseqlib_get_rf_array(
     /* Pass 2: fill entries */
     n = 0;
     for (i = 0; i < count; ++i) {
-        int blk_idx = start + i;
+        int blk_idx = use_scan_table
+            ? desc->scan_table_block_idx[start + i]
+            : (start + i);
         int rf_def_id;
         float act_amp;
+        float ratio;
 
         bte = &desc->block_table[blk_idx];
         if (bte->rf_id < 0 || bte->rf_id >= desc->rf_table_size)
@@ -531,10 +531,18 @@ int pulseqlib_get_rf_array(
         /* Hard-copy base stats */
         (*out_pulses)[n] = rfdef->stats;
 
-        /* Patch actual amplitude from rf_table */
+        /* Patch event-specific amplitude-dependent stats from rf_table. */
         act_amp = desc->rf_table[bte->rf_id].amplitude;
         (*out_pulses)[n].act_amplitude_hz = (act_amp >= 0.0f)
             ? act_amp : -act_amp;
+        (*out_pulses)[n].base_amplitude_hz = (*out_pulses)[n].act_amplitude_hz;
+
+        ratio = 0.0f;
+        if (rfdef->stats.base_amplitude_hz > 0.0f) {
+            ratio = (*out_pulses)[n].act_amplitude_hz /
+                rfdef->stats.base_amplitude_hz;
+        }
+        (*out_pulses)[n].flip_angle_deg = rfdef->stats.flip_angle_deg * ratio;
 
         /* Set repetition count */
         (*out_pulses)[n].num_instances = num_instances;

@@ -65,9 +65,57 @@ MU_TEST(test_rf180_block_pulse_stats)
     pulseqlib_collection_free(coll);
 }
 
+MU_TEST(test_rf_array_basic_canonical_tr)
+{
+    pulseqlib_opts opts;
+    pulseqlib_collection* coll = NULL;
+    pulseqlib_rf_stats* pulses = NULL;
+    int rc, npulses;
+
+    default_opts_init(&opts);
+    rc = load_seq(&coll, "00_basic_rfstat.seq", &opts);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "load_seq failed");
+
+    npulses = pulseqlib_get_rf_array(coll, &pulses, 0);
+    mu_assert_int_eq(1, npulses);
+    mu_assert_int_eq(1, pulses[0].num_instances);
+    mu_assert_float_near("canonical base_amp_hz",
+        500.0f, pulses[0].base_amplitude_hz, 1.0f);
+
+    free(pulses);
+    pulseqlib_collection_free(coll);
+}
+
+MU_TEST(test_rf_array_nondegenerate_fullpass_expanded)
+{
+    pulseqlib_opts opts;
+    pulseqlib_collection* coll = NULL;
+    pulseqlib_rf_stats* pulses = NULL;
+    int rc, npulses, i;
+
+    default_opts_init(&opts);
+    rc = load_seq_with_averages(
+        &coll, "05_rfprep_ok_canonical_fullpass.seq", &opts, 3);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "load_seq_with_averages failed");
+
+    npulses = pulseqlib_get_rf_array(coll, &pulses, 0);
+    mu_assert_int_eq(8, npulses);
+    mu_assert_float_near("prep base_amp_hz",
+        125.0f, pulses[0].base_amplitude_hz, 1.0f);
+    mu_assert_float_near("cooldown base_amp_hz",
+        500.0f, pulses[npulses - 1].base_amplitude_hz, 1.0f);
+    for (i = 0; i < npulses; ++i)
+        mu_assert_int_eq(1, pulses[i].num_instances);
+
+    free(pulses);
+    pulseqlib_collection_free(coll);
+}
+
 MU_TEST_SUITE(suite_rf_stats)
 {
     MU_RUN_TEST(test_rf180_block_pulse_stats);
+    MU_RUN_TEST(test_rf_array_basic_canonical_tr);
+    MU_RUN_TEST(test_rf_array_nondegenerate_fullpass_expanded);
 }
 
 /* ================================================================== */
@@ -211,31 +259,21 @@ MU_TEST_SUITE(suite_rf_consistency)
 }
 
 /* ================================================================== */
-/*  Suite C — RF prep/cooldown structural failures                    */
+/*  Suite C — Canonical full-pass RF periodicity                      */
 /* ================================================================== */
 
-/* test case 05: single-pass sequence whose cooldown block exceeds the
- * 100 ms non-degenerate-cooldown threshold.  The library rejects the
- * sequence during pulseqlib_read(), before consistency checking. */
-MU_TEST(test_rf_prep_cooldown_too_long)
-{
-    run_consistency_check("05_rfprep_fail_cooldown_too_long.seq",
-                          PULSEQLIB_ERR_TR_COOLDOWN_TOO_LONG);
-}
-
 /* test case 06: two-pass sequence where pass-2 uses a different RF
- * amplitude than pass-1.  The cross-pass RF consistency check fires
- * when pulseqlib_check_consistency() is called. */
+ * amplitude than pass-1.  The canonical full-pass RF consistency check
+ * fires when pulseqlib_check_consistency() is called. */
 MU_TEST(test_rf_multipass_variable_structure)
 {
     run_consistency_check("06_rfprep_fail_multipass_variable.seq",
                           PULSEQLIB_ERR_CONSISTENCY_RF_PERIODIC);
 }
 
-MU_TEST_SUITE(suite_rf_prep_cooldown)
+MU_TEST_SUITE(suite_rf_canonical_periodicity)
 {
     MU_SUITE_CONFIGURE(rf_consistency_setup, NULL);
-    MU_RUN_TEST(test_rf_prep_cooldown_too_long);
     MU_RUN_TEST(test_rf_multipass_variable_structure);
 }
 
@@ -243,15 +281,10 @@ MU_TEST_SUITE(suite_rf_prep_cooldown)
 /*  Suite D — 8-channel CP quadrature target                          */
 /* ================================================================== */
 
-/* Assertion target for future quadrature (RSS) channel combination:
- * 8-channel CP shim with per-channel weight 1/sqrt(8) should yield
- * the same RF stats as the single-channel 1 ms 180-degree baseline.
- *
- * NOTE: This assertion tests the desired *post-update* behaviour.
- * Under the current complex-sum combination the combined amplitude
- * will be ~1414 Hz (8 coherent phasors), so this test is expected
- * to FAIL at runtime until the library is updated.  Compilation
- * must succeed. */
+/* 8-channel CP shim with per-channel weight 1/sqrt(8) should yield
+ * the same RF stats as the single-channel 1 ms 180-degree baseline
+ * when multichannel RF is reduced to an effective waveform via
+ * quadrature aggregation before compute_rf_stats(). */
 MU_TEST(test_cp_8ch_matches_1ch_180deg)
 {
     pulseqlib_opts opts;
@@ -299,7 +332,7 @@ int test_rf_stats_main(void)
 
     MU_RUN_SUITE(suite_rf_stats);
     MU_RUN_SUITE(suite_rf_consistency);
-    MU_RUN_SUITE(suite_rf_prep_cooldown);
+    MU_RUN_SUITE(suite_rf_canonical_periodicity);
     MU_RUN_SUITE(suite_rf_cp_8ch);
     MU_REPORT();
     return MU_EXIT_CODE;

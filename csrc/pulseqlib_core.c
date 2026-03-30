@@ -272,9 +272,9 @@ static int check_rf_shim_periodicity(
 
 /*
  * check_cross_pass_rf_consistency --
- *   For multi-pass sequences, verify that the RF amplitude and shim ID
- *   patterns are identical across passes.  Pass 0 is the reference;
- *   passes 1..N-1 are compared position-by-position.
+ *   Verify that scan-table-expanded pass waveforms have identical RF
+ *   amplitude and shim-ID patterns. For non-degenerate prep/cooldown
+ *   subsequences, one expanded pass is the canonical RF unit.
  */
 static int check_cross_pass_rf_consistency(
     const pulseqlib_sequence_descriptor* desc,
@@ -454,12 +454,15 @@ static int check_consistency(
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_descriptor* trd;
     int ref_tr, first_check, last_check;
+    int has_nd_prep, has_nd_cool;
 
     if (!coll) return PULSEQLIB_ERR_NULL_POINTER;
 
     for (subseq_idx = 0; subseq_idx < coll->num_subsequences; ++subseq_idx) {
         desc = &coll->descriptors[subseq_idx];
         trd  = &desc->tr_descriptor;
+        has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
+        has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
 
         /* (a) Scan-table segment consistency: walk the scan table and
          *     verify that each entry's block definition ID matches what
@@ -476,61 +479,46 @@ static int check_consistency(
             }
         }
 
-        /* (b) RF amplitude periodicity across pure main TRs.
+        /* (b) RF periodicity on canonical units.
          *
-         *   prep degen   cooldown degen   ref   check range
-         *   ----------   --------------   ---   -----------
-         *   yes          yes              0     1 .. num_trs-1
-         *   no           yes              1     2 .. num_trs-1
-         *   yes          no               0     1 .. num_trs-2
-         *   no           no               1     2 .. num_trs-2
-         */
-        if (trd->num_trs > 1) {
-            ref_tr      = trd->degenerate_prep ? 0 : 1;
-            first_check = ref_tr + 1;
-            last_check  = trd->degenerate_cooldown
-                        ? trd->num_trs - 1
-                        : trd->num_trs - 2;
-
-            if (first_check <= last_check) {
-                rc = check_rf_amplitude_periodicity(desc,
-                    ref_tr, first_check, last_check, diag);
-                if (PULSEQLIB_FAILED(rc)) {
-                    if (diag) {
-                        pulseqlib__diag_printf(diag,
-                            "Consistency check failed: RF amplitude "
-                            "not periodic in subsequence %d\n",
-                            subseq_idx);
-                    }
-                    return rc;
+         * Standard / degenerate subsequences use imaging TRs as the
+         * canonical RF unit. Non-degenerate prep/cooldown subsequences
+         * use one full expanded pass (including average expansion). */
+        if (has_nd_prep || has_nd_cool) {
+            rc = check_cross_pass_rf_consistency(desc, diag);
+            if (PULSEQLIB_FAILED(rc)) {
+                if (diag) {
+                    pulseqlib__diag_printf(diag,
+                        "Consistency check failed: canonical RF "
+                        "mismatch in subsequence %d\n",
+                        subseq_idx);
                 }
-
+                return rc;
             }
-        }
+        } else if (trd->num_trs > 1) {
+            ref_tr      = 0;
+            first_check = 1;
+            last_check  = trd->num_trs - 1;
 
-        /* (c) RF shim ID periodicity (same TR range as amplitude). */
-        if (trd->num_trs > 1 && first_check <= last_check) {
-            rc = check_rf_shim_periodicity(desc,
+            rc = check_rf_amplitude_periodicity(desc,
                 ref_tr, first_check, last_check, diag);
             if (PULSEQLIB_FAILED(rc)) {
                 if (diag) {
                     pulseqlib__diag_printf(diag,
-                        "Consistency check failed: RF shim ID "
+                        "Consistency check failed: canonical RF amplitude "
                         "not periodic in subsequence %d\n",
                         subseq_idx);
                 }
                 return rc;
             }
-        }
 
-        /* (d) Cross-pass RF amplitude + shim ID consistency */
-        if (desc->num_passes > 1) {
-            rc = check_cross_pass_rf_consistency(desc, diag);
+            rc = check_rf_shim_periodicity(desc,
+                ref_tr, first_check, last_check, diag);
             if (PULSEQLIB_FAILED(rc)) {
                 if (diag) {
                     pulseqlib__diag_printf(diag,
-                        "Consistency check failed: cross-pass RF "
-                        "mismatch in subsequence %d\n",
+                        "Consistency check failed: canonical RF shim ID "
+                        "not periodic in subsequence %d\n",
                         subseq_idx);
                 }
                 return rc;

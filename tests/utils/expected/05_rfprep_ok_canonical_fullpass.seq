@@ -15,12 +15,10 @@ RadiofrequencyRasterTime 1e-06
 # Format of blocks:
 # NUM DUR RF  GX  GY  GZ  ADC  EXT
 [BLOCKS]
-1 100   0   0   0   0  0  1
-2 100   1   1   0   0  0  2
-3 100   1   1   0   0  0  0
-4 100   1   1   0   0  0  0
-5 100   1   1   0   0  0  0
-6 11000   0   0   0   0  0  3
+1 100   1   0   0   0  0  1
+2 100   2   1   0   0  0  2
+3 100   2   1   0   0  0  0
+4 100   3   0   0   0  0  3
 
 # Format of RF events:
 # id ampl. mag_id phase_id time_shape_id center delay freqPPM phasePPM freq phase use
@@ -28,7 +26,9 @@ RadiofrequencyRasterTime 1e-06
 # Field 'use' is the initial of: 
 #   excitation refocusing inversion saturation preparation other undefined
 [RF]
-1          250 1 2 3 500 0 0 0 0 0 e
+1          125 1 2 3 500 0 0 0 0 0 e
+2          250 1 2 3 500 0 0 0 0 0 e
+3          500 1 2 3 500 0 0 0 0 0 r
 
 # Format of trapezoid gradients:
 # id amplitude rise flat fall delay
@@ -78,4 +78,4 @@ num_samples 2
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash 15e62de4776f2caa072ba1be7626d0a3
+Hash 07cb51e23defe47311e086ca3fa3a53d

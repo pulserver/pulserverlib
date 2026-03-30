@@ -8,7 +8,7 @@
  *   1. Load with signature check + caching (no label parsing).
  *   2. Consistency check.
  *   3. Hardware safety check (gmax, slewmax, continuity, acoustic, PNS).
- *   4. Build per-TR RF stat arrays; run vendor RF safety + find max B1.
+ *   4. Build canonical-TR RF stat arrays; run vendor RF safety + find max B1.
  *   5. Gradient safety per segment.
  *   6. Set up echo filters and data storage dimensions.
  *
@@ -142,7 +142,7 @@ int main(int argc, char** argv)
     printf("Hardware safety check PASSED.\n");
 
     /* ============================================================= */
-    /*  4. RF safety — per-region RF arrays via pulseqlib_get_rf_array*/
+    /*  4. RF safety — canonical TR RF arrays                        */
     /* ============================================================= */
     {
         float max_b1_hz = 0.0f;
@@ -161,59 +161,13 @@ int main(int argc, char** argv)
             rc = pulseqlib_get_subseq_info(coll, s, &si);
             CHECK(rc, &g_diag);
 
-            /* -- Prep (if non-degenerate) ------------------------- */
-            if (!si.degenerate_prep) {
-                npulses = pulseqlib_get_rf_array(
-                    coll, &pulses, s, PULSEQLIB_TR_REGION_PREP);
-                if (npulses > 0) {
-                    min_tr_us = vendor_check_rf_safety(pulses, npulses);
-                    if (min_tr_us > si.tr_duration_us) {
-                        free(pulses);
-                        fprintf(stderr,
-                            "RF safety: subseq %d prep TR too short\n", s);
-                        goto fail;
-                    }
-                    b1 = vendor_find_rf_max(pulses, npulses);
-                    if (b1 > max_b1_hz) {
-                        max_b1_hz = b1;
-                        max_b1_subseq = s;
-                    }
-                }
-                free(pulses);
-                pulses = NULL;
-            }
-
-            /* -- Cooldown (if non-degenerate) --------------------- */
-            if (!si.degenerate_cooldown) {
-                npulses = pulseqlib_get_rf_array(
-                    coll, &pulses, s, PULSEQLIB_TR_REGION_COOLDOWN);
-                if (npulses > 0) {
-                    min_tr_us = vendor_check_rf_safety(pulses, npulses);
-                    if (min_tr_us > si.tr_duration_us) {
-                        free(pulses);
-                        fprintf(stderr,
-                            "RF safety: subseq %d cooldown TR too short\n", s);
-                        goto fail;
-                    }
-                    b1 = vendor_find_rf_max(pulses, npulses);
-                    if (b1 > max_b1_hz) {
-                        max_b1_hz = b1;
-                        max_b1_subseq = s;
-                    }
-                }
-                free(pulses);
-                pulses = NULL;
-            }
-
-            /* -- Main TR ------------------------------------------ */
-            npulses = pulseqlib_get_rf_array(
-                coll, &pulses, s, PULSEQLIB_TR_REGION_MAIN);
+            npulses = pulseqlib_get_rf_array(coll, &pulses, s);
             if (npulses > 0) {
                 min_tr_us = vendor_check_rf_safety(pulses, npulses);
                 if (min_tr_us > si.tr_duration_us) {
                     free(pulses);
                     fprintf(stderr,
-                        "RF safety: subseq %d main TR too short\n", s);
+                        "RF safety: subseq %d canonical TR too short\n", s);
                     goto fail;
                 }
                 b1 = vendor_find_rf_max(pulses, npulses);

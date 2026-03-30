@@ -19,7 +19,6 @@
 /* ================================================================== */
 /*  File-scope constants                                              */
 /* ================================================================== */
-#define PREP_COOLDOWN_THRESHOLD_US   100000   /* 100 ms */
 #define SINGLE_TR_MAX_DURATION_US  15000000   /* 15 s  */
 
 #define SEGSTATE_SEEKING_FIRST_ADC 0
@@ -360,7 +359,7 @@ int pulseqlib__get_tr_in_sequence(pulseqlib_sequence_descriptor* desc, pulseqlib
     int* seq_pat       = NULL;
     int* base_pat      = NULL;
     int* block_dur     = NULL;
-    int prep_dur_us, cooldown_dur_us, active_dur_us;
+    int active_dur_us;
     int found, l;
     int mismatch_pos;
     float tr_dur;
@@ -585,29 +584,6 @@ int pulseqlib__get_tr_in_sequence(pulseqlib_sequence_descriptor* desc, pulseqlib
             tr->degenerate_cooldown  = 1;
             tr->num_cooldown_blocks  = 0;
             tr->num_cooldown_trs     = nc / l;
-        }
-    }
-
-    /* Non-degenerate prep: verify duration is within threshold */
-    if (!tr->degenerate_prep && desc->num_prep_blocks > 0) {
-        prep_dur_us = (int)sum_durations_us(block_dur, 0, desc->num_prep_blocks);
-        if (prep_dur_us > PREP_COOLDOWN_THRESHOLD_US) {
-            diag->code = PULSEQLIB_ERR_TR_PREP_TOO_LONG;
-            PULSEQLIB_FREE(seq_pat); PULSEQLIB_FREE(block_dur);
-            PULSEQLIB_FREE(base_pat);
-            return diag->code;
-        }
-    }
-    /* Non-degenerate cooldown: verify duration is within threshold */
-    if (!tr->degenerate_cooldown && desc->num_cooldown_blocks > 0) {
-        cooldown_dur_us = (int)sum_durations_us(block_dur,
-            desc->pass_len - desc->num_cooldown_blocks,
-            desc->num_cooldown_blocks);
-        if (cooldown_dur_us > PREP_COOLDOWN_THRESHOLD_US) {
-            diag->code = PULSEQLIB_ERR_TR_COOLDOWN_TOO_LONG;
-            PULSEQLIB_FREE(seq_pat); PULSEQLIB_FREE(block_dur);
-            PULSEQLIB_FREE(base_pat);
-            return diag->code;
         }
     }
 
