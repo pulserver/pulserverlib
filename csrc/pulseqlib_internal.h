@@ -1031,12 +1031,19 @@ int   pulseqlib__get_gradient_waveforms_range(
           int amplitude_mode,
           const int* tr_group_labels, int target_group);
 
-/* Find unique shot-index TR variants (multi-shot).
+/* Find unique shot-index TR variants (multi-shot, degenerate prep/cooldown).
  * Returns count of unique groups; caller frees both output arrays. */
 int   pulseqlib__find_unique_shot_trs(
           const pulseqlib_sequence_descriptor* desc,
           int** out_unique_tr_indices,
           int** out_tr_group_labels);
+
+/* Find unique shot-index pass patterns (non-degenerate prep/cooldown, e.g. MPRAGE).
+ * Returns count of unique pass patterns; caller frees both output arrays. */
+int   pulseqlib__find_unique_shot_passes(
+          const pulseqlib_sequence_descriptor* desc,
+          int** out_unique_pass_indices,
+          int** out_pass_group_labels);
 
 /* --- pulseqlib_cache.c --- */
 int   pulseqlib__try_read_cache(pulseqlib_collection* coll, const char* seq_path);

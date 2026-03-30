@@ -1534,7 +1534,7 @@ static void pulseqlib__select_canonical_tr_window(
 /* Find unique shot-index patterns across pass-expanded canonical windows.
  * Returns number of unique pass patterns, 0 on allocation/shape failure.
  * Caller must free out arrays when return > 0. */
-static int pulseqlib__find_unique_shot_passes(
+int pulseqlib__find_unique_shot_passes(
     const pulseqlib_sequence_descriptor* desc,
     int** out_unique_pass_indices,
     int** out_pass_group_labels)

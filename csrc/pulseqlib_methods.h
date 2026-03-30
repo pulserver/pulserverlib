@@ -273,7 +273,7 @@ int pulseqlib_load_cache(
 /* ================================================================== */
 
 /**
- * @brief Extract per-axis gradient waveforms for a single TR.
+ * @brief Extract per-axis gradient waveforms for a single canonical TR.
  *
  * Returns waveforms in their native (non-interpolated) timing:
  * each axis carries its own time base as (time, amplitude,
@@ -284,16 +284,25 @@ int pulseqlib_load_cache(
  * they use an internal variant that skips segment-label
  * computation and then interpolate to uniform raster.
  *
- * @param[in]  coll        Loaded collection.
- * @param[in]  subseq_idx  Subsequence index.
- * @param[out] waveforms   Receives the waveform data (caller frees
- *                          via pulseqlib_tr_gradient_waveforms_free).
- * @param[out] diag        Diagnostic on failure.
+ * For multishot sequences (e.g. 3-D non-Cartesian) the collection
+ * may contain multiple unique canonical TRs — one per unique
+ * shot-ID combination (pass pattern).  The number of valid indices
+ * equals the number of unique pass patterns returned by
+ * pulseqlib__find_unique_shot_passes (non-degenerate prep/cooldown)
+ * or pulseqlib__find_unique_shot_trs (degenerate).
+ *
+ * @param[in]  coll             Loaded collection.
+ * @param[in]  canonical_tr_idx Zero-based canonical TR index.
+ *                              Returns PULSEQLIB_ERR_INVALID_ARGUMENT
+ *                              when the index is out of range.
+ * @param[out] waveforms        Receives the waveform data (caller frees
+ *                              via pulseqlib_tr_gradient_waveforms_free).
+ * @param[out] diag             Diagnostic on failure.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
 int pulseqlib_get_tr_gradient_waveforms(
     const pulseqlib_collection*    coll,
-    int                            subseq_idx,
+    int                            canonical_tr_idx,
     pulseqlib_tr_gradient_waveforms* waveforms,
     pulseqlib_diagnostic*          diag);
 
