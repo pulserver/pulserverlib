@@ -1,12 +1,13 @@
 """Serialize / deserialize a sequence collection (linked .seq files)."""
 
-__all__ = ["serialize", "deserialize"]
+__all__ = ['deserialize', 'serialize']
 
 import copy
+import warnings
+
 from pathlib import Path
 
 import pypulseq as pp
-
 
 # ------------------------------------------------------------------ #
 #  Public API
@@ -44,24 +45,22 @@ def serialize(
         If *seqs* is empty.
     """
     if not seqs:
-        raise ValueError("seqs must be a non-empty list of pp.Sequence objects.")
+        raise ValueError('seqs must be a non-empty list of pp.Sequence objects.')
 
     base = Path(path)
-    if base.suffix.lower() == ".seq":
-        base = base.with_suffix("")
+    if base.suffix.lower() == '.seq':
+        base = base.with_suffix('')
 
     n = len(seqs)
     if n == 1:
-        filenames = [base.with_suffix(".seq")]
+        filenames = [base.with_suffix('.seq')]
     else:
-        filenames = [
-            base.parent / f"{base.name}_{i + 1:03d}.seq" for i in range(n)
-        ]
+        filenames = [base.parent / f'{base.name}_{i + 1:03d}.seq' for i in range(n)]
 
     for i, seq in enumerate(seqs):
         seq_copy = copy.deepcopy(seq)
         if i < n - 1:
-            seq_copy.set_definition("next", filenames[i + 1].name)
+            seq_copy.set_definition('next', filenames[i + 1].name)
         seq_copy.write(str(filenames[i]))
 
     return filenames
@@ -95,13 +94,15 @@ def deserialize(path: str | Path) -> list[pp.Sequence]:
 
     while current is not None:
         if not current.is_file():
-            raise FileNotFoundError(f"Sequence file not found: {current}")
+            raise FileNotFoundError(f'Sequence file not found: {current}')
 
         seq = pp.Sequence()
-        seq.read(str(current))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            seq.read(str(current))
         seqs.append(seq)
 
-        next_name = seq.definitions.get("next")
+        next_name = seq.definitions.get('next')
         if next_name:
             current = current.parent / str(next_name)
         else:

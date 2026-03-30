@@ -1,6 +1,6 @@
 """Native-timing TR waveform extraction for SequenceCollection."""
 
-__all__ = ['get_tr_waveforms', 'TrWaveforms']
+__all__ = ['TrWaveforms', 'get_tr_waveforms']
 
 from dataclasses import dataclass, field
 from typing import Literal
@@ -26,6 +26,7 @@ class ChannelWaveform:
         Amplitude values, shape ``(N,)``.  Units depend on channel:
         mT/m for gradients, µT for RF magnitude, rad for RF phase.
     """
+
     time_us: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
     amplitude: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
 
@@ -33,6 +34,7 @@ class ChannelWaveform:
 @dataclass
 class AdcEvent:
     """ADC event descriptor."""
+
     onset_us: float = 0.0
     duration_us: float = 0.0
     num_samples: int = 0
@@ -43,6 +45,7 @@ class AdcEvent:
 @dataclass
 class BlockDescriptor:
     """Per-block metadata within a TR."""
+
     start_us: float = 0.0
     duration_us: float = 0.0
     segment_idx: int = -1
@@ -76,6 +79,7 @@ class TrWaveforms:
     prep_duration_us : float
         Total duration of prep blocks (µs), for pypulseq overlay.
     """
+
     gx: ChannelWaveform = field(default_factory=ChannelWaveform)
     gy: ChannelWaveform = field(default_factory=ChannelWaveform)
     gz: ChannelWaveform = field(default_factory=ChannelWaveform)
@@ -157,7 +161,7 @@ def get_tr_waveforms(
     #   grad: Hz/m → mT/m :  x / (gamma * 1e3)  [since gamma is Hz/T, and 1 T/m = gamma Hz/m]
     #   rf:   Hz   → µT   :  x / gamma * 1e6
     hz_per_m_to_mT_per_m = 1.0 / (gamma * 1e-3)  # Hz/m → mT/m
-    hz_to_uT = 1e6 / gamma                         # Hz → µT
+    hz_to_uT = 1e6 / gamma  # Hz → µT
 
     def _make_channel(d, scale=1.0):
         t = np.asarray(d['time_us'], dtype=np.float32)
@@ -193,14 +197,22 @@ def get_tr_waveforms(
     # Get TR timing info for pypulseq overlay
     tr_info = _find_tr(seq._cseq, subsequence_idx=subsequence_idx)
     tr_dur = tr_info['tr_duration_us']
-    prep_dur = sum(
-        b['duration_us'] for b in raw['blocks']
-        if b['segment_idx'] < 0  # prep/cooldown heuristic — refine if needed
-    ) if include_prep else 0.0
+    prep_dur = (
+        sum(
+            b['duration_us']
+            for b in raw['blocks']
+            if b['segment_idx'] < 0  # prep/cooldown heuristic — refine if needed
+        )
+        if include_prep
+        else 0.0
+    )
 
     return TrWaveforms(
-        gx=gx, gy=gy, gz=gz,
-        rf_mag=rf_mag, rf_phase=rf_phase,
+        gx=gx,
+        gy=gy,
+        gz=gz,
+        rf_mag=rf_mag,
+        rf_phase=rf_phase,
         adc_events=adc_events,
         blocks=blocks,
         total_duration_us=raw['total_duration_us'],

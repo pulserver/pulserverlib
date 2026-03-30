@@ -3,6 +3,7 @@
 __all__ = ['SequenceCollection']
 
 import copy
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,12 +11,12 @@ import numpy as np
 import pypulseq as pp
 
 from ._extension._pulseqlib_wrapper import (
-    _PulseqCollection,
     _check_consistency,
     _check_safety,
     _get_num_unique_blocks,
     _get_report,
     _get_unique_block_id,
+    _PulseqCollection,
 )
 from ._iostream import write_to_stream
 
@@ -104,8 +105,8 @@ class SequenceCollection(pp.Sequence):
             seqs = seq
         else:
             raise TypeError(
-                f"Expected str, Path, pp.Sequence, or list[pp.Sequence]; "
-                f"got {type(seq).__name__}"
+                f'Expected str, Path, pp.Sequence, or list[pp.Sequence]; '
+                f'got {type(seq).__name__}'
             )
 
         # Deep-copy so we never mutate the caller's objects
@@ -167,7 +168,7 @@ class SequenceCollection(pp.Sequence):
         """
         if idx < 0 or idx >= len(self._seqs):
             raise IndexError(
-                f"idx {idx} out of range (num_sequences={len(self._seqs)})"
+                f'idx {idx} out of range (num_sequences={len(self._seqs)})'
             )
         return copy.deepcopy(self._seqs[idx])
 
@@ -220,8 +221,8 @@ class SequenceCollection(pp.Sequence):
         subseqs = report['subsequences']
         if sequence_idx < 0 or sequence_idx >= len(subseqs):
             raise IndexError(
-                f"sequence_idx {sequence_idx} out of range "
-                f"(num_subsequences={len(subseqs)})"
+                f'sequence_idx {sequence_idx} out of range '
+                f'(num_subsequences={len(subseqs)})'
             )
         return subseqs[sequence_idx]
 
@@ -249,8 +250,8 @@ class SequenceCollection(pp.Sequence):
         segments = ss['segments']
         if segment_idx < 0 or segment_idx >= len(segments):
             raise IndexError(
-                f"segment_idx {segment_idx} out of range "
-                f"(num_segments={len(segments)})"
+                f'segment_idx {segment_idx} out of range '
+                f'(num_segments={len(segments)})'
             )
         return segments[segment_idx]['num_blocks']
 
@@ -279,17 +280,17 @@ class SequenceCollection(pp.Sequence):
         segments = ss['segments']
         if segment_idx < 0 or segment_idx >= len(segments):
             raise IndexError(
-                f"segment_idx {segment_idx} out of range "
-                f"(num_segments={len(segments)})"
+                f'segment_idx {segment_idx} out of range '
+                f'(num_segments={len(segments)})'
             )
         seg = segments[segment_idx]
-        start = seg['start_block']   # 0-based
-        nblk  = seg['num_blocks']
+        start = seg['start_block']  # 0-based
+        nblk = seg['num_blocks']
 
         src_seq = self._seqs[sequence_idx]
         new_seq = pp.Sequence(system=src_seq.system)
         for i in range(nblk):
-            key = start + i + 1          # pypulseq uses 1-based keys
+            key = start + i + 1  # pypulseq uses 1-based keys
             block = src_seq.get_block(key)
             new_seq.add_block(_normalize_block(block))
         return new_seq
@@ -338,8 +339,7 @@ class SequenceCollection(pp.Sequence):
             ns = SimpleNamespace()
             ns.num_blocks = self.num_blocks(ss_idx)
             ns.segments = [
-                (seg['start_block'], seg['num_blocks'])
-                for seg in ss_dict['segments']
+                (seg['start_block'], seg['num_blocks']) for seg in ss_dict['segments']
             ]
             ns.num_prep_blocks = ss_dict['num_prep_blocks']
             ns.num_cooldown_blocks = ss_dict['num_cooldown_blocks']
@@ -347,9 +347,7 @@ class SequenceCollection(pp.Sequence):
             ns.tr_duration_s = ss_dict['tr_duration_us'] * 1e-6
             ns.segment_order = list(ss_dict['main_segment_table'])
             ns.prep_segment_table = list(ss_dict['prep_segment_table'])
-            ns.cooldown_segment_table = list(
-                ss_dict['cooldown_segment_table']
-            )
+            ns.cooldown_segment_table = list(ss_dict['cooldown_segment_table'])
             results.append(ns)
 
         if not do_print:
@@ -369,9 +367,7 @@ class SequenceCollection(pp.Sequence):
         for idx, ns in enumerate(results):
             lines.append(f'--- Subsequence {idx} ---')
             lines.append(f'  TR size:            {ns.tr_size} blocks')
-            lines.append(
-                f'  TR duration:        {ns.tr_duration_s * 1e3:.3f} ms'
-            )
+            lines.append(f'  TR duration:        {ns.tr_duration_s * 1e3:.3f} ms')
             lines.append(f'  Prep blocks:        {ns.num_prep_blocks}')
             lines.append(f'  Cooldown blocks:    {ns.num_cooldown_blocks}')
             lines.append(f'  Unique blocks:      {ns.num_blocks}')
@@ -379,8 +375,7 @@ class SequenceCollection(pp.Sequence):
             lines.append(f'  Segment order (TR): {ns.segment_order}')
             for si, (start, nblk) in enumerate(ns.segments):
                 lines.append(
-                    f'    seg {si}: start_block={start}, '
-                    f'num_blocks={nblk}'
+                    f'    seg {si}: start_block={start}, ' f'num_blocks={nblk}'
                 )
             lines.append('')
 
@@ -449,7 +444,7 @@ class SequenceCollection(pp.Sequence):
         sequence_idx: int = 0,
         stim_threshold: float,
         decay_constant_us: float,
-        threshold_percent: float = 80.0,
+        threshold_percent: float | list[float] | tuple[float, ...] = 80.0,
     ) -> None:
         """Plot convolved PNS waveforms for a representative TR.
 
@@ -465,8 +460,8 @@ class SequenceCollection(pp.Sequence):
             PNS stimulation threshold (Hz/m/s) = rheobase / alpha.
         decay_constant_us : float
             PNS decay constant / chronaxie (us).
-        threshold_percent : float
-            Threshold line to draw (default 80 %).
+        threshold_percent : float or sequence of float
+            Threshold line(s) to draw (default 80 %).
         """
         from ._pns import pns as _pns_impl
 
@@ -486,6 +481,7 @@ class SequenceCollection(pp.Sequence):
         window_duration: float = 25.0e-3,
         spectral_resolution: float = 5.0,
         max_frequency: float = 3000.0,
+        threshold_percent: float | list[float] | tuple[float, ...] | None = None,
     ) -> None:
         """Plot acoustic spectra for gradient waveforms in a TR.
 
@@ -505,6 +501,9 @@ class SequenceCollection(pp.Sequence):
             Target frequency resolution in Hz (default 5 Hz).
         max_frequency : float
             Upper frequency limit in Hz (default 3000 Hz).
+        threshold_percent : float or sequence of float, optional
+            Extra horizontal threshold guide(s) drawn on harmonic plots.
+            Accepts either a single value or a list/tuple.
         """
         from ._acoustics import grad_spectrum as _gs_impl
 
@@ -515,6 +514,7 @@ class SequenceCollection(pp.Sequence):
             window_duration=window_duration,
             spectral_resolution=spectral_resolution,
             max_frequency=max_frequency,
+            threshold_percent=threshold_percent,
         )
 
     def plot(
@@ -522,8 +522,6 @@ class SequenceCollection(pp.Sequence):
         *,
         sequence_idx: int = 0,
         tr_instance: int | str = 'max_pos',
-        hide_prep: bool = True,
-        hide_cooldown: bool = True,
         collapse_delays: bool = False,
         show_segments: bool = True,
         show_blocks: bool = True,
@@ -547,23 +545,13 @@ class SequenceCollection(pp.Sequence):
             Subsequence index (0-based, default 0).
         tr_instance : int or {'max_pos', 'zero_var'}
             TR instance to display.  Integer values select a specific
-            TR (0 … num_averages * num_trs − 1).  Instance 0 may
-            include preparation blocks; the last instance may include
-            cooldown blocks (controlled by *hide_prep* /
-            *hide_cooldown*).
+            TR (0 … num_averages * num_trs − 1).  When non-degenerate
+            prep/cooldown are present, they are included in the TR.
 
             Special strings:
 
             - ``'max_pos'`` — position-maximum envelope (default).
             - ``'zero_var'`` — zero variable grads, keep constant (k-space view).
-        hide_prep : bool
-            Hide preparation blocks (default ``True``).  Only relevant
-            when *tr_instance* is 0 and the subsequence has a
-            non-degenerate prep section.
-        hide_cooldown : bool
-            Hide cooldown blocks (default ``True``).  Only relevant
-            when *tr_instance* is the last TR and the subsequence has
-            a non-degenerate cooldown section.
         collapse_delays : bool
             Shrink pure-delay blocks at C level (default ``False``).
         show_segments : bool
@@ -591,8 +579,6 @@ class SequenceCollection(pp.Sequence):
             self,
             subsequence_idx=sequence_idx,
             tr_idx=tr_instance,
-            hide_prep=hide_prep,
-            hide_cooldown=hide_cooldown,
             collapse_delays=collapse_delays,
             show_segments=show_segments,
             show_blocks=show_blocks,
@@ -614,8 +600,6 @@ class SequenceCollection(pp.Sequence):
         xml_path: str | Path | None = None,
         do_plot: bool = False,
         tr_range: tuple[int, int] = (0, 1),
-        hide_prep: bool = True,
-        hide_cooldown: bool = True,
         show_rf_centers: bool = False,
         show_echoes: bool = False,
         show_segments: bool = True,
@@ -623,7 +607,7 @@ class SequenceCollection(pp.Sequence):
         max_grad_mT_per_m: float | bool | None = True,
         grad_atol: float | None = None,
         rf_rms_percent: float = 10.0,
-    ) -> dict:
+    ) -> None:
         """Compare C-backend waveforms against a reference source.
 
         The reference is either the source pypulseq ``Sequence``
@@ -646,10 +630,6 @@ class SequenceCollection(pp.Sequence):
         tr_range : (int, int)
             Half-open TR index range ``[start, stop)`` to validate
             (default ``(0, 1)`` — first TR only).
-        hide_prep : bool
-            Hide preparation blocks in the plot (default ``True``).
-        hide_cooldown : bool
-            Hide cooldown blocks in the plot (default ``True``).
         show_rf_centers : bool
             Mark RF iso-centres on the plot (default ``False``).
         show_echoes : bool
@@ -668,12 +648,10 @@ class SequenceCollection(pp.Sequence):
         rf_rms_percent : float
             RF magnitude percent-RMS error threshold (default 10).
 
-        Returns
-        -------
-        dict
-            ``'ok'`` : bool — ``True`` if all channels pass.
-            ``'errors'`` : dict[str, float] — per-channel max/RMS error.
-            ``'messages'`` : list[str] — violation messages.
+        Raises
+        ------
+        RuntimeError
+            If validation fails.
         """
         from ._validate import validate as _validate_impl
 
@@ -683,8 +661,6 @@ class SequenceCollection(pp.Sequence):
             xml_path=xml_path,
             do_plot=do_plot,
             tr_range=tr_range,
-            hide_prep=hide_prep,
-            hide_cooldown=hide_cooldown,
             show_rf_centers=show_rf_centers,
             show_echoes=show_echoes,
             show_segments=show_segments,

@@ -16,7 +16,7 @@ def pns(
     sequence_idx: int = 0,
     stim_threshold: float,
     decay_constant_us: float,
-    threshold_percent: float = 80.0,
+    threshold_percent: float | list[float] | tuple[float, ...] = [80.0, 100.0],
 ) -> None:
     """Plot convolved PNS waveforms for a representative TR.
 
@@ -35,8 +35,8 @@ def pns(
         ``rheobase / alpha`` in the SAFE nerve model.
     decay_constant_us : float
         PNS decay constant (chronaxie) in microseconds.
-    threshold_percent : float
-        Threshold line to draw on the plot (default 80 %).
+    threshold_percent : float or sequence of float
+        Threshold line(s) to draw on the plot (default 80 % and 100%).
     """
     import matplotlib.pyplot as plt
 
@@ -49,11 +49,16 @@ def pns(
         alpha=1.0,
     )
 
-    num_samples = result_dict["num_samples"]
-    pns_x = np.asarray(result_dict["slew_x"], dtype=np.float32)
-    pns_y = np.asarray(result_dict["slew_y"], dtype=np.float32)
-    pns_z = np.asarray(result_dict["slew_z"], dtype=np.float32)
-    pns_total = np.sqrt(pns_x ** 2 + pns_y ** 2 + pns_z ** 2)
+    if isinstance(threshold_percent, (list, tuple)):
+        thresholds = [float(v) for v in threshold_percent]
+    else:
+        thresholds = [float(threshold_percent)]
+
+    num_samples = result_dict['num_samples']
+    pns_x = np.asarray(result_dict['slew_x'], dtype=np.float32)
+    pns_y = np.asarray(result_dict['slew_y'], dtype=np.float32)
+    pns_z = np.asarray(result_dict['slew_z'], dtype=np.float32)
+    pns_total = np.sqrt(pns_x**2 + pns_y**2 + pns_z**2)
 
     grad_raster_time = seq.system.grad_raster_time  # seconds
     time_ms = np.arange(num_samples) * 0.5 * grad_raster_time * 1e3
@@ -66,10 +71,14 @@ def pns(
     ax.plot(time_ms, pns_y, color='C1', linewidth=1.2, label='PNS Y')
     ax.plot(time_ms, pns_z, color='C2', linewidth=1.2, label='PNS Z')
 
-    ax.axhline(
-        threshold_percent, color='red', linestyle='--', linewidth=2,
-        label=f'{threshold_percent:.0f}% threshold',
-    )
+    for thr in thresholds:
+        ax.axhline(
+            thr,
+            color='red',
+            linestyle='--',
+            linewidth=2,
+            label=f'{thr:.0f}% threshold',
+        )
 
     ax.set_xlabel('Time (ms)')
     ax.set_ylabel('PNS (%)')

@@ -10,27 +10,62 @@ import numpy as np
 from ._sequence import SequenceCollection
 from ._waveforms import get_tr_waveforms
 
-
 # ── helpers ──────────────────────────────────────────────────────────
+
 
 def _interp_to_ref(t_ref, a_ref, t_test, a_test):
     """Interpolate *test* waveform onto *ref* time base, return aligned pair."""
-    if len(t_ref) == 0 or len(t_test) == 0:
+    t_ref = np.asarray(t_ref).ravel()
+    a_ref = np.asarray(a_ref).ravel()
+    t_test = np.asarray(t_test).ravel()
+    a_test = np.asarray(a_test).ravel()
+
+    if np.iscomplexobj(t_ref):
+        t_ref = np.real(t_ref)
+    if np.iscomplexobj(t_test):
+        t_test = np.real(t_test)
+
+    if t_ref.size == 0 or t_test.size == 0:
         return np.empty(0), np.empty(0)
+
+    n_ref = min(t_ref.size, a_ref.size)
+    n_test = min(t_test.size, a_test.size)
+    if n_ref == 0 or n_test == 0:
+        return np.empty(0), np.empty(0)
+
+    t_ref = t_ref[:n_ref]
+    a_ref = a_ref[:n_ref]
+    t_test = t_test[:n_test]
+    a_test = a_test[:n_test]
+
+    # np.interp requires an ordered x-grid.
+    order = np.argsort(t_test)
+    t_test = t_test[order]
+    a_test = a_test[order]
+
+    # Remove duplicate x values so interpolation remains well-defined.
+    t_test, uniq_idx = np.unique(t_test, return_index=True)
+    a_test = a_test[uniq_idx]
+
     a_interp = np.interp(t_ref, t_test, a_test, left=0.0, right=0.0)
     return a_ref, a_interp
 
 
 def _rms_error(ref, test):
     """Percentage RMS error relative to ref (0 if ref is silent)."""
-    norm = np.sqrt(np.mean(ref ** 2))
+    norm = np.sqrt(np.mean(ref**2))
     if norm < 1e-30:
         return 0.0
     return 100.0 * np.sqrt(np.mean((ref - test) ** 2)) / norm
 
 
-def _abs_tr_start_s(src_seq, num_prep_blocks: int, tr_idx: int,
-                     tr_duration_us: float) -> float:
+def _abs_tr_start_s(
+    src_seq,
+    num_prep_blocks: int,
+    tr_idx: int,
+    tr_duration_us: float,
+    imaging_tr_start: int | None = None,
+) -> float:
     """Compute the absolute start time (in seconds) of a TR.
 
     Sums block durations over the preparation region and adds
@@ -38,12 +73,77 @@ def _abs_tr_start_s(src_seq, num_prep_blocks: int, tr_idx: int,
     """
     prep_s = 0.0
     bd = src_seq.block_durations
-    for k in range(1, num_prep_blocks + 1):
+
+    # Prefer explicit imaging-tr anchor from C when available.
+    start_blocks = num_prep_blocks if imaging_tr_start is None else int(imaging_tr_start)
+    if start_blocks < 0:
+        start_blocks = 0
+
+    for k in range(1, start_blocks + 1):
         prep_s += bd.get(k, 0.0) if isinstance(bd, dict) else bd[k - 1]
     return prep_s + tr_idx * (tr_duration_us * 1e-6)
 
 
+def _abs_block_start_s(src_seq, block_start: int) -> float:
+    """Compute absolute time in seconds for a 0-based block index."""
+    if block_start <= 0:
+        return 0.0
+
+    prep_s = 0.0
+    bd = src_seq.block_durations
+    for k in range(1, block_start + 1):
+        prep_s += bd.get(k, 0.0) if isinstance(bd, dict) else bd[k - 1]
+    return prep_s
+
+
+def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
+    """Extract reference waveforms from pypulseq for an exact time window."""
+    src_seq = seq._seqs[sequence_idx]
+    gamma = seq.system.gamma
+
+    abs_t1_s = abs_t0_s + window_duration_us * 1e-6
+
+    result = src_seq.waveforms_and_times(append_RF=True, time_range=[abs_t0_s, abs_t1_s])
+    channels = result[0]
+
+    hz_to_mT_per_m = 1.0 / (gamma * 1e-3)
+    hz_to_uT = 1e6 / gamma
+
+    def _clip_window(time_us, amp):
+        t = np.asarray(time_us)
+        a = np.asarray(amp)
+        if t.size == 0:
+            return np.empty(0), np.empty(0)
+        mask = (t >= -1e-6) & (t <= window_duration_us + 1e-6)
+        return t[mask], a[mask]
+
+    ref: dict[str, tuple] = {}
+    for ch_idx, ch_name in enumerate(('gx', 'gy', 'gz')):
+        if ch_idx < len(channels):
+            arr = channels[ch_idx]
+            if arr.shape[1] > 0:
+                t_rel = (arr[0] - abs_t0_s) * 1e6
+                a_rel = arr[1] * hz_to_mT_per_m
+                ref[ch_name] = _clip_window(t_rel, a_rel)
+                continue
+        ref[ch_name] = (np.empty(0), np.empty(0))
+
+    if len(channels) > 3:
+        arr = channels[3]
+        if arr.shape[1] > 0:
+            t_rel = (arr[0] - abs_t0_s) * 1e6
+            a_rel = np.abs(arr[1]) * hz_to_uT
+            ref['rf_mag'] = _clip_window(t_rel, a_rel)
+        else:
+            ref['rf_mag'] = (np.empty(0), np.empty(0))
+    else:
+        ref['rf_mag'] = (np.empty(0), np.empty(0))
+
+    return ref
+
+
 # ── reference extraction ─────────────────────────────────────────────
+
 
 def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info):
     """Extract reference waveforms from pypulseq for a single TR.
@@ -55,51 +155,14 @@ def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info):
         Times are relative to TR start; amplitudes in mT/m (grad) or
         µT (RF magnitude).
     """
-    src_seq = seq._seqs[sequence_idx]
-    gamma = seq.system.gamma
-
     t0 = _abs_tr_start_s(
-        src_seq, tr_info['num_prep_blocks'], tr_idx,
+        seq._seqs[sequence_idx],
+        tr_info['num_prep_blocks'],
+        tr_idx,
         tr_info['tr_duration_us'],
+        tr_info.get('imaging_tr_start'),
     )
-    t1 = t0 + tr_info['tr_duration_us'] * 1e-6
-
-    # waveforms_and_times returns
-    #   (wave_data, tfp_exc, tfp_ref, t_adc, fp_adc)
-    # wave_data is a list of (2, N) ndarrays per channel.
-    result = src_seq.waveforms_and_times(append_RF=True,
-                                          time_range=[t0, t1])
-    channels = result[0]  # list of (2,N) ndarrays
-
-    hz_to_mT_per_m = 1.0 / (gamma * 1e-3)
-    hz_to_uT = 1e6 / gamma
-
-    ref: dict[str, tuple] = {}
-    for ch_idx, ch_name in enumerate(('gx', 'gy', 'gz')):
-        if ch_idx < len(channels):
-            arr = channels[ch_idx]
-            if arr.shape[1] > 0:
-                ref[ch_name] = (
-                    (arr[0] - t0) * 1e6,        # relative µs
-                    arr[1] * hz_to_mT_per_m,
-                )
-                continue
-        ref[ch_name] = (np.empty(0), np.empty(0))
-
-    # RF (index 3 when append_RF=True)
-    if len(channels) > 3:
-        arr = channels[3]
-        if arr.shape[1] > 0:
-            ref['rf_mag'] = (
-                (arr[0] - t0) * 1e6,
-                np.abs(arr[1]) * hz_to_uT,
-            )
-        else:
-            ref['rf_mag'] = (np.empty(0), np.empty(0))
-    else:
-        ref['rf_mag'] = (np.empty(0), np.empty(0))
-
-    return ref
+    return _pypulseq_reference_window(seq, sequence_idx, t0, tr_info['tr_duration_us'])
 
 
 def _xml_reference(xml_path):
@@ -145,6 +208,7 @@ def _xml_reference(xml_path):
 
 # ── public entry point ───────────────────────────────────────────────
 
+
 def validate(
     seq: SequenceCollection,
     *,
@@ -152,8 +216,6 @@ def validate(
     xml_path: Union[str, Path, None] = None,
     do_plot: bool = False,
     tr_range: tuple[int, int] = (0, 1),
-    hide_prep: bool = True,
-    hide_cooldown: bool = True,
     show_rf_centers: bool = False,
     show_echoes: bool = False,
     show_segments: bool = True,
@@ -161,7 +223,7 @@ def validate(
     max_grad_mT_per_m: Union[float, bool, None] = True,
     grad_atol: float | None = None,
     rf_rms_percent: float = 10.0,
-) -> dict:
+) -> None:
     """Compare pulserver C-backend waveforms against a reference.
 
     The reference is either the source pypulseq ``Sequence`` (default,
@@ -185,12 +247,9 @@ def validate(
     do_plot : bool
         Show a comparison overlay plot (default ``False``).
     tr_range : (int, int)
-        Half-open TR index range ``[start, stop)`` to validate
-        (default ``(0, 1)`` — first TR only).
-    hide_prep : bool
-        Hide preparation blocks in the plot (default ``True``).
-    hide_cooldown : bool
-        Hide cooldown blocks in the plot (default ``True``).
+        Half-open TR index range ``[start, stop)`` to validate.
+        When nondegenerate prep/cooldown blocks are present, the range is
+        adjusted to ``(0, 1)`` to validate the full pass as a single TR.
     show_rf_centers : bool
         Mark RF iso-centres on the plot (default ``False``).
     show_echoes : bool
@@ -209,12 +268,6 @@ def validate(
     rf_rms_percent : float
         RF magnitude percent-RMS error threshold (default 10).
 
-    Returns
-    -------
-    dict
-        ``'ok'`` : bool — ``True`` if all channels pass.
-        ``'errors'`` : dict[str, float] — per-channel max/RMS error.
-        ``'messages'`` : list[str] — human-readable violation messages.
     """
     from ._extension._pulseqlib_wrapper import _find_tr
 
@@ -226,7 +279,7 @@ def validate(
 
     # Resolve max-grad line for plotting
     if max_grad_mT_per_m is True:
-        _max_grad_plot = sys.max_grad * 1e3          # T/m → mT/m
+        _max_grad_plot = sys.max_grad * 1e3  # T/m → mT/m
     elif isinstance(max_grad_mT_per_m, (int, float)) and max_grad_mT_per_m is not False:
         _max_grad_plot = float(max_grad_mT_per_m)
     else:
@@ -234,24 +287,58 @@ def validate(
 
     # TR metadata
     tr_info = _find_tr(seq._cseq, subsequence_idx=sequence_idx)
+    tr_start, tr_stop = tr_range
+    if tr_start < 0 or tr_stop < tr_start or tr_stop > tr_info['num_trs']:
+        raise ValueError(
+            f'tr_range {tr_range} out of bounds for subsequence with '
+            f'{tr_info["num_trs"]} TRs'
+        )
+
+    has_prep = tr_info['num_prep_blocks'] > 0 and not tr_info['degenerate_prep']
+    has_cooldown = tr_info['num_cooldown_blocks'] > 0 and not tr_info['degenerate_cooldown']
+
+    if has_prep or has_cooldown:
+        # Treat subsequence as single full-pass TR
+        tr_start = 0
+        tr_stop = 1
+        include_prep = has_prep
+        include_cooldown = has_cooldown
+        multi_tr = False
+    else:
+        include_prep = False
+        include_cooldown = False
+        multi_tr = (tr_stop - tr_start) > 1
 
     # ── Validate each TR in range ────────────────────────────
     errors_per_tr: list[dict[str, float]] = []
     messages: list[str] = []
-    multi_tr = (tr_range[1] - tr_range[0]) > 1
 
-    for tr_idx in range(tr_range[0], tr_range[1]):
+    for tr_idx in range(tr_start, tr_stop):
         # C-backend waveforms
         wf = get_tr_waveforms(
             seq,
             subsequence_idx=sequence_idx,
             amplitude_mode='actual',
             tr_index=tr_idx,
+            include_prep=include_prep,
+            include_cooldown=include_cooldown,
         )
 
         # Reference waveforms
         if xml_path is None:
-            ref = _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info)
+            # For full-pass TR with prep/cooldown, start from block 0
+            # Otherwise, start from the TR's first block
+            if include_prep:
+                block_start = 0
+            else:
+                block_start = tr_info['num_prep_blocks'] + tr_idx * tr_info['tr_size']
+            abs_t0 = _abs_block_start_s(seq._seqs[sequence_idx], block_start)
+            ref = _pypulseq_reference_window(
+                seq,
+                sequence_idx,
+                abs_t0,
+                wf.total_duration_us,
+            )
         else:
             ref = _xml_reference(xml_path)
 
@@ -260,35 +347,28 @@ def validate(
         for ch in ('gx', 'gy', 'gz'):
             ref_t, ref_a = ref[ch]
             test_ch = getattr(wf, ch)
-            r, t = _interp_to_ref(ref_t, ref_a,
-                                   test_ch.time_us, test_ch.amplitude)
+            r, t = _interp_to_ref(ref_t, ref_a, test_ch.time_us, test_ch.amplitude)
             err = float(np.max(np.abs(r - t))) if len(r) > 0 else 0.0
             tr_err[ch] = err
             if err > grad_atol:
                 pfx = f'TR {tr_idx}: ' if multi_tr else ''
                 messages.append(
                     f'{pfx}{ch} mismatch: max diff {err:.4f} mT/m '
-                    f'(tol {grad_atol:.4f} mT/m)')
+                    f'(tol {grad_atol:.4f} mT/m)'
+                )
 
         # Compare RF
         ref_t, ref_a = ref['rf_mag']
-        r, t = _interp_to_ref(ref_t, ref_a,
-                               wf.rf_mag.time_us, wf.rf_mag.amplitude)
+        r, t = _interp_to_ref(ref_t, ref_a, wf.rf_mag.time_us, wf.rf_mag.amplitude)
         rf_err = _rms_error(r, t)
         tr_err['rf_mag'] = rf_err
         if rf_err > rf_rms_percent:
             pfx = f'TR {tr_idx}: ' if multi_tr else ''
             messages.append(
-                f'{pfx}RF mismatch: {rf_err:.1f}% RMS '
-                f'(tol {rf_rms_percent:.1f}%)')
+                f'{pfx}RF mismatch: {rf_err:.1f}% RMS ' f'(tol {rf_rms_percent:.1f}%)'
+            )
 
         errors_per_tr.append(tr_err)
-
-    # Aggregate: worst-case across TRs
-    errors: dict[str, float] = {}
-    if errors_per_tr:
-        for key in errors_per_tr[0]:
-            errors[key] = max(e[key] for e in errors_per_tr)
 
     ok = len(messages) == 0
 
@@ -299,8 +379,6 @@ def validate(
             sequence_idx=sequence_idx,
             xml_path=xml_path,
             tr_idx=tr_range[0],
-            hide_prep=hide_prep,
-            hide_cooldown=hide_cooldown,
             show_rf_centers=show_rf_centers,
             show_echoes=show_echoes,
             show_segments=show_segments,
@@ -310,18 +388,33 @@ def validate(
             messages=messages,
         )
 
-    return {'ok': ok, 'errors': errors, 'messages': messages}
+    if ok:
+        print('Validation passed.')
+        return
+
+    print('Validation failed:')
+    for msg in messages:
+        print(f'  - {msg}')
+
+    raise RuntimeError('Validation failed:\n' + '\n'.join(messages))
 
 
 # ── validation plot (private) ────────────────────────────────────────
 
+
 def _validation_plot(
-    seq, *, sequence_idx, xml_path, tr_idx,
-    hide_prep, hide_cooldown,
-    show_rf_centers, show_echoes,
-    show_segments, show_blocks,
+    seq,
+    *,
+    sequence_idx,
+    xml_path,
+    tr_idx,
+    show_rf_centers,
+    show_echoes,
+    show_segments,
+    show_blocks,
     max_grad_mT_per_m,
-    ok, messages,
+    ok,
+    messages,
 ):
     """Create the comparison overlay using :func:`_plot.plot`."""
     from ._plot import plot as _plot_impl
@@ -331,8 +424,8 @@ def _validation_plot(
         seq,
         subsequence_idx=sequence_idx,
         tr_idx=tr_idx,
-        hide_prep=hide_prep,
-        hide_cooldown=hide_cooldown,
+        hide_prep=False,
+        hide_cooldown=False,
         collapse_delays=False,
         show_segments=show_segments,
         show_blocks=show_blocks,
@@ -345,16 +438,17 @@ def _validation_plot(
 
     # Branch 2 (pypulseq) or Branch 3 (XML) overlay
     label = 'XML' if xml_path is not None else 'pypulseq'
-    overlay_source = (str(xml_path) if xml_path is not None
-                      else seq._seqs[sequence_idx])
+    overlay_source = str(xml_path) if xml_path is not None else seq._seqs[sequence_idx]
     _plot_impl(overlay_source, fig=handle, label=label)
 
     # Annotate pass / fail
     status = 'PASS' if ok else 'FAIL'
     colour = 'green' if ok else 'red'
-    handle.fig.suptitle(f'validate()  \u2014  {status}',
-                        fontweight='bold', color=colour)
+    handle.fig.suptitle(
+        f'validate()  \u2014  {status}', fontweight='bold', color=colour
+    )
     if messages:
-        handle.fig.text(0.5, 0.01, '\n'.join(messages),
-                        ha='center', fontsize=8, color='red')
+        handle.fig.text(
+            0.5, 0.01, '\n'.join(messages), ha='center', fontsize=8, color='red'
+        )
     handle.fig.tight_layout(rect=[0, 0.05 if messages else 0, 1, 0.95])

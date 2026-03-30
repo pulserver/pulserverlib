@@ -1,8 +1,109 @@
 """Shared fixtures for the pulserver pytest suite."""
 
+from pathlib import Path
+
+import matplotlib
 import numpy as np
 import pypulseq as pp
 import pytest
+
+matplotlib.use("Agg")
+
+
+GENERATED_SEQUENCE_FILES = [
+    "gre_2d_1sl_1avg.seq",
+    "gre_2d_1sl_3avg.seq",
+    "gre_2d_3sl_1avg.seq",
+    "gre_2d_3sl_3avg.seq",
+    "epi_2d_1sl_1avg.seq",
+    "epi_2d_1sl_3avg.seq",
+    "epi_2d_3sl_1avg.seq",
+    "epi_2d_3sl_3avg.seq",
+    "fse_2d_1sl_1avg.seq",
+    "fse_2d_1sl_3avg.seq",
+    "fse_2d_3sl_1avg.seq",
+    "fse_2d_3sl_3avg.seq",
+    "bssfp_2d_1sl_1avg.seq",
+    "bssfp_2d_1sl_3avg.seq",
+    "bssfp_2d_3sl_1avg.seq",
+    "bssfp_2d_3sl_3avg.seq",
+    "gre_epi_collection_2d_1sl_1avg.seq",
+    "gre_epi_collection_2d_1sl_3avg.seq",
+    "mprage_2d_1sl_1avg.seq",
+    "mprage_2d_1sl_3avg.seq",
+    "mprage_2d_3sl_1avg.seq",
+    "mprage_2d_3sl_3avg.seq",
+    "mprage_nav_2d_1sl_1avg.seq",
+    "mprage_nav_2d_1sl_3avg.seq",
+    "mprage_nav_2d_3sl_1avg.seq",
+    "mprage_nav_2d_3sl_3avg.seq",
+    # Keep noncart userotext0 and skip userotext1 as requested.
+    "mprage_noncart_3d_1sl_1avg_userotext0.seq",
+    "mprage_noncart_3d_1sl_3avg_userotext0.seq",
+    "mprage_noncart_3d_3sl_1avg_userotext0.seq",
+    "mprage_noncart_3d_3sl_3avg_userotext0.seq",
+]
+
+KNOWN_VALIDATE_FAILURE_FILES = [
+    "mprage_noncart_3d_1sl_1avg_userotext0.seq",
+    "mprage_noncart_3d_1sl_3avg_userotext0.seq",
+    "mprage_noncart_3d_3sl_1avg_userotext0.seq",
+    "mprage_noncart_3d_3sl_3avg_userotext0.seq",
+]
+
+VALIDATE_PASS_SEQUENCE_FILES = [
+    name for name in GENERATED_SEQUENCE_FILES if name not in KNOWN_VALIDATE_FAILURE_FILES
+]
+
+REPRESENTATIVE_SEQUENCE_FILES = [
+    "gre_2d_1sl_1avg.seq",
+    "epi_2d_1sl_1avg.seq",
+    "fse_2d_1sl_1avg.seq",
+    "bssfp_2d_1sl_1avg.seq",
+    "gre_epi_collection_2d_1sl_1avg.seq",
+    "mprage_2d_1sl_1avg.seq",
+    "mprage_nav_2d_1sl_1avg.seq",
+    "mprage_noncart_3d_1sl_1avg_userotext0.seq",
+]
+
+
+@pytest.fixture(scope="session")
+def expected_data_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "utils" / "expected"
+
+
+@pytest.fixture(scope="session")
+def generated_seq_files() -> list[str]:
+    return GENERATED_SEQUENCE_FILES.copy()
+
+
+@pytest.fixture(scope="session")
+def representative_generated_seq_files() -> list[str]:
+    return REPRESENTATIVE_SEQUENCE_FILES.copy()
+
+
+def _id_seq_name(name: str) -> str:
+    return name.replace(".seq", "")
+
+
+@pytest.fixture(params=GENERATED_SEQUENCE_FILES, ids=_id_seq_name)
+def generated_seq_path(expected_data_dir: Path, request) -> Path:
+    return expected_data_dir / request.param
+
+
+@pytest.fixture(params=VALIDATE_PASS_SEQUENCE_FILES, ids=_id_seq_name)
+def validate_pass_seq_path(expected_data_dir: Path, request) -> Path:
+    return expected_data_dir / request.param
+
+
+@pytest.fixture(params=KNOWN_VALIDATE_FAILURE_FILES, ids=_id_seq_name)
+def known_validate_failure_seq_path(expected_data_dir: Path, request) -> Path:
+    return expected_data_dir / request.param
+
+
+@pytest.fixture(params=REPRESENTATIVE_SEQUENCE_FILES, ids=_id_seq_name)
+def representative_generated_seq_path(expected_data_dir: Path, request) -> Path:
+    return expected_data_dir / request.param
 
 
 @pytest.fixture
@@ -10,9 +111,9 @@ def simple_gre_seq():
     """Build a simple 2D GRE sequence with pypulseq."""
     sys = pp.Opts(
         max_grad=32,
-        grad_unit='mT/m',
+        grad_unit="mT/m",
         max_slew=130,
-        slew_unit='T/m/s',
+        slew_unit="T/m/s",
         rf_ringdown_time=20e-6,
         rf_dead_time=100e-6,
         adc_dead_time=10e-6,
@@ -30,16 +131,26 @@ def simple_gre_seq():
         return_gz=True,
     )
 
-    gx = pp.make_trapezoid(channel='x', flat_area=128 / 0.25, flat_time=3.2e-3, system=sys)
-    adc = pp.make_adc(num_samples=128, duration=gx.flat_time, delay=gx.rise_time, system=sys)
-    gx_pre = pp.make_trapezoid(channel='x', area=-gx.area / 2, duration=1e-3, system=sys)
-    gz_reph = pp.make_trapezoid(channel='z', area=-gz.area / 2, duration=1e-3, system=sys)
+    gx = pp.make_trapezoid(
+        channel="x", flat_area=128 / 0.25, flat_time=3.2e-3, system=sys
+    )
+    adc = pp.make_adc(
+        num_samples=128, duration=gx.flat_time, delay=gx.rise_time, system=sys
+    )
+    gx_pre = pp.make_trapezoid(
+        channel="x", area=-gx.area / 2, duration=1e-3, system=sys
+    )
+    gz_reph = pp.make_trapezoid(
+        channel="z", area=-gz.area / 2, duration=1e-3, system=sys
+    )
 
     n_pe = 16
     pe_areas = np.linspace(-0.5, 0.5, n_pe) * 128 / 0.25
 
     for i in range(n_pe):
-        gy_pre = pp.make_trapezoid(channel='y', area=pe_areas[i], duration=1e-3, system=sys)
+        gy_pre = pp.make_trapezoid(
+            channel="y", area=pe_areas[i], duration=1e-3, system=sys
+        )
         seq.add_block(rf, gz)
         seq.add_block(gx_pre, gy_pre, gz_reph)
         seq.add_block(gx, adc)

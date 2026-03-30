@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from enum import StrEnum
 
 
 class Validate(StrEnum):
     """Per-parameter validation strategy (maps to nimpulseqgui PropertyValidate)."""
 
-    SEARCH = "search"  # binary-search for valid min/max
-    CLIP = "clip"  # clamp to [min, max]
-    NONE = "none"  # no auto-validation
+    SEARCH = 'search'  # binary-search for valid min/max
+    CLIP = 'clip'  # clamp to [min, max]
+    NONE = 'none'  # no auto-validation
 
 
 class UIParam(StrEnum):
@@ -22,29 +22,29 @@ class UIParam(StrEnum):
     """
 
     # Timing
-    TE = "TE"
-    TR = "TR"
-    TI = "TI"
+    TE = 'TE'
+    TR = 'TR'
+    TI = 'TI'
     # Spatial
-    FOV = "FOV"
-    SLICE_THICKNESS = "SliceThickness"
-    NSLICES = "NSlices"
-    MATRIX = "Matrix"
-    NECHOES = "NEchoes"
+    FOV = 'FOV'
+    SLICE_THICKNESS = 'SliceThickness'
+    NSLICES = 'NSlices'
+    MATRIX = 'Matrix'
+    NECHOES = 'NEchoes'
     # Contrast
-    FLIP_ANGLE = "FlipAngle"
-    BANDWIDTH = "Bandwidth"
+    FLIP_ANGLE = 'FlipAngle'
+    BANDWIDTH = 'Bandwidth'
     # Flags
-    FAT_SAT = "FatSat"
-    SPOILER = "Spoiler"
-    RF_SPOILING = "RFSpoiling"
+    FAT_SAT = 'FatSat'
+    SPOILER = 'Spoiler'
+    RF_SPOILING = 'RFSpoiling'
     # Description row
-    TA = "TA"
+    TA = 'TA'
 
     @staticmethod
     def user(n: int) -> str:
         """GE user CV slot: UIParam.user(0) -> 'User0'."""
-        return f"User{n}"
+        return f'User{n}'
 
 
 # ---------------------------------------------------------------------------
@@ -60,9 +60,9 @@ class FloatParam:
     min: float
     max: float
     incr: float
-    unit: str = ""
+    unit: str = ''
     validate: Validate = Validate.SEARCH
-    type: str = "float"
+    type: str = 'float'
 
 
 @dataclass
@@ -73,9 +73,9 @@ class IntParam:
     min: int
     max: int
     incr: int
-    unit: str = ""
+    unit: str = ''
     validate: Validate = Validate.SEARCH
-    type: str = "int"
+    type: str = 'int'
 
 
 @dataclass
@@ -83,7 +83,7 @@ class BoolParam:
     """Boolean toggle parameter."""
 
     value: bool
-    type: str = "bool"
+    type: str = 'bool'
 
 
 @dataclass
@@ -92,7 +92,7 @@ class StringListParam:
 
     options: list[str]
     index: int
-    type: str = "stringlist"
+    type: str = 'stringlist'
 
 
 @dataclass
@@ -100,7 +100,7 @@ class Description:
     """Read-only description / section header row."""
 
     text: str
-    type: str = "description"
+    type: str = 'description'
 
 
 ProtocolValue = FloatParam | IntParam | BoolParam | StringListParam | Description
@@ -112,11 +112,11 @@ Protocol = dict[UIParam | str, ProtocolValue]
 # ---------------------------------------------------------------------------
 
 _TYPE_MAP: dict[str, type] = {
-    "float": FloatParam,
-    "int": IntParam,
-    "bool": BoolParam,
-    "stringlist": StringListParam,
-    "description": Description,
+    'float': FloatParam,
+    'int': IntParam,
+    'bool': BoolParam,
+    'stringlist': StringListParam,
+    'description': Description,
 }
 
 
@@ -128,7 +128,7 @@ def param_to_dict(p: ProtocolValue) -> dict:
 def dict_to_param(d: dict) -> ProtocolValue:
     """Reconstruct a protocol value dataclass from a plain dict."""
     d = dict(d)  # shallow copy to avoid mutating caller's dict
-    tag = d.pop("type")
+    tag = d.pop('type')
     cls = _TYPE_MAP[tag]
     return cls(**d)
 

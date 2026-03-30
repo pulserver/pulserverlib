@@ -2,20 +2,24 @@
 
 __all__ = ['plot']
 
-from typing import Sequence as SequenceType, Union
 from pathlib import Path
 
 import numpy as np
 
-from ._waveforms import TrWaveforms, ChannelWaveform, get_tr_waveforms
 from ._sequence import SequenceCollection
+from ._waveforms import ChannelWaveform, get_tr_waveforms
 
 # Matplotlib is imported lazily to avoid hard dependency at import time.
 
 # ── MATLAB lines-like palette for style parity ───────────────────────
 _MATLAB_LINES = [
-    '#0072BD', '#D95319', '#EDB120', '#7E2F8E',
-    '#77AC30', '#4DBEEE', '#A2142F',
+    '#0072BD',
+    '#D95319',
+    '#EDB120',
+    '#7E2F8E',
+    '#77AC30',
+    '#4DBEEE',
+    '#A2142F',
 ]
 
 _MAIN_LINEWIDTH = 1.1
@@ -78,8 +82,16 @@ class PlotHandle:
         ``waveforms_and_times``.
     """
 
-    def __init__(self, fig, axes, tr_duration_us, num_trs,
-                 first_tr_start_us, *, _tr_start_abs_s=0.0):
+    def __init__(
+        self,
+        fig,
+        axes,
+        tr_duration_us,
+        num_trs,
+        first_tr_start_us,
+        *,
+        _tr_start_abs_s=0.0,
+    ):
         self.fig = fig
         self.axes = axes
         self.tr_duration_us = tr_duration_us
@@ -93,8 +105,6 @@ def plot(
     *,
     subsequence_idx: int = 0,
     tr_idx=0,
-    hide_prep: bool = True,
-    hide_cooldown: bool = True,
     collapse_delays: bool = True,
     show_segments: bool = True,
     show_blocks: bool = False,
@@ -116,17 +126,14 @@ def plot(
     Parameters
     ----------
     source : SequenceCollection or pp.Sequence or str/Path
-        Primary data source.  A :class:`SequenceCollection` creates a
-        fresh figure.  A pypulseq ``Sequence`` or XML file path
-        overlays onto an existing figure (``fig`` must be provided).
+        Primary data source. A :class:`SequenceCollection` creates a
+        fresh figure. A pypulseq ``Sequence`` or XML file path can be
+        plotted directly (auto-creates a figure) or overlaid on an
+        existing figure via ``fig``.
     subsequence_idx : int
         Subsequence index (default 0).
     tr_idx : int or {'max_pos', 'zero_var'}
         TR index (0-based) or amplitude-mode string.
-    hide_prep : bool
-        Hide preparation blocks (default True).
-    hide_cooldown : bool
-        Hide cooldown blocks (default True).
     collapse_delays : bool
         Shrink pure-delay blocks to 0.1 ms at C level (default True).
     show_segments : bool
@@ -148,9 +155,9 @@ def plot(
     figsize : tuple or None
         Figure size.  Default ``(14, 8)``.
     fig : PlotHandle or None
-        Existing plot handle for overlay.  **Required** when *source*
-        is a pypulseq Sequence or XML path; **forbidden** when
-        *source* is a SequenceCollection.
+        Existing plot handle for overlay.  Forbidden when *source* is
+        a SequenceCollection. Optional for pypulseq Sequence/XML; when
+        omitted, a new figure is created automatically.
     label : str or None
         Legend label for overlay traces.
 
@@ -167,7 +174,9 @@ def plot(
     # Lazy check for pypulseq
     try:
         import pypulseq as pp
-        is_pulseq = isinstance(source, pp.Sequence)
+
+        # SequenceCollection inherits from pp.Sequence; keep it in Branch 1.
+        is_pulseq = (not is_collection) and isinstance(source, pp.Sequence)
     except ImportError:
         is_pulseq = False
 
@@ -180,10 +189,20 @@ def plot(
             "Overlay is only supported for pypulseq Sequence or XML sources."
         )
     if (is_pulseq or is_xml) and fig is None:
-        raise ValueError(
-            "Must pass 'fig' handle when overlaying a pypulseq Sequence "
-            "or XML file.  Create a base plot from a SequenceCollection first."
-        )
+        if is_pulseq:
+            source = SequenceCollection(source)
+            is_collection = True
+            is_pulseq = False
+            is_xml = False
+        else:
+            # If a .seq path is provided, use the same base path as collections.
+            try:
+                source = SequenceCollection(str(source))
+                is_collection = True
+                is_pulseq = False
+                is_xml = False
+            except Exception:
+                fig = _new_empty_plot_handle(figsize=figsize)
 
     # ── Determine amplitude mode and tr_index ──
     if isinstance(tr_idx, str):
@@ -201,8 +220,16 @@ def plot(
     #  Branch 1: SequenceCollection -> fresh figure
     # ================================================================
     if is_collection:
-        include_prep = not hide_prep
-        include_cooldown = not hide_cooldown
+        # Always include non-degenerate prep/cooldown
+        from ._extension._pulseqlib_wrapper import _find_tr
+
+        tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
+        include_prep = (
+            tr_info['num_prep_blocks'] > 0 and not tr_info['degenerate_prep']
+        )
+        include_cooldown = (
+            tr_info['num_cooldown_blocks'] > 0 and not tr_info['degenerate_cooldown']
+        )
 
         wf = get_tr_waveforms(
             source,
@@ -213,10 +240,6 @@ def plot(
             include_cooldown=include_cooldown,
             collapse_delays=collapse_delays,
         )
-
-        # TR metadata from C library
-        from ._extension._pulseqlib_wrapper import _find_tr
-        tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
         tr_dur = tr_info['tr_duration_us']
         num_trs = tr_info['num_trs']
         # Compute actual start time of first TR from waveform blocks
@@ -229,10 +252,13 @@ def plot(
         # Absolute start time of displayed TR within the pypulseq seq
         # (needed for Branch 2 overlay alignment).
         from ._validate import _abs_tr_start_s
+
         _abs_s = _abs_tr_start_s(
             source._seqs[subsequence_idx],
-            tr_info['num_prep_blocks'], tr_index,
+            tr_info['num_prep_blocks'],
+            tr_index,
             tr_info['tr_duration_us'],
+            tr_info.get('imaging_tr_start'),
         )
 
         if figsize is None:
@@ -241,12 +267,12 @@ def plot(
         fig_obj, axes_grid = plt.subplots(3, 2, figsize=figsize, sharex=True)
         fig_obj.patch.set_facecolor('white')
         axes = {
-            'rf_mag':   axes_grid[0, 0],
+            'rf_mag': axes_grid[0, 0],
             'rf_phase': axes_grid[1, 0],
-            'adc':      axes_grid[2, 0],
-            'gx':       axes_grid[0, 1],
-            'gy':       axes_grid[1, 1],
-            'gz':       axes_grid[2, 1],
+            'adc': axes_grid[2, 0],
+            'gx': axes_grid[0, 1],
+            'gy': axes_grid[1, 1],
+            'gz': axes_grid[2, 1],
         }
 
         def _t(t_us):
@@ -256,16 +282,24 @@ def plot(
         ax = axes['rf_mag']
         ch = wf.rf_mag
         if ch.time_us.size > 0:
-            ax.plot(_t(ch.time_us), ch.amplitude,
-                    color=_MATLAB_LINES[0], linewidth=_MAIN_LINEWIDTH)
+            ax.plot(
+                _t(ch.time_us),
+                ch.amplitude,
+                color=_MATLAB_LINES[0],
+                linewidth=_MAIN_LINEWIDTH,
+            )
         ax.set_ylabel('|RF| (uT)')
 
         # ── RF phase ──
         ax = axes['rf_phase']
         ch = wf.rf_phase
         if ch.time_us.size > 0:
-            ax.plot(_t(ch.time_us), ch.amplitude,
-                    color=_MATLAB_LINES[0], linewidth=_MAIN_LINEWIDTH)
+            ax.plot(
+                _t(ch.time_us),
+                ch.amplitude,
+                color=_MATLAB_LINES[0],
+                linewidth=_MAIN_LINEWIDTH,
+            )
         ax.set_ylabel('RF phase (rad)')
         ax.set_yticks([-np.pi, 0, np.pi])
         ax.set_yticklabels(['-pi', '0', 'pi'])
@@ -277,8 +311,12 @@ def plot(
             t_end = _t(np.array([adc.onset_us + adc.duration_us]))[0]
             seg_idx = _segment_idx_for_time(wf.blocks, adc.onset_us)
             rect = Rectangle(
-                (t_start, 0.1), t_end - t_start, 0.8,
-                facecolor=_seg_color(seg_idx), alpha=0.45, edgecolor='none',
+                (t_start, 0.1),
+                t_end - t_start,
+                0.8,
+                facecolor=_seg_color(seg_idx),
+                alpha=0.45,
+                edgecolor='none',
             )
             ax.add_patch(rect)
         ax.set_ylim(0, 1)
@@ -286,39 +324,61 @@ def plot(
         ax.set_ylabel('ADC')
 
         # ── Gradients (Gx, Gy, Gz) ──
-        axis_color = {'gx': _MATLAB_LINES[0], 'gy': _MATLAB_LINES[1], 'gz': _MATLAB_LINES[2]}
+        axis_color = {
+            'gx': _MATLAB_LINES[0],
+            'gy': _MATLAB_LINES[1],
+            'gz': _MATLAB_LINES[2],
+        }
         for gname in ('gx', 'gy', 'gz'):
             ax = axes[gname]
             ch = getattr(wf, gname)
             if ch.time_us.size > 0:
                 if show_segments and len(wf.blocks) > 0:
-                    _plot_segmented(ax, _t, ch, wf.blocks,
-                                    linewidth=_MAIN_LINEWIDTH, alpha=1.0)
+                    _plot_segmented(
+                        ax, _t, ch, wf.blocks, linewidth=_MAIN_LINEWIDTH, alpha=1.0
+                    )
                 else:
-                    ax.plot(_t(ch.time_us), ch.amplitude,
-                            color=axis_color[gname], linewidth=_MAIN_LINEWIDTH)
+                    ax.plot(
+                        _t(ch.time_us),
+                        ch.amplitude,
+                        color=axis_color[gname],
+                        linewidth=_MAIN_LINEWIDTH,
+                    )
 
             ax.set_ylabel(f'{gname.upper()} (mT/m)')
 
             if max_grad_mT_per_m is not None:
-                ax.axhline(max_grad_mT_per_m, color='gray',
-                           ls='--', lw=0.6, alpha=0.6)
-                ax.axhline(-max_grad_mT_per_m, color='gray',
-                           ls='--', lw=0.6, alpha=0.6)
+                ax.axhline(max_grad_mT_per_m, color='gray', ls='--', lw=0.6, alpha=0.6)
+                ax.axhline(-max_grad_mT_per_m, color='gray', ls='--', lw=0.6, alpha=0.6)
 
             # Slew rate overlay
             if show_slew and ch.time_us.size > 1:
                 slew = _slew_rate(ch)
                 ax2 = ax.twinx()
-                ax2.plot(_t(slew.time_us), slew.amplitude,
-                         color='orange', linewidth=0.5, alpha=0.5)
+                ax2.plot(
+                    _t(slew.time_us),
+                    slew.amplitude,
+                    color='orange',
+                    linewidth=0.5,
+                    alpha=0.5,
+                )
                 ax2.set_ylabel('Slew (T/m/s)', color='orange', fontsize=8)
                 ax2.tick_params(axis='y', labelcolor='orange', labelsize=7)
                 if max_slew_T_per_m_per_s is not None:
-                    ax2.axhline(max_slew_T_per_m_per_s, color='orange',
-                                ls=':', lw=0.5, alpha=0.5)
-                    ax2.axhline(-max_slew_T_per_m_per_s, color='orange',
-                                ls=':', lw=0.5, alpha=0.5)
+                    ax2.axhline(
+                        max_slew_T_per_m_per_s,
+                        color='orange',
+                        ls=':',
+                        lw=0.5,
+                        alpha=0.5,
+                    )
+                    ax2.axhline(
+                        -max_slew_T_per_m_per_s,
+                        color='orange',
+                        ls=':',
+                        lw=0.5,
+                        alpha=0.5,
+                    )
 
         # ── Block boundaries ──
         if show_blocks and len(wf.blocks) > 0:
@@ -344,7 +404,8 @@ def plot(
         fig_obj.tight_layout()
 
         return PlotHandle(
-            fig=fig_obj, axes=axes,
+            fig=fig_obj,
+            axes=axes,
             tr_duration_us=tr_dur,
             num_trs=num_trs,
             first_tr_start_us=first_tr_start_us,
@@ -367,12 +428,19 @@ def plot(
         # waveforms_and_times returns
         #   (wave_data, tfp_exc, tfp_ref, t_adc, fp_adc)
         # wave_data is a list of (2, N) ndarrays per channel.
-        result = seq.waveforms_and_times(append_RF=True,
-                                          time_range=[abs_t0, abs_t1])
+        result = seq.waveforms_and_times(append_RF=True, time_range=[abs_t0, abs_t1])
         channels = result[0]  # list of (2, N) ndarrays
 
         hz_per_m_to_mT_per_m = 1.0 / (gamma * 1e-3)
         hz_to_uT = 1e6 / gamma
+
+        def _clip_tr(time_us, amp):
+            t = np.asarray(time_us)
+            a = np.asarray(amp)
+            if t.size == 0:
+                return t, a
+            mask = (t >= -1e-6) & (t <= fig.tr_duration_us + 1e-6)
+            return t[mask], a[mask]
 
         channel_map = {
             'gx': (0, hz_per_m_to_mT_per_m),
@@ -386,24 +454,41 @@ def plot(
                 arr = channels[ch_idx]
                 if arr.shape[1] > 0:
                     t_us = (arr[0] - abs_t0) * 1e6  # relative µs
-                    t_us += fig.first_tr_start_us    # align with C base
+                    amp = arr[1] * scale
+                    t_us, amp = _clip_tr(t_us, amp)
+                    t_us += fig.first_tr_start_us  # align with C base
                     fig.axes[ch_name].plot(
-                        t_us * t_scale, arr[1] * scale,
-                        linewidth=_OVERLAY_LINEWIDTH, alpha=alpha, label=label)
+                        t_us * t_scale,
+                        amp,
+                        linewidth=_OVERLAY_LINEWIDTH,
+                        alpha=alpha,
+                        label=label,
+                    )
 
         # RF magnitude & phase
         if len(channels) > 3:
             arr = channels[3]
             if arr.shape[1] > 0:
-                t_us = (arr[0] - abs_t0) * 1e6 + fig.first_tr_start_us
+                t_us_rel = (arr[0] - abs_t0) * 1e6
                 rf_mag = np.abs(arr[1]) * hz_to_uT
                 rf_phase = np.angle(arr[1])
+                t_us_rel, rf_mag = _clip_tr(t_us_rel, rf_mag)
+                _, rf_phase = _clip_tr((arr[0] - abs_t0) * 1e6, rf_phase)
+                t_us = t_us_rel + fig.first_tr_start_us
                 fig.axes['rf_mag'].plot(
-                    t_us * t_scale, rf_mag,
-                    linewidth=_OVERLAY_LINEWIDTH, alpha=alpha, label=label)
+                    t_us * t_scale,
+                    rf_mag,
+                    linewidth=_OVERLAY_LINEWIDTH,
+                    alpha=alpha,
+                    label=label,
+                )
                 fig.axes['rf_phase'].plot(
-                    t_us * t_scale, rf_phase,
-                    linewidth=_OVERLAY_LINEWIDTH, alpha=alpha, label=label)
+                    t_us * t_scale,
+                    rf_phase,
+                    linewidth=_OVERLAY_LINEWIDTH,
+                    alpha=alpha,
+                    label=label,
+                )
 
         if label:
             fig.axes['rf_mag'].legend(fontsize=8, loc='upper right')
@@ -418,7 +503,7 @@ def plot(
         _overlay_xml(fig, source, t_scale=t_scale, label=label)
         return fig
 
-    raise TypeError(f"Unsupported source type: {type(source)}")
+    raise TypeError(f'Unsupported source type: {type(source)}')
 
 
 def _overlay_xml(handle, xml_path, *, t_scale, label):
@@ -444,8 +529,12 @@ def _overlay_xml(handle, xml_path, *, t_scale, label):
                 t_us = data[:n]
                 amp = data[n:] * g_per_cm_to_mT_per_m
                 handle.axes[ch_name].plot(
-                    t_us * t_scale, amp,
-                    linewidth=_OVERLAY_LINEWIDTH, alpha=alpha, label=label)
+                    t_us * t_scale,
+                    amp,
+                    linewidth=_OVERLAY_LINEWIDTH,
+                    alpha=alpha,
+                    label=label,
+                )
 
     rf_elem = root.find('.//rf')
     if rf_elem is not None and rf_elem.text:
@@ -455,11 +544,59 @@ def _overlay_xml(handle, xml_path, *, t_scale, label):
             t_us = data[:n]
             amp = data[n:] * g_to_uT
             handle.axes['rf_mag'].plot(
-                t_us * t_scale, np.abs(amp),
-                linewidth=_OVERLAY_LINEWIDTH, alpha=alpha, label=label)
+                t_us * t_scale,
+                np.abs(amp),
+                linewidth=_OVERLAY_LINEWIDTH,
+                alpha=alpha,
+                label=label,
+            )
 
     if label:
         handle.axes['rf_mag'].legend(fontsize=8, loc='upper right')
+
+
+def _new_empty_plot_handle(*, figsize=None):
+    """Create an empty plot handle suitable for direct XML overlays."""
+    import matplotlib.pyplot as plt
+
+    if figsize is None:
+        figsize = (14, 8)
+
+    fig_obj, axes_grid = plt.subplots(3, 2, figsize=figsize, sharex=True)
+    fig_obj.patch.set_facecolor('white')
+    axes = {
+        'rf_mag': axes_grid[0, 0],
+        'rf_phase': axes_grid[1, 0],
+        'adc': axes_grid[2, 0],
+        'gx': axes_grid[0, 1],
+        'gy': axes_grid[1, 1],
+        'gz': axes_grid[2, 1],
+    }
+
+    axes['rf_mag'].set_ylabel('|RF| (uT)')
+    axes['rf_phase'].set_ylabel('RF phase (rad)')
+    axes['rf_phase'].set_yticks([-np.pi, 0, np.pi])
+    axes['rf_phase'].set_yticklabels(['-pi', '0', 'pi'])
+    axes['adc'].set_ylabel('ADC')
+    axes['adc'].set_ylim(0, 1)
+    axes['adc'].set_yticks([])
+    axes['gx'].set_ylabel('GX (mT/m)')
+    axes['gy'].set_ylabel('GY (mT/m)')
+    axes['gz'].set_ylabel('GZ (mT/m)')
+    axes['adc'].set_xlabel('Time (ms)')
+    axes['gz'].set_xlabel('Time (ms)')
+    for ax in axes.values():
+        ax.grid(True)
+
+    fig_obj.tight_layout()
+    return PlotHandle(
+        fig=fig_obj,
+        axes=axes,
+        tr_duration_us=0.0,
+        num_trs=1,
+        first_tr_start_us=0.0,
+        _tr_start_abs_s=0.0,
+    )
 
 
 def _plot_rf_centers(ax, wf, t_fn):
@@ -480,7 +617,7 @@ def _plot_rf_centers(ax, wf, t_fn):
     starts = np.concatenate([[0], gaps + 1])
     ends = np.concatenate([gaps + 1, [len(t)]])
 
-    for s, e in zip(starts, ends):
+    for s, e in zip(starts, ends, strict=False):
         seg_t = t[s:e]
         seg_a = a[s:e]
         total = np.sum(seg_a)
@@ -488,8 +625,7 @@ def _plot_rf_centers(ax, wf, t_fn):
             center_us = np.sum(seg_t * seg_a) / total
             center_display = t_fn(np.array([center_us]))[0]
             ax.axvline(center_display, color='r', ls='--', lw=1.0, alpha=0.7)
-            ax.plot(center_display, np.max(seg_a) * 1.05, 'rv',
-                    markersize=6, alpha=0.7)
+            ax.plot(center_display, np.max(seg_a) * 1.05, 'rv', markersize=6, alpha=0.7)
 
 
 def _plot_echo_markers(ax, wf, t_fn):
@@ -519,8 +655,16 @@ def _plot_segmented(ax, t_fn, ch, blocks, **kwargs):
     run_start = 0
     for i in range(1, len(t)):
         if seg_idx[i] != seg_idx[run_start]:
-            ax.plot(t_fn(t[run_start:i]), a[run_start:i],
-                    color=_seg_color(seg_idx[run_start]), **kwargs)
+            ax.plot(
+                t_fn(t[run_start:i]),
+                a[run_start:i],
+                color=_seg_color(seg_idx[run_start]),
+                **kwargs,
+            )
             run_start = i
-    ax.plot(t_fn(t[run_start:]), a[run_start:],
-            color=_seg_color(seg_idx[run_start]), **kwargs)
+    ax.plot(
+        t_fn(t[run_start:]),
+        a[run_start:],
+        color=_seg_color(seg_idx[run_start]),
+        **kwargs,
+    )

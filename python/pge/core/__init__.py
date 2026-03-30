@@ -6,28 +6,27 @@ as well as the sequence plugin contract and typed protocol helpers.
 """
 
 __all__ = [
-    'SequenceCollection',
-    'serialize',
-    'deserialize',
-    'PulseqSequence',
-    'UIParam',
-    'Validate',
+    'BoolParam',
+    'Description',
     'FloatParam',
     'IntParam',
-    'BoolParam',
-    'StringListParam',
-    'Description',
     'Protocol',
     'ProtocolValue',
-    'param_to_dict',
+    'PulseqSequence',
+    'SequenceCollection',
+    'StringListParam',
+    'UIParam',
+    'Validate',
+    'deserialize',
     'dict_to_param',
-    'protocol_to_dict',
     'dict_to_protocol',
+    'param_to_dict',
+    'protocol_to_dict',
+    'serialize',
 ]
 
-from ._sequence import SequenceCollection
-from ._cache import serialize, deserialize
 from ._base import PulseqSequence
+from ._cache import deserialize, serialize
 from ._params import (
     BoolParam,
     Description,
@@ -43,3 +42,4 @@ from ._params import (
     param_to_dict,
     protocol_to_dict,
 )
+from ._sequence import SequenceCollection

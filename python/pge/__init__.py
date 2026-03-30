@@ -10,12 +10,12 @@ Public API:
 
 __all__ = [
     'SequenceCollection',
-    'serialize',
     'deserialize',
+    'serialize',
 ]
 
-from .core import (  # noqa: F401
+from .core import (
     SequenceCollection,
-    serialize,
     deserialize,
+    serialize,
 )

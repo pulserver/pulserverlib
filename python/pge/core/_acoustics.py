@@ -20,6 +20,7 @@ def grad_spectrum(
     window_duration: float = 25.0e-3,
     spectral_resolution: float = 5.0,
     max_frequency: float = 3000.0,
+    threshold_percent: float | list[float] | tuple[float, ...] | None = None,
 ) -> None:
     """Plot acoustic spectra for gradient waveforms in a TR.
 
@@ -48,11 +49,22 @@ def grad_spectrum(
         Target frequency resolution in Hz (default 5 Hz).
     max_frequency : float
         Upper frequency limit in Hz (default 3000 Hz).
+    threshold_percent : float or sequence of float, optional
+        Extra horizontal threshold guide(s) drawn on the harmonic plots.
+        Accepts a single value or a list/tuple, e.g. ``80.0`` or
+        ``[80.0, 100.0]``.
     """
     import matplotlib.pyplot as plt
 
     if forbidden_bands is None:
         forbidden_bands = []
+
+    if threshold_percent is None:
+        thresholds: list[float] = []
+    elif isinstance(threshold_percent, (list, tuple)):
+        thresholds = [float(v) for v in threshold_percent]
+    else:
+        thresholds = [float(threshold_percent)]
 
     grad_raster_time = seq.system.grad_raster_time
     target_window_size = int(2.0 * window_duration / grad_raster_time)
@@ -67,19 +79,21 @@ def grad_spectrum(
         forbidden_bands=forbidden_bands,
     )
 
-    num_windows = rd["num_windows"]
-    num_freq_bins = rd["num_freq_bins"]
-    frequencies = rd["freq_min_hz"] + np.arange(num_freq_bins) * rd["freq_spacing_hz"]
+    num_windows = rd['num_windows']
+    num_freq_bins = rd['num_freq_bins']
+    frequencies = rd['freq_min_hz'] + np.arange(num_freq_bins) * rd['freq_spacing_hz']
 
     # Reshape spectrograms (flat -> 2-D)
     spectrograms = {}
     peaks = {}
     for ax_name in ('gx', 'gy', 'gz'):
         spectrograms[ax_name] = np.asarray(
-            rd[f"spectrogram_{ax_name}"], dtype=np.float32,
+            rd[f'spectrogram_{ax_name}'],
+            dtype=np.float32,
         ).reshape(num_windows, num_freq_bins)
         peaks[ax_name] = np.asarray(
-            rd[f"peaks_{ax_name}"], dtype=np.int32,
+            rd[f'peaks_{ax_name}'],
+            dtype=np.int32,
         ).reshape(num_windows, num_freq_bins)
 
     # Full-TR spectra
@@ -87,10 +101,12 @@ def grad_spectrum(
     peaks_full = {}
     for ax_name in ('gx', 'gy', 'gz'):
         spectrum_full[ax_name] = np.asarray(
-            rd[f"spectrum_full_{ax_name}"], dtype=np.float32,
+            rd[f'spectrum_full_{ax_name}'],
+            dtype=np.float32,
         )
         peaks_full[ax_name] = np.asarray(
-            rd[f"peaks_full_{ax_name}"], dtype=np.int32,
+            rd[f'peaks_full_{ax_name}'],
+            dtype=np.int32,
         )
 
     freq_min = 0.0
@@ -101,7 +117,9 @@ def grad_spectrum(
 
     # ── Two-row figure: spectrograms (top), harmonics (bottom) ──
     fig, axes = plt.subplots(
-        2, 3, figsize=(16, 8),
+        2,
+        3,
+        figsize=(16, 8),
         gridspec_kw={'height_ratios': [1, 1]},
     )
 
@@ -111,9 +129,12 @@ def grad_spectrum(
         sg = spectrograms[ax_name]
         pk = peaks[ax_name]
 
-        im = ax.pcolormesh(
-            frequencies, np.arange(num_windows), sg,
-            cmap='viridis', shading='auto',
+        ax.pcolormesh(
+            frequencies,
+            np.arange(num_windows),
+            sg,
+            cmap='viridis',
+            shading='auto',
             norm=Normalize(vmin=sg.min(), vmax=sg.max()),
         )
 
@@ -121,9 +142,13 @@ def grad_spectrum(
         peak_coords = np.where(pk > 0)
         if len(peak_coords[0]) > 0:
             ax.plot(
-                frequencies[peak_coords[1]], peak_coords[0],
-                marker='*', color='red', linestyle='none',
-                markersize=10, markeredgewidth=0,
+                frequencies[peak_coords[1]],
+                peak_coords[0],
+                marker='*',
+                color='red',
+                linestyle='none',
+                markersize=10,
+                markeredgewidth=0,
             )
 
         # Forbidden bands as vertical lines
@@ -145,12 +170,17 @@ def grad_spectrum(
 
         # Max envelope across windows
         max_env = spectrograms[ax_name].max(axis=0)
-        ax.plot(frequencies, max_env, color=color, lw=1.5,
-                label='Max envelope')
+        ax.plot(frequencies, max_env, color=color, lw=1.5, label='Max envelope')
 
         # Full-TR spectrum
-        ax.plot(frequencies, spectrum_full[ax_name], color=color,
-                lw=0.8, alpha=0.5, label='Full TR')
+        ax.plot(
+            frequencies,
+            spectrum_full[ax_name],
+            color=color,
+            lw=0.8,
+            alpha=0.5,
+            label='Full TR',
+        )
 
         # Mark full-TR peaks
         peak_mask = peaks_full[ax_name] > 0
@@ -158,22 +188,42 @@ def grad_spectrum(
             ax.plot(
                 frequencies[peak_mask],
                 spectrum_full[ax_name][peak_mask],
-                'o', color=color, markersize=5, markeredgewidth=0,
+                'o',
+                color=color,
+                markersize=5,
+                markeredgewidth=0,
             )
 
         # Forbidden bands as shaded regions
         for band in forbidden_bands:
             ax.axvspan(
-                band[0], band[1],
-                alpha=0.15, color='red', zorder=0,
+                band[0],
+                band[1],
+                alpha=0.15,
+                color='red',
+                zorder=0,
             )
             # Threshold line within band
             band_mask = (frequencies >= band[0]) & (frequencies <= band[1])
             if np.any(band_mask):
                 ax.hlines(
-                    band[2], band[0], band[1],
-                    colors='red', linestyles='--', linewidth=1.2,
+                    band[2],
+                    band[0],
+                    band[1],
+                    colors='red',
+                    linestyles='--',
+                    linewidth=1.2,
                 )
+
+        for thr in thresholds:
+            ax.axhline(
+                thr,
+                color='orange',
+                linestyle='--',
+                linewidth=1.0,
+                alpha=0.8,
+                label=f'threshold {thr:g}%',
+            )
 
         ax.set_xlim(freq_min, freq_max)
         ax.set_xlabel('Frequency (Hz)')

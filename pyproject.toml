@@ -37,8 +37,8 @@ classifiers = [
 dependencies = [
   "numpy>=2.0",
   "scipy",
+  "matplotlib",
   "pypulseq",
-  "sigpy>=0.1.27",
   "ipywidgets",
 ]
 
@@ -155,10 +155,7 @@ minversion = "6.0"
 pythonpath  = ["tests"]
 testpaths=["tests"]
 addopts = [
-    "--import-mode=importlib",
-    "--cov=pulserver",
-    "--cov-report=term-missing",
-    "--cov-report=xml"
+  "--import-mode=importlib"
 ]
 
 [tool.pylsp-mypy]
