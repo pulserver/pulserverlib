@@ -365,18 +365,11 @@ def plot(
         # ── RF phase ──
         ax = axes['rf_phase']
         ch = wf.rf_phase
-        # Apply per-block phase and frequency offsets to baseline phase
+        # Plot RF phase directly from C backend (already includes all offsets)
         if ch.time_us.size > 0:
-            phase_profile = np.copy(ch.amplitude)
-            for blk in wf.blocks:
-                t0 = blk.start_us
-                t1 = blk.start_us + blk.duration_us
-                mask = (ch.time_us >= t0) & (ch.time_us < t1)
-                t_sec = ch.time_us[mask] * 1e-6
-                phase_profile[mask] += blk.rf_phase_offset_rad + 2 * np.pi * blk.rf_freq_offset_hz * t_sec
             ax.plot(
                 _t(ch.time_us),
-                phase_profile,
+                ch.amplitude,
                 color='gray',
                 linewidth=_MAIN_LINEWIDTH,
                 linestyle='-',

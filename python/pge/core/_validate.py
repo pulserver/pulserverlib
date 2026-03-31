@@ -345,15 +345,9 @@ def validate(
                                 f'{pfx}RF mismatch: {rf_err:.1f}% RMS (tol {rf_rms_percent:.1f}%)'
                             )
 
-            # RF phase validation (with per-block offsets)
+            # RF phase validation (C backend already includes all offsets)
             test_phase_t = np.real(wf.rf_phase.time_us)
             test_phase_a = np.real(np.copy(wf.rf_phase.amplitude))
-            # Apply per-block phase and freq offsets
-            for blk in wf.blocks:
-                t0 = blk.start_us
-                t1 = blk.start_us + blk.duration_us
-                mask = (test_phase_t >= t0) & (test_phase_t < t1)
-                test_phase_a[mask] += blk.rf_phase_offset_rad + 2 * np.pi * blk.rf_freq_offset_hz * (test_phase_t[mask] * 1e-6)
             # Compare to reference if available (if ref contains phase)
             if 'rf_phase' in ref:
                 ref_phase_t, ref_phase_a = ref['rf_phase']
