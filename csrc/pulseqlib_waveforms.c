@@ -1289,7 +1289,7 @@ int pulseqlib_get_tr_waveforms(
             diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT;
             return diag->code;
         }
-        tr_block_start = tr->num_prep_blocks + tr_index * tr->tr_size;
+        tr_block_start = tr_index * tr->tr_size;
         block_start = tr_block_start;
         block_count = tr->tr_size;
     } else {

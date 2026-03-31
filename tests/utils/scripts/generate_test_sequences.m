@@ -258,7 +258,6 @@ function seq = write_gre(write, num_slices, num_averages)
 
     % Dummy TRs (once region): same 4-block TR shape with PE=0.
     for d = 1:ndummy
-        rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
         rf_phase = mod(rf_phase + rf_inc, 360.0);
 
         rf_curr = rf;
@@ -275,6 +274,8 @@ function seq = write_gre(write, num_slices, num_averages)
         seq.addBlock(gx_pre, gy_pre, gz_reph);
         seq.addBlock(gx, dummy_adc);
         seq.addBlock(gx_spoil, gy_rew, gz_spoil);
+
+        rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
     end
 
     % Main imaging loop: PE -> slices (slice is inner loop).
@@ -286,7 +287,6 @@ function seq = write_gre(write, num_slices, num_averages)
             yscale = 0;
         end
         for sl = 1:num_slices
-            rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
             rf_phase = mod(rf_phase + rf_inc, 360.0);
 
             rf_curr = rf;
@@ -311,6 +311,8 @@ function seq = write_gre(write, num_slices, num_averages)
             seq.addBlock(gx_pre, gy_pre, gz_reph);
             seq.addBlock(gx, adc_curr);
             seq.addBlock(gx_spoil, gy_rew, gz_spoil);
+
+            rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
         end
     end
 

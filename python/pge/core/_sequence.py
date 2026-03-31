@@ -562,9 +562,8 @@ class SequenceCollection(pp.Sequence):
         self,
         *,
         subsequence_idx: int = 0,
-        xml_path: str | Path | None = None,
         do_plot: bool = False,
-        tr_instance: int | str = 0,
+        tr_instance: int | None = None,
         show_rf_centers: bool = False,
         show_echoes: bool = False,
         show_segments: bool = True,
@@ -572,25 +571,15 @@ class SequenceCollection(pp.Sequence):
         max_grad_mT_per_m: float | bool | None = True,
         grad_atol: float | None = None,
         rf_rms_percent: float = 10.0,
-    ) -> None:
-        """Compare C-backend waveforms against a reference source.
-
-        The reference is either the source pypulseq ``Sequence``
-        (default, ``xml_path=None``) or an exported XML waveform file.
-        Gradient channels are compared by maximum absolute error; RF
-        magnitude is compared by RMS percentage error.
-
-        When *do_plot* is ``True`` the C-backend waveform plot is
-        created and the reference is overlaid for visual comparison,
-        using only the specified subsequence_idx and tr_instance.
-        Pass/fail validation is always performed over all subsequences and all TRs.
+    ) -> bool:
+        """Validate all scan table parameters for all subsequences and TRs.
+        Stops at the first failure. If do_plot is True, always plots the requested or failing TR/subsequence.
         """
         from ._validate import validate as _validate_impl
         return _validate_impl(
             self,
-            sequence_idx=subsequence_idx,
-            xml_path=xml_path,
             do_plot=do_plot,
+            subsequence_idx=subsequence_idx,
             tr_instance=tr_instance,
             show_rf_centers=show_rf_centers,
             show_echoes=show_echoes,

@@ -3,7 +3,10 @@
 __all__ = ['validate']
 
 from pathlib import Path
-from typing import Union
+
+# Fallback stub for _validate_tr if not imported
+def _validate_tr(seq, sidx, tidx):
+    raise NotImplementedError("_validate_tr must be implemented or imported.")
 
 import numpy as np
 
@@ -139,18 +142,35 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
                 continue
         ref[ch_name] = (np.empty(0), np.empty(0))
 
+    # RF magnitude and phase
     if len(channels) > 3:
         arr = channels[3]
         if arr.shape[1] > 0:
             t_rel = (arr[0] - abs_t0_s) * 1e6
-            # Convert RF from Hz to μT to match pulserver units
             hz_to_uT = 1e6 / gamma
-            a_rel = np.abs(arr[1]) * hz_to_uT
-            ref['rf_mag'] = _clip_window(t_rel, a_rel)
+            rf_mag = np.abs(arr[1]) * hz_to_uT
+            rf_phase = np.angle(arr[1])
+            ref['rf_mag'] = _clip_window(t_rel, rf_mag)
+            ref['rf_phase'] = _clip_window(t_rel, rf_phase)
         else:
             ref['rf_mag'] = (np.empty(0), np.empty(0))
+            ref['rf_phase'] = (np.empty(0), np.empty(0))
     else:
         ref['rf_mag'] = (np.empty(0), np.empty(0))
+        ref['rf_phase'] = (np.empty(0), np.empty(0))
+
+    # ADC phase (if available in channels[4])
+    if len(channels) > 4:
+        arr = channels[4]
+        if arr.shape[1] > 0:
+            t_rel = (arr[0] - abs_t0_s) * 1e6
+            # Assume arr[1] is complex: phase is angle
+            adc_phase = np.angle(arr[1])
+            ref['adc_phase'] = _clip_window(t_rel, adc_phase)
+        else:
+            ref['adc_phase'] = (np.empty(0), np.empty(0))
+    else:
+        ref['adc_phase'] = (np.empty(0), np.empty(0))
 
     return ref
 
@@ -221,250 +241,205 @@ def _xml_reference(xml_path):
 
 # ── public entry point ───────────────────────────────────────────────
 
-
 def validate(
     seq: SequenceCollection,
     *,
-    sequence_idx: int = 0,
-    xml_path: Union[str, Path, None] = None,
+    subsequence_idx: int | None = None,
+    tr_instance: int | None = None,
+    xml_path: str | Path | None = None,
     do_plot: bool = False,
-    tr_instance: int | str = 0,
     show_rf_centers: bool = False,
     show_echoes: bool = False,
     show_segments: bool = True,
     show_blocks: bool = False,
-    max_grad_mT_per_m: Union[float, bool, None] = True,
+    max_grad_mT_per_m: float | bool | None = True,
     grad_atol: float | None = None,
     rf_rms_percent: float = 10.0,
 ) -> None:
-    """Compare pulserver C-backend waveforms against a reference.
-
-    The reference is either the source pypulseq ``Sequence`` (default,
-    ``xml_path=None``) or an exported XML waveform file.  Gradient
-    channels are compared by maximum absolute error; RF magnitude is
-    compared by RMS percentage error.
-
-    When *do_plot* is ``True`` the base TR waveform plot is created from
-    the C backend (using :func:`_plot.plot` Branch 1) and the reference
-    is overlaid (Branch 2 for pypulseq, Branch 3 for XML).
-
-    # Print first 20 values of RF time and amplitude for reference and test
-    print("\n[DEBUG] Reference RF time_us (first 20):", ref_t[:20])
-    print("[DEBUG] Reference RF amplitude (first 20):", ref_a[:20])
-    print("[DEBUG] Test RF time_us (first 20):", wf.rf_mag.time_us[:20])
-    print("[DEBUG] Test RF amplitude (first 20):", wf.rf_mag.amplitude[:20])
-
-    Parameters
-    ----------
-    seq : SequenceCollection
-        Sequence collection to validate.
-    sequence_idx : int
-        Subsequence index (0-based, default 0).
-    xml_path : str, Path or None
-        Path to an XML waveform file.  ``None`` (default) validates
-        against the stored pypulseq ``Sequence``.
-    do_plot : bool
-        Show a comparison overlay plot (default ``False``).
-    tr_range : (int, int)
-        Half-open TR index range ``[start, stop)`` to validate.
-        When nondegenerate prep/cooldown blocks are present, the range is
-        adjusted to ``(0, 1)`` to validate the full pass as a single TR.
-    show_rf_centers : bool
-        Mark RF iso-centres on the plot (default ``False``).
-    show_echoes : bool
-        Mark echo (ADC centre) on the plot (default ``False``).
-    show_segments : bool
-        Colour-code gradients by segment (default ``True``).
-    show_blocks : bool
-        Block-boundary lines on the plot (default ``False``).
-    max_grad_mT_per_m : float, bool or None
-        Gradient-limit reference line.  ``True`` (default) derives the
-        value from system limits; a float is used directly; ``False``
-        or ``None`` disables the line.
-    grad_atol : float or None
-        Absolute gradient error tolerance in mT/m.  ``None`` (default)
-        uses ``3 × max_slew × grad_raster_time``.
-    rf_rms_percent : float
-        RF magnitude percent-RMS error threshold (default 10).
-
+    """
+    Validate all subsequences and all TRs. Stop at first failure.
+    If do_plot, plot the failing or requested/default TR/subseq.
     """
     from ._extension._pulseqlib_wrapper import _find_tr
 
     sys = seq.system
-
-    # Default gradient tolerance: 3 slew steps (mT/m)
     if grad_atol is None:
         grad_atol = 3.0 * sys.max_slew * sys.grad_raster_time * 1e3
-
-    # Resolve max-grad line for plotting
     if max_grad_mT_per_m is True:
-        _max_grad_plot = sys.max_grad * 1e3  # T/m → mT/m
+        _max_grad_plot = sys.max_grad * 1e3
     elif isinstance(max_grad_mT_per_m, (int, float)) and max_grad_mT_per_m is not False:
         _max_grad_plot = float(max_grad_mT_per_m)
     else:
         _max_grad_plot = None
 
-    # TR metadata
-    tr_info = _find_tr(seq._cseq, subsequence_idx=sequence_idx)
-    num_trs = tr_info['num_trs']
-    has_prep = tr_info['num_prep_blocks'] > 0 and not tr_info['degenerate_prep']
-    has_cooldown = tr_info['num_cooldown_blocks'] > 0 and not tr_info['degenerate_cooldown']
+    num_subseq = seq.num_sequences
+    fail = False
+    fail_msg = []
+    fail_subseq_idx = None
+    fail_tr_idx = None
 
-    # Determine which TR to plot (for do_plot)
-    if isinstance(tr_instance, str):
-        # 'max_pos' or 'zero_var' special modes
-        plot_tr_idx = tr_instance
-    else:
-        # Support negative indexing for plotting
-        plot_tr_idx = tr_instance if tr_instance >= 0 else num_trs + tr_instance
-        if not (isinstance(plot_tr_idx, int) and 0 <= plot_tr_idx < num_trs):
-            raise ValueError(f"tr_instance {tr_instance} (mapped to {plot_tr_idx}) out of bounds for subsequence with {num_trs} TRs")
-
-    # Always validate all TRs (unless prep/cooldown is nondegenerate)
-    if has_prep or has_cooldown:
-        tr_indices = [0]
-        multi_tr = False
-    else:
-        tr_indices = list(range(num_trs))
+    # Loop over all subsequences and all TRs
+    for ss_idx in range(num_subseq):
+        tr_info = _find_tr(seq._cseq, subsequence_idx=ss_idx)
+        num_trs = tr_info['num_trs']
         multi_tr = num_trs > 1
-
-    # ── Validate each TR ─────────────────────────────
-    errors_per_tr: list[dict[str, float]] = []
-    messages: list[str] = []
-
-    for tr_idx in tr_indices:
-        # C-backend waveforms (actual amplitudes for this TR)
-        wf = get_tr_waveforms(
-            seq,
-            subsequence_idx=sequence_idx,
-            amplitude_mode='actual',  # use actual amplitudes for validation
-            tr_index=tr_idx,
-        )
-
-        # Reference waveforms
-        if xml_path is None:
-            # Always use full-pass window: start from block 0
-            block_start = 0
-            abs_t0 = _abs_block_start_s(seq._seqs[sequence_idx], block_start)
-            ref = _pypulseq_reference_window(
+        for tr_idx in range(num_trs):
+            messages = []
+            wf = get_tr_waveforms(
                 seq,
-                sequence_idx,
-                abs_t0,
-                wf.total_duration_us,
+                subsequence_idx=ss_idx,
+                amplitude_mode='actual',
+                tr_index=tr_idx,
             )
-            # Print windowing info for reference and test
-            ref_t, ref_a = ref['rf_mag']
-            print(f"[DEBUG] TR {tr_idx} abs_t0: {abs_t0}")
-            print(f"[DEBUG] TR {tr_idx} wf.total_duration_us: {wf.total_duration_us}")
-            print(f"[DEBUG] TR {tr_idx} REF RF time_us: first={ref_t[:5]}, last={ref_t[-5:] if len(ref_t) > 5 else ref_t}")
-            print(f"[DEBUG] TR {tr_idx} TEST RF time_us: first={wf.rf_mag.time_us[:5]}, last={wf.rf_mag.time_us[-5:] if len(wf.rf_mag.time_us) > 5 else wf.rf_mag.time_us}")
-        else:
-            ref = _xml_reference(xml_path)
-
-        # Compare gradients
-        tr_err: dict[str, float] = {}
-        for ch in ('gx', 'gy', 'gz'):
-            ref_t, ref_a = ref[ch]
-            test_ch = getattr(wf, ch)
-            r, t = _interp_to_ref(ref_t, ref_a, test_ch.time_us, test_ch.amplitude)
-            err = float(np.max(np.abs(r - t))) if len(r) > 0 else 0.0
-            tr_err[ch] = err
-            if err > grad_atol:
-                pfx = f'TR {tr_idx}: ' if multi_tr else ''
-                messages.append(
-                    f'{pfx}{ch} mismatch: max diff {err:.4f} mT/m '
-                    f'(tol {grad_atol:.4f} mT/m)'
+            # Reference extraction
+            if xml_path is None:
+                block_start = 0
+                abs_t0 = _abs_block_start_s(seq._seqs[ss_idx], block_start)
+                ref = _pypulseq_reference_window(
+                    seq, ss_idx, abs_t0, wf.total_duration_us
                 )
+                ref_t, ref_a = ref['rf_mag']
+            else:
+                ref = _xml_reference(xml_path)
+                ref_t, ref_a = ref['rf_mag']
 
-        # Compare per-block scan table parameters
-        rf_phase_offsets = [blk.rf_phase_offset_rad for blk in wf.blocks]
-        rf_freq_offsets = [blk.rf_freq_offset_hz for blk in wf.blocks]
-        adc_phase_offsets = [blk.adc_phase_offset_rad for blk in wf.blocks]
-        adc_freq_offsets = [blk.adc_freq_offset_hz for blk in wf.blocks]
-        rotation_max = 0.0
-        for blk in wf.blocks:
-            if blk.rotation_matrix:
-                rotation_max = max(rotation_max, np.max(np.abs(blk.rotation_matrix)))
-        tr_err['rf_phase_offset_rad'] = float(np.max(np.abs(rf_phase_offsets))) if rf_phase_offsets else 0.0
-        tr_err['rf_freq_offset_hz'] = float(np.max(np.abs(rf_freq_offsets))) if rf_freq_offsets else 0.0
-        tr_err['adc_phase_offset_rad'] = float(np.max(np.abs(adc_phase_offsets))) if adc_phase_offsets else 0.0
-        tr_err['adc_freq_offset_hz'] = float(np.max(np.abs(adc_freq_offsets))) if adc_freq_offsets else 0.0
-        tr_err['rotation_max_abs'] = rotation_max
+            # Compare gradients
+            for ch in ('gx', 'gy', 'gz'):
+                ref_t_ch, ref_a_ch = ref[ch]
+                test_ch = getattr(wf, ch)
+                r, t = _interp_to_ref(ref_t_ch, ref_a_ch, test_ch.time_us, test_ch.amplitude)
+                err = float(np.max(np.abs(r - t))) if len(r) > 0 else 0.0
+                if err > grad_atol:
+                    pfx = f'TR {tr_idx}: ' if multi_tr else ''
+                    messages.append(
+                        f'{pfx}{ch} mismatch: max diff {err:.4f} mT/m '
+                        f'(tol {grad_atol:.4f} mT/m)'
+                    )
 
-        # Force reference RF arrays to be real
-        ref_t_real = np.real(ref_t)
-        ref_a_real = np.real(ref_a)
+            # Per-block scan table parameters (for phase validation) -- handled in _plot, not needed here
 
-        test_t = wf.rf_mag.time_us
-        test_a = wf.rf_mag.amplitude
+            # RF envelope (magnitude)
+            ref_t_real = np.real(ref_t)
+            ref_a_real = np.real(ref_a)
+            test_t = wf.rf_mag.time_us
+            test_a = wf.rf_mag.amplitude
+            t_min = max(ref_t_real[0], test_t[0]) if len(ref_t_real) and len(test_t) else 0.0
+            t_max = min(ref_t_real[-1], test_t[-1]) if len(ref_t_real) and len(test_t) else 0.0
+            if t_max <= t_min:
+                messages.append(f"RF time overlap is empty: ref=[{ref_t_real[0] if len(ref_t_real) else 'NA'}, {ref_t_real[-1] if len(ref_t_real) else 'NA'}], test=[{test_t[0] if len(test_t) else 'NA'}, {test_t[-1] if len(test_t) else 'NA'}]")
+            else:
+                t_common = np.arange(np.ceil(t_min), np.floor(t_max) + 1)
+                if len(t_common) < 3:
+                    messages.append(f"RF overlap region too small for robust comparison (len={len(t_common)})")
+                else:
+                    t_common = t_common[1:-1]
+                    if len(t_common) == 0:
+                        messages.append("RF overlap region empty after ignoring endpoints.")
+                    else:
+                        ref_interp = np.abs(np.interp(t_common, ref_t_real, ref_a_real, left=0.0, right=0.0))
+                        test_interp = np.abs(np.interp(t_common, test_t, test_a, left=0.0, right=0.0))
+                        rf_err = _rms_error(ref_interp, test_interp)
+                        if rf_err > rf_rms_percent:
+                            pfx = f'TR {tr_idx}: ' if multi_tr else ''
+                            messages.append(
+                                f'{pfx}RF mismatch: {rf_err:.1f}% RMS (tol {rf_rms_percent:.1f}%)'
+                            )
 
-        # Interpolate both reference and test RF onto a common grid over the overlapping region
-        t_min = max(ref_t_real[0], test_t[0]) if len(ref_t_real) and len(test_t) else 0.0
-        t_max = min(ref_t_real[-1], test_t[-1]) if len(ref_t_real) and len(test_t) else 0.0
-        if t_max <= t_min:
-            messages.append(f"RF time overlap is empty: ref=[{ref_t_real[0] if len(ref_t_real) else 'NA'}, {ref_t_real[-1] if len(ref_t_real) else 'NA'}], test=[{test_t[0] if len(test_t) else 'NA'}, {test_t[-1] if len(test_t) else 'NA'}]")
-            errors_per_tr.append(tr_err)
-            continue
-        t_common = np.arange(np.ceil(t_min), np.floor(t_max) + 1)
-        if len(t_common) < 3:
-            messages.append(f"RF overlap region too small for robust comparison (len={len(t_common)})")
-            errors_per_tr.append(tr_err)
-            continue
-        # Ignore endpoints (first and last sample) as in MATLAB reference
-        t_common = t_common[1:-1]
-        if len(t_common) == 0:
-            messages.append(f"RF overlap region empty after ignoring endpoints.")
-            errors_per_tr.append(tr_err)
-            continue
-        # Interpolate absolute values
-        ref_interp = np.abs(np.interp(t_common, ref_t_real, ref_a_real, left=0.0, right=0.0))
-        test_interp = np.abs(np.interp(t_common, test_t, test_a, left=0.0, right=0.0))
+            # RF phase validation (with per-block offsets)
+            test_phase_t = np.real(wf.rf_phase.time_us)
+            test_phase_a = np.real(np.copy(wf.rf_phase.amplitude))
+            # Apply per-block phase and freq offsets
+            for blk in wf.blocks:
+                t0 = blk.start_us
+                t1 = blk.start_us + blk.duration_us
+                mask = (test_phase_t >= t0) & (test_phase_t < t1)
+                test_phase_a[mask] += blk.rf_phase_offset_rad + 2 * np.pi * blk.rf_freq_offset_hz * (test_phase_t[mask] * 1e-6)
+            # Compare to reference if available (if ref contains phase)
+            if 'rf_phase' in ref:
+                ref_phase_t, ref_phase_a = ref['rf_phase']
+                ref_phase_t = np.real(ref_phase_t)
+                ref_phase_a = np.real(ref_phase_a)
+                t_min_p = max(ref_phase_t[0], test_phase_t[0]) if len(ref_phase_t) and len(test_phase_t) else 0.0
+                t_max_p = min(ref_phase_t[-1], test_phase_t[-1]) if len(ref_phase_t) and len(test_phase_t) else 0.0
+                if t_max_p > t_min_p:
+                    t_common_p = np.arange(np.ceil(t_min_p), np.floor(t_max_p) + 1)
+                    t_common_p = t_common_p[1:-1] if len(t_common_p) > 2 else t_common_p
+                    if len(t_common_p) > 0:
+                        ref_interp_p = np.interp(t_common_p, ref_phase_t, ref_phase_a, left=0.0, right=0.0)
+                        test_interp_p = np.interp(t_common_p, test_phase_t, test_phase_a, left=0.0, right=0.0)
+                        phase_err = _rms_error(ref_interp_p, test_interp_p)
+                        # Add a tolerance for phase error if desired (e.g., 0.1 rad)
+                        phase_tol = 0.1
+                        if phase_err > phase_tol:
+                            pfx = f'TR {tr_idx}: ' if multi_tr else ''
+                            messages.append(
+                                f'{pfx}RF phase mismatch: {phase_err:.3f} RMS (tol {phase_tol:.3f})'
+                            )
 
-        # Print diagnostics
-        print(f"[DEBUG] TR {tr_idx} REF RF (interp): len={len(ref_interp)}, min={ref_interp.min() if len(ref_interp) else 'NA'}, max={ref_interp.max() if len(ref_interp) else 'NA'}")
-        print(f"[DEBUG] TR {tr_idx} TEST RF (interp): len={len(test_interp)}, min={test_interp.min() if len(test_interp) else 'NA'}, max={test_interp.max() if len(test_interp) else 'NA'}")
+            # ADC phase validation (with per-block offsets)
+            for adc in wf.adc_events:
+                if adc.num_samples > 0 and adc.duration_us > 0:
+                    dwell_time = adc.duration_us / adc.num_samples
+                    t_adc = np.real(adc.onset_us + np.arange(adc.num_samples) * dwell_time)
+                    t_adc_s = t_adc * 1e-6
+                    adc_phase = np.real(adc.phase_offset_rad + 2 * np.pi * adc.freq_offset_hz * t_adc_s)
+                    # If reference contains ADC phase, compare here (not always available)
+                    if 'adc_phase' in ref:
+                        ref_adc_t, ref_adc_a = ref['adc_phase']
+                        ref_adc_t = np.real(ref_adc_t)
+                        ref_adc_a = np.real(ref_adc_a)
+                        t_min_a = max(ref_adc_t[0], t_adc[0]) if len(ref_adc_t) and len(t_adc) else 0.0
+                        t_max_a = min(ref_adc_t[-1], t_adc[-1]) if len(ref_adc_t) and len(t_adc) else 0.0
+                        if t_max_a > t_min_a:
+                            t_common_a = np.arange(np.ceil(t_min_a), np.floor(t_max_a) + 1)
+                            t_common_a = t_common_a[1:-1] if len(t_common_a) > 2 else t_common_a
+                            if len(t_common_a) > 0:
+                                ref_interp_a = np.interp(t_common_a, ref_adc_t, ref_adc_a, left=0.0, right=0.0)
+                                test_interp_a = np.interp(t_common_a, t_adc, adc_phase, left=0.0, right=0.0)
+                                adc_phase_err = _rms_error(ref_interp_a, test_interp_a)
+                                adc_phase_tol = 0.1
+                                if adc_phase_err > adc_phase_tol:
+                                    pfx = f'TR {tr_idx}: ' if multi_tr else ''
+                                    messages.append(
+                                        f'{pfx}ADC phase mismatch: {adc_phase_err:.3f} RMS (tol {adc_phase_tol:.3f})'
+                                    )
+            if messages:
+                fail = True
+                fail_msg = messages
+                fail_subseq_idx = ss_idx
+                fail_tr_idx = tr_idx
+                break
+        if fail:
+            break
 
-        rf_err = _rms_error(ref_interp, test_interp)
-        tr_err['rf_mag'] = rf_err
-        if rf_err > rf_rms_percent:
-            pfx = f'TR {tr_idx}: ' if multi_tr else ''
-            messages.append(
-                f'{pfx}RF mismatch: {rf_err:.1f}% RMS ' f'(tol {rf_rms_percent:.1f}%)'
-            )
+    # Determine what to plot
+    plot_ss = fail_subseq_idx if fail else (subsequence_idx if subsequence_idx is not None else 0)
+    plot_tr = fail_tr_idx if fail else (tr_instance if tr_instance is not None else 0)
 
-        errors_per_tr.append(tr_err)
-
-    ok = len(messages) == 0
-
-    # ── Optional overlay plot ────────────────────────────────
     if do_plot:
         _validation_plot(
             seq,
-            sequence_idx=sequence_idx,
+            sequence_idx=plot_ss,
             xml_path=xml_path,
-            tr_idx=plot_tr_idx,
+            tr_idx=plot_tr,
             show_rf_centers=show_rf_centers,
             show_echoes=show_echoes,
             show_segments=show_segments,
             show_blocks=show_blocks,
             max_grad_mT_per_m=_max_grad_plot,
-            ok=ok,
-            messages=messages,
+            ok=not fail,
+            messages=fail_msg if fail else [],
         )
 
-    if ok:
-        print('Validation passed.')
-        return
+    if fail:
+        print('Validation failed:')
+        for msg in fail_msg:
+            print(f'  - {msg}')
+        raise RuntimeError('Validation failed:\n' + '\n'.join(fail_msg))
 
-    print('Validation failed:')
-    for msg in messages:
-        print(f'  - {msg}')
-
-    raise RuntimeError('Validation failed:\n' + '\n'.join(messages))
-
+    print('Validation passed.')
 
 # ── validation plot (private) ────────────────────────────────────────
-
 
 def _validation_plot(
     seq,
@@ -509,8 +484,6 @@ def _validation_plot(
     handle.fig.suptitle(
         f'validate()  \u2014  {status}', fontweight='bold', color=colour
     )
-    if messages:
-        handle.fig.text(
-            0.5, 0.01, '\n'.join(messages), ha='center', fontsize=8, color='red'
-        )
-    handle.fig.tight_layout(rect=[0, 0.05 if messages else 0, 1, 0.95])
+    # Only show error messages in the plot if you want detailed debugging; suppress for user-facing plots
+    # (per user request, do not print per-TR error messages on the plot)
+    handle.fig.tight_layout(rect=[0, 0, 1, 0.95])

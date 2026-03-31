@@ -365,25 +365,22 @@ def plot(
         # ── RF phase ──
         ax = axes['rf_phase']
         ch = wf.rf_phase
-        # Overlay phase/freq offsets directly onto phase profile
+        # Apply per-block phase and frequency offsets to baseline phase
         if ch.time_us.size > 0:
-            # Compute corrected phase profile
             phase_profile = np.copy(ch.amplitude)
-            # For each block, apply phase/freq offset to the block's time window
             for blk in wf.blocks:
-                # Find indices in ch.time_us that fall within this block
                 t0 = blk.start_us
                 t1 = blk.start_us + blk.duration_us
                 mask = (ch.time_us >= t0) & (ch.time_us < t1)
-                # Apply phase and freq offset
-                phase_profile[mask] += blk.rf_phase_offset_rad + 2 * np.pi * blk.rf_freq_offset_hz * (ch.time_us[mask] * 1e-6)
+                t_sec = ch.time_us[mask] * 1e-6
+                phase_profile[mask] += blk.rf_phase_offset_rad + 2 * np.pi * blk.rf_freq_offset_hz * t_sec
             ax.plot(
                 _t(ch.time_us),
                 phase_profile,
                 color='gray',
                 linewidth=_MAIN_LINEWIDTH,
                 linestyle='-',
-                label='pulserver (phase+offsets)',
+                label='pulserver',
             )
         ax.set_ylabel('RF phase (rad)')
         ax.set_yticks([-np.pi, 0, np.pi])
@@ -554,7 +551,7 @@ def plot(
                     alpha=alpha,
                     color='black',
                     linestyle='--',
-                    label=label,
+                    label=f'{label or "pypulseq"}',
                 )
         # RF magnitude
         t_us, amp = ref['rf_mag']
@@ -566,11 +563,39 @@ def plot(
                 alpha=alpha,
                 color='black',
                 linestyle='--',
-                label=label,
+                label=f'{label or "pypulseq"} RF mag',
             )
-        # No phase in reference extraction, skip rf_phase overlay
-        if label:
-            fig.axes['rf_mag'].legend(fontsize=8, loc='upper right')
+        # RF phase overlay if available
+        if 'rf_phase' in ref:
+            t_us, amp = ref['rf_phase']
+            if len(t_us) > 0:
+                fig.axes['rf_phase'].plot(
+                    t_us * t_scale,
+                    amp,
+                    linewidth=_OVERLAY_LINEWIDTH,
+                    alpha=alpha,
+                    color='black',
+                    linestyle='--',
+                    label=f'{label or "pypulseq"} RF phase',
+                )
+        # ADC phase overlay if available
+        if 'adc_phase' in ref:
+            t_us, amp = ref['adc_phase']
+            if len(t_us) > 0:
+                fig.axes['adc'].plot(
+                    t_us * t_scale,
+                    amp,
+                    linewidth=_OVERLAY_LINEWIDTH,
+                    alpha=alpha,
+                    color='black',
+                    linestyle='--',
+                    label=f'{label or "pypulseq"} ADC phase',
+                )
+        # Add legends to all axes
+        for ax_item in fig.axes.values():
+            handles, labels = ax_item.get_legend_handles_labels()
+            if handles:
+                ax_item.legend(fontsize=8, loc='upper right')
         return fig
 
     # ================================================================
