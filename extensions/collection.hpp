@@ -220,11 +220,11 @@ public:
 
     // ── TR gradient waveforms ────────────────────────────────────
 
-    TrGradientWaveforms get_tr_gradient_waveforms(int canonical_tr_idx = 0) const {
+    TrGradientWaveforms get_tr_gradient_waveforms(int subseq_idx = 0, int canonical_tr_idx = 0) const {
         pulseqlib_tr_gradient_waveforms cw = PULSEQLIB_TR_GRADIENT_WAVEFORMS_INIT;
         pulseqlib_diagnostic diag;
         pulseqlib_diagnostic_init(&diag);
-        int code = pulseqlib_get_tr_gradient_waveforms(coll_, canonical_tr_idx, &cw, &diag);
+        int code = pulseqlib_get_tr_gradient_waveforms(coll_, subseq_idx, canonical_tr_idx, &cw, &diag);
         check(code, diag);
 
         TrGradientWaveforms w;
@@ -304,8 +304,10 @@ public:
 
     // ── Acoustic spectra ─────────────────────────────────────────
 
+
     AcousticSpectra calc_acoustic_spectra(
         int ss,
+        int canonical_tr_idx,
         int target_window_size,
         float target_resolution_hz,
         float max_freq_hz,
@@ -319,7 +321,7 @@ public:
         pulseqlib_diagnostic diag;
         pulseqlib_diagnostic_init(&diag);
         int code = pulseqlib_calc_acoustic_spectra(
-            &cs, &diag, coll_, ss, &opts_,
+            &cs, &diag, coll_, ss, canonical_tr_idx, &opts_,
             target_window_size, target_resolution_hz, max_freq_hz,
             static_cast<int>(cbands.size()),
             cbands.empty() ? nullptr : cbands.data());
@@ -366,12 +368,12 @@ public:
 
     // ── PNS computation ──────────────────────────────────────────
 
-    PnsResult calc_pns(int ss, const PnsParams& params) const {
+    PnsResult calc_pns(int ss, int canonical_tr_idx, const PnsParams& params) const {
         pulseqlib_pns_params cp = params.to_c();
         pulseqlib_pns_result cr = PULSEQLIB_PNS_RESULT_INIT;
         pulseqlib_diagnostic diag;
         pulseqlib_diagnostic_init(&diag);
-        int code = pulseqlib_calc_pns(&cr, &diag, coll_, ss, &opts_, &cp);
+        int code = pulseqlib_calc_pns(&cr, &diag, coll_, ss, canonical_tr_idx, &opts_, &cp);
         check(code, diag);
 
         PnsResult r;

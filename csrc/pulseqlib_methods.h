@@ -433,11 +433,29 @@ int pulseqlib_check_safety(
  * @param[in]  forbidden_bands          Array of forbidden bands.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
+
+/**
+ * @brief Compute acoustic spectral data for a specific canonical TR of a subsequence.
+ *
+ * @param[out] spectra                  Receives spectral data (caller frees via pulseqlib_acoustic_spectra_free).
+ * @param[out] diag                     Diagnostic on failure.
+ * @param[in]  coll                     Loaded collection.
+ * @param[in]  subseq_idx               Subsequence index.
+ * @param[in]  canonical_tr_idx         Canonical TR index (0-based, within subsequence).
+ * @param[in]  opts                     Scanner limits.
+ * @param[in]  target_window_size       Sliding window length (0 = auto).
+ * @param[in]  target_resolution_hz     Spectral resolution (0 = auto).
+ * @param[in]  max_freq_hz              Max frequency to report (0 = auto).
+ * @param[in]  num_forbidden_bands      Number of forbidden bands.
+ * @param[in]  forbidden_bands          Array of forbidden bands.
+ * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
+ */
 int pulseqlib_calc_acoustic_spectra(
     pulseqlib_acoustic_spectra*    spectra,
     pulseqlib_diagnostic*          diag,
     const pulseqlib_collection*    coll,
     int                            subseq_idx,
+    int                            canonical_tr_idx,
     const pulseqlib_opts*          opts,
     int                            target_window_size,
     float                          target_resolution_hz,
@@ -470,11 +488,25 @@ void pulseqlib_acoustic_spectra_free(pulseqlib_acoustic_spectra* s);
  * @param[in]  params       PNS model parameters.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
+
+/**
+ * @brief Compute PNS slew-rate waveforms for a specific canonical TR of a subsequence.
+ *
+ * @param[out] result       Receives slew-rate waveforms (caller frees via pulseqlib_pns_result_free).
+ * @param[out] diag         Diagnostic on failure.
+ * @param[in]  coll         Loaded collection.
+ * @param[in]  subseq_idx   Subsequence index.
+ * @param[in]  canonical_tr_idx Canonical TR index (0-based, within subsequence).
+ * @param[in]  opts         Scanner limits.
+ * @param[in]  params       PNS model parameters.
+ * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
+ */
 int pulseqlib_calc_pns(
     pulseqlib_pns_result*       result,
     pulseqlib_diagnostic*       diag,
     const pulseqlib_collection* coll,
     int                         subseq_idx,
+    int                         canonical_tr_idx,
     const pulseqlib_opts*       opts,
     const pulseqlib_pns_params* params);
 

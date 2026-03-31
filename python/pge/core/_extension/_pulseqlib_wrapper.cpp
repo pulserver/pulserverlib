@@ -146,6 +146,7 @@ static py::dict _get_tr_waveforms(
 static py::dict _calc_acoustic_spectra(
     _PulseqCollection& pc,
     int subsequence_idx,
+    int canonical_tr_idx,
     int target_window_size,
     float target_resolution_hz,
     float max_freq_hz,
@@ -162,7 +163,7 @@ static py::dict _calc_acoustic_spectra(
     }
 
     auto sp = pc.coll().calc_acoustic_spectra(
-        subsequence_idx, target_window_size, target_resolution_hz, max_freq_hz, bands);
+        subsequence_idx, canonical_tr_idx, target_window_size, target_resolution_hz, max_freq_hz, bands);
 
     py::dict out;
     out["freq_min_hz"]       = sp.freq_min_hz;
@@ -200,6 +201,7 @@ static py::dict _calc_acoustic_spectra(
 static py::dict _calc_pns(
     _PulseqCollection& pc,
     int subsequence_idx,
+    int canonical_tr_idx,
     float chronaxie_us,
     float rheobase,
     float alpha)
@@ -209,7 +211,7 @@ static py::dict _calc_pns(
     params.rheobase_hz_per_m_per_s = rheobase;
     params.alpha                   = alpha;
 
-    auto r = pc.coll().calc_pns(subsequence_idx, params);
+    auto r = pc.coll().calc_pns(subsequence_idx, canonical_tr_idx, params);
 
     py::dict out;
     out["num_samples"] = r.num_samples;
@@ -347,20 +349,22 @@ PYBIND11_MODULE(_pulseqlib_wrapper, m) {
           py::arg("include_cooldown") = false,
           py::arg("collapse_delays") = false);
 
-    m.def("_calc_acoustic_spectra", &_calc_acoustic_spectra,
-          py::arg("collection"),
-          py::arg("subsequence_idx") = 0,
-          py::arg("target_window_size"),
-          py::arg("target_resolution_hz"),
-          py::arg("max_freq_hz"),
-          py::arg("forbidden_bands") = py::list());
+        m.def("_calc_acoustic_spectra", &_calc_acoustic_spectra,
+            py::arg("collection"),
+            py::arg("subsequence_idx") = 0,
+            py::arg("canonical_tr_idx") = 0,
+            py::arg("target_window_size"),
+            py::arg("target_resolution_hz"),
+            py::arg("max_freq_hz"),
+            py::arg("forbidden_bands") = py::list());
 
-    m.def("_calc_pns", &_calc_pns,
-          py::arg("collection"),
-          py::arg("subsequence_idx") = 0,
-          py::arg("chronaxie_us"),
-          py::arg("rheobase"),
-          py::arg("alpha"));
+        m.def("_calc_pns", &_calc_pns,
+            py::arg("collection"),
+            py::arg("subsequence_idx") = 0,
+            py::arg("canonical_tr_idx") = 0,
+            py::arg("chronaxie_us"),
+            py::arg("rheobase"),
+            py::arg("alpha"));
 
     m.def("_check_consistency", &_check_consistency,
           py::arg("collection"));

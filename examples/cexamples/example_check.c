@@ -143,8 +143,9 @@ int main(int argc, char** argv)
     rc = pulseqlib_check_consistency(coll, &g_diag);
     CHECK(rc, &g_diag);
 
+
     /* ============================================================= */
-    /*  3. Hardware safety (gmax, slewmax, continuity, acoustic, PNS)*/
+    /*  3. C-library safety checks (all checks via pulseqlib_check_safety) */
     /* ============================================================= */
 
     rc = pulseqlib_check_safety(coll, &g_diag, &g_opts,

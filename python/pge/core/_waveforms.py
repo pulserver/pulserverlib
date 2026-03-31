@@ -1,3 +1,40 @@
+def calc_acoustic_spectra(
+    seq: SequenceCollection,
+    subsequence_idx: int = 0,
+    canonical_tr_idx: int = 0,
+    target_window_size: int = 0,
+    target_resolution_hz: float = 0.0,
+    max_freq_hz: float = 0.0,
+    forbidden_bands=None,
+) -> dict:
+    """Compute acoustic spectra for a specific canonical TR of a subsequence."""
+    if forbidden_bands is None:
+        forbidden_bands = []
+    return seq._cseq._calc_acoustic_spectra(
+        subsequence_idx,
+        canonical_tr_idx,
+        target_window_size,
+        target_resolution_hz,
+        max_freq_hz,
+        forbidden_bands,
+    )
+
+def calc_pns(
+    seq: SequenceCollection,
+    subsequence_idx: int = 0,
+    canonical_tr_idx: int = 0,
+    chronaxie_us: float = 360.0,
+    rheobase: float = 20.0,
+    alpha: float = 0.333,
+) -> dict:
+    """Compute PNS slew-rate waveforms for a specific canonical TR of a subsequence."""
+    return seq._cseq._calc_pns(
+        subsequence_idx,
+        canonical_tr_idx,
+        chronaxie_us,
+        rheobase,
+        alpha,
+    )
 """Native-timing TR waveform extraction for SequenceCollection."""
 
 __all__ = ['TrWaveforms', 'get_tr_waveforms']

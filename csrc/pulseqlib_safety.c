@@ -1,3 +1,46 @@
+
+#include "pulseqlib_internal.h"
+
+/* Helper: select the canonical TR window for a given canonical_tr_idx */
+static void pulseqlib__select_canonical_tr_window_idx(
+    const struct pulseqlib_sequence_descriptor* desc,
+    int canonical_tr_idx,
+    int* start_block,
+    int* block_count,
+    int* amplitude_mode,
+    int* num_instances,
+    float* tr_duration_us)
+{
+    const struct pulseqlib_tr_descriptor* trd = &desc->tr_descriptor;
+    int has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
+    int has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
+
+    if (has_nd_prep || has_nd_cool) {
+        /* Non-degenerate: canonical_tr_idx selects pass */
+        int pass_len = desc->pass_len;
+        *start_block = canonical_tr_idx * pass_len;
+        *block_count = pass_len;
+        *amplitude_mode = PULSEQLIB_AMP_MAX_POS;
+        *num_instances = 1;
+        *tr_duration_us = 0.0f;
+        for (int n = 0; n < pass_len; ++n) {
+            int idx = *start_block + n;
+            const struct pulseqlib_block_table_element* bte = &desc->block_table[idx];
+            const struct pulseqlib_block_definition* bdef = &desc->block_definitions[bte->id];
+            *tr_duration_us += (bte->duration_us >= 0)
+                ? (float)bte->duration_us
+                : (float)bdef->duration_us;
+        }
+        return;
+    }
+
+    /* Degenerate: canonical_tr_idx selects imaging TR */
+    *start_block = trd->num_prep_blocks + trd->imaging_tr_start + canonical_tr_idx * trd->tr_size;
+    *block_count = trd->tr_size;
+    *amplitude_mode = PULSEQLIB_AMP_MAX_POS;
+    *num_instances = 1;
+    *tr_duration_us = trd->tr_duration_us;
+}
 /* pulseqlib_safety.c -- safety checks, acoustic analysis, PNS, segment timing
  *
  * Public functions:
@@ -1663,6 +1706,7 @@ int pulseqlib_calc_acoustic_spectra(
     pulseqlib_diagnostic* diag,
     const pulseqlib_collection* coll,
     int subseq_idx,
+    int canonical_tr_idx,
     const pulseqlib_opts* opts,
     int target_window_size,
     float target_resolution_hz,
@@ -1685,8 +1729,14 @@ int pulseqlib_calc_acoustic_spectra(
         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; return diag->code;
     }
     desc = &coll->descriptors[subseq_idx];
-    pulseqlib__select_canonical_tr_window(
+    /* Select the canonical TR window for the given canonical_tr_idx */
+    if (canonical_tr_idx < 0 || canonical_tr_idx >= desc->tr_descriptor.num_trs) {
+        diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; return diag->code;
+    }
+    /* Use a new helper to select the correct window for the canonical_tr_idx */
+    pulseqlib__select_canonical_tr_window_idx(
         desc,
+        canonical_tr_idx,
         &start_block,
         &block_count,
         &amplitude_mode,
@@ -1933,6 +1983,7 @@ int pulseqlib_calc_pns(
     pulseqlib_diagnostic* diag,
     const pulseqlib_collection* coll,
     int subseq_idx,
+    int canonical_tr_idx,
     const pulseqlib_opts* opts,
     const pulseqlib_pns_params* params)
 {
@@ -1951,8 +2002,12 @@ int pulseqlib_calc_pns(
         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; return diag->code;
     }
     desc = &coll->descriptors[subseq_idx];
-    pulseqlib__select_canonical_tr_window(
+    if (canonical_tr_idx < 0 || canonical_tr_idx >= desc->tr_descriptor.num_trs) {
+        diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; return diag->code;
+    }
+    pulseqlib__select_canonical_tr_window_idx(
         desc,
+        canonical_tr_idx,
         &start_block,
         &block_count,
         &amplitude_mode,
