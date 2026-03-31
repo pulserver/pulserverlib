@@ -520,11 +520,11 @@ class SequenceCollection(pp.Sequence):
     def plot(
         self,
         *,
-        sequence_idx: int = 0,
-        tr_instance: int | str = 'max_pos',
-        collapse_delays: bool = False,
+        subsequence_idx: int = 0,
+        tr_instance: int | str = 0,
+        collapse_delays: bool = True,
         show_segments: bool = True,
-        show_blocks: bool = True,
+        show_blocks: bool = False,
         show_slew: bool = False,
         show_rf_centers: bool = False,
         show_echoes: bool = False,
@@ -538,46 +538,11 @@ class SequenceCollection(pp.Sequence):
         Displays gradients (Gx, Gy, Gz), RF magnitude / phase, and
         ADC events for a single TR instance of the requested
         subsequence.  Waveforms are obtained from the C library.
-
-        Parameters
-        ----------
-        sequence_idx : int
-            Subsequence index (0-based, default 0).
-        tr_instance : int or {'max_pos', 'zero_var'}
-            TR instance to display.  Integer values select a specific
-            TR (0 … num_averages * num_trs − 1).  When non-degenerate
-            prep/cooldown are present, they are included in the TR.
-
-            Special strings:
-
-            - ``'max_pos'`` — position-maximum envelope (default).
-            - ``'zero_var'`` — zero variable grads, keep constant (k-space view).
-        collapse_delays : bool
-            Shrink pure-delay blocks at C level (default ``False``).
-        show_segments : bool
-            Colour-code gradient waveforms by segment (default ``True``).
-        show_blocks : bool
-            Draw vertical dotted lines at block boundaries.
-        show_slew : bool
-            Overlay slew-rate waveforms on gradient panels.
-        show_rf_centers : bool
-            Mark RF iso-centres on the RF magnitude subplot.
-        show_echoes : bool
-            Mark echo (ADC centre) on the ADC panel.
-        max_grad_mT_per_m : float, optional
-            Horizontal reference line for maximum gradient amplitude.
-        max_slew_T_per_m_per_s : float, optional
-            Horizontal reference for maximum slew rate.
-        time_unit : str
-            ``'ms'`` (default) or ``'us'``.
-        figsize : tuple, optional
-            Figure size.  Default ``(14, 8)``.
         """
         from ._plot import plot as _plot_impl
-
         _plot_impl(
             self,
-            subsequence_idx=sequence_idx,
+            subsequence_idx=subsequence_idx,
             tr_idx=tr_instance,
             collapse_delays=collapse_delays,
             show_segments=show_segments,
@@ -596,10 +561,10 @@ class SequenceCollection(pp.Sequence):
     def validate(
         self,
         *,
-        sequence_idx: int = 0,
+        subsequence_idx: int = 0,
         xml_path: str | Path | None = None,
         do_plot: bool = False,
-        tr_range: tuple[int, int] = (0, 1),
+        tr_instance: int | str = 0,
         show_rf_centers: bool = False,
         show_echoes: bool = False,
         show_segments: bool = True,
@@ -616,51 +581,17 @@ class SequenceCollection(pp.Sequence):
         magnitude is compared by RMS percentage error.
 
         When *do_plot* is ``True`` the C-backend waveform plot is
-        created and the reference is overlaid for visual comparison.
-
-        Parameters
-        ----------
-        sequence_idx : int
-            Subsequence index (0-based, default 0).
-        xml_path : str, Path or None
-            Path to an XML waveform file.  ``None`` (default) validates
-            against the stored pypulseq ``Sequence``.
-        do_plot : bool
-            Show a comparison overlay plot (default ``False``).
-        tr_range : (int, int)
-            Half-open TR index range ``[start, stop)`` to validate
-            (default ``(0, 1)`` — first TR only).
-        show_rf_centers : bool
-            Mark RF iso-centres on the plot (default ``False``).
-        show_echoes : bool
-            Mark echo (ADC centre) on the plot (default ``False``).
-        show_segments : bool
-            Colour-code gradients by segment (default ``True``).
-        show_blocks : bool
-            Block-boundary lines on the plot (default ``False``).
-        max_grad_mT_per_m : float, bool or None
-            Gradient-limit reference line.  ``True`` (default) derives
-            the value from system limits; a float is used directly;
-            ``False`` / ``None`` disables the line.
-        grad_atol : float or None
-            Absolute gradient error tolerance in mT/m.  ``None``
-            (default) uses ``3 × max_slew × grad_raster_time``.
-        rf_rms_percent : float
-            RF magnitude percent-RMS error threshold (default 10).
-
-        Raises
-        ------
-        RuntimeError
-            If validation fails.
+        created and the reference is overlaid for visual comparison,
+        using only the specified subsequence_idx and tr_instance.
+        Pass/fail validation is always performed over all subsequences and all TRs.
         """
         from ._validate import validate as _validate_impl
-
         return _validate_impl(
             self,
-            sequence_idx=sequence_idx,
+            sequence_idx=subsequence_idx,
             xml_path=xml_path,
             do_plot=do_plot,
-            tr_range=tr_range,
+            tr_instance=tr_instance,
             show_rf_centers=show_rf_centers,
             show_echoes=show_echoes,
             show_segments=show_segments,

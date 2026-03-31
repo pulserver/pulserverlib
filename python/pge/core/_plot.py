@@ -209,8 +209,20 @@ def plot(
         amplitude_mode = tr_idx  # 'max_pos' or 'zero_var'
         tr_index = 0
     else:
-        amplitude_mode = 'actual' if tr_idx > 0 else 'max_pos'
-        tr_index = int(tr_idx)
+        # Support negative indexing for tr_index
+        tr_info = None
+        if 'tr_info' not in locals():
+            from ._extension._pulseqlib_wrapper import _find_tr
+            if is_collection:
+                tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
+            else:
+                tr_info = None
+        num_trs = tr_info['num_trs'] if tr_info else None
+        idx = int(tr_idx)
+        if num_trs is not None and idx < 0:
+            idx = num_trs + idx
+        amplitude_mode = 'actual' if idx > 0 else 'max_pos'
+        tr_index = idx
 
     # Always plot the canonical TR window(s) as defined by the C backend
     from ._extension._pulseqlib_wrapper import _find_tr
@@ -334,7 +346,7 @@ def plot(
         }
 
         def _t(t_us):
-            return t_us * t_scale
+            return np.asarray(t_us) * t_scale
 
         # ── RF magnitude ──
         ax = axes['rf_mag']
@@ -343,43 +355,58 @@ def plot(
             ax.plot(
                 _t(ch.time_us),
                 ch.amplitude,
-                color=_MATLAB_LINES[0],
+                color='gray',
                 linewidth=_MAIN_LINEWIDTH,
+                linestyle='-',
+                label='pulserver',
             )
         ax.set_ylabel('|RF| (uT)')
 
         # ── RF phase ──
         ax = axes['rf_phase']
         ch = wf.rf_phase
+        # Overlay phase/freq offsets directly onto phase profile
         if ch.time_us.size > 0:
+            # Compute corrected phase profile
+            phase_profile = np.copy(ch.amplitude)
+            # For each block, apply phase/freq offset to the block's time window
+            for blk in wf.blocks:
+                # Find indices in ch.time_us that fall within this block
+                t0 = blk.start_us
+                t1 = blk.start_us + blk.duration_us
+                mask = (ch.time_us >= t0) & (ch.time_us < t1)
+                # Apply phase and freq offset
+                phase_profile[mask] += blk.rf_phase_offset_rad + 2 * np.pi * blk.rf_freq_offset_hz * (ch.time_us[mask] * 1e-6)
             ax.plot(
                 _t(ch.time_us),
-                ch.amplitude,
-                color=_MATLAB_LINES[0],
+                phase_profile,
+                color='gray',
                 linewidth=_MAIN_LINEWIDTH,
+                linestyle='-',
+                label='pulserver (phase+offsets)',
             )
         ax.set_ylabel('RF phase (rad)')
         ax.set_yticks([-np.pi, 0, np.pi])
         ax.set_yticklabels(['-pi', '0', 'pi'])
 
-        # ── ADC ──
+        # ── ADC phase envelope ──
         ax = axes['adc']
+        # Only plot for real ADC events (not dummy TRs)
         for adc in wf.adc_events:
-            t_start = _t(np.array([adc.onset_us]))[0]
-            t_end = _t(np.array([adc.onset_us + adc.duration_us]))[0]
-            seg_idx = _segment_idx_for_time(wf.blocks, adc.onset_us)
-            rect = Rectangle(
-                (t_start, 0.1),
-                t_end - t_start,
-                0.8,
-                facecolor=_seg_color(seg_idx),
-                alpha=0.45,
-                edgecolor='none',
-            )
-            ax.add_patch(rect)
-        ax.set_ylim(0, 1)
-        ax.set_yticks([])
-        ax.set_ylabel('ADC')
+            if adc.num_samples > 0 and adc.duration_us > 0:
+                dwell_time = adc.duration_us / adc.num_samples  # us
+                t_adc = adc.onset_us + np.arange(adc.num_samples) * dwell_time
+                t_adc_s = t_adc * 1e-6
+                adc_phase = adc.phase_offset_rad + 2 * np.pi * adc.freq_offset_hz * t_adc_s
+                # Wrap phase to [-pi, pi]
+                adc_phase_wrapped = (adc_phase + np.pi) % (2 * np.pi) - np.pi
+                ax.plot(_t(t_adc), adc_phase_wrapped, color='purple', linewidth=_MAIN_LINEWIDTH, label='pulserver ADC phase')
+                # Shadowed region
+                ax.fill_between(_t(t_adc), 0, np.maximum(adc_phase_wrapped, 1.0), color='purple', alpha=0.15)
+        ax.set_ylabel('ADC phase (rad)')
+        ax.set_yticks([-np.pi, 0, np.pi])
+        ax.set_yticklabels(['-pi', '0', 'pi'])
+
 
         # ── Gradients (Gx, Gy, Gz) ──
         axis_color = {
@@ -399,8 +426,10 @@ def plot(
                     ax.plot(
                         _t(ch.time_us),
                         ch.amplitude,
-                        color=axis_color[gname],
+                        color='gray',
                         linewidth=_MAIN_LINEWIDTH,
+                        linestyle='-',
+                        label='pulserver',
                     )
 
             ax.set_ylabel(f'{gname.upper()} (mT/m)')
@@ -459,6 +488,33 @@ def plot(
         for ax_item in axes.values():
             ax_item.grid(True)
 
+        # Add legend to all axes for clarity
+        for ax_item in axes.values():
+            handles, labels = ax_item.get_legend_handles_labels()
+            if handles:
+                ax_item.legend(fontsize=8, loc='upper right')
+
+        # --- Overlay for pypulseq (Branch 2) ---
+        if not is_collection and is_pulseq and fig is not None:
+            # Use the same windowing as validation for the overlay
+            from ._validate import _pypulseq_reference_window
+            if not hasattr(source, '_seqs'):
+                seq_coll = SequenceCollection(source)
+            else:
+                seq_coll = source
+            abs_t0 = fig._tr_start_abs_s
+            window_duration_us = fig.tr_duration_us
+            ref = _pypulseq_reference_window(seq_coll, subsequence_idx, abs_t0, window_duration_us)
+            # Overlay ADC phase for pypulseq
+            ax_adc = fig.axes['adc']
+            # For pypulseq, try to extract ADC events from the sequence if possible
+            # (Assume only one ADC event per TR for now)
+            # If not available, skip overlay
+            # This is a placeholder: user may need to adapt for their pypulseq structure
+            # Here, we just plot zeros for demonstration
+            # TODO: Replace with real pypulseq ADC phase extraction if available
+            # ax_adc.plot([], [], color='black', linestyle='--', label='pypulseq ADC phase')
+
         fig_obj.tight_layout()
 
         return PlotHandle(
@@ -475,82 +531,46 @@ def plot(
     # ================================================================
     if is_pulseq:
         assert fig is not None
-        seq = source
-        gamma = seq.system.gamma if hasattr(seq.system, 'gamma') else _GAMMA_DEFAULT
+        # Use the same windowing as validation for the overlay
 
-        # Absolute time range of the displayed TR in the pypulseq seq.
-        tr_dur_s = fig.tr_duration_us * 1e-6
+        from ._validate import _pypulseq_reference_window
+        # Ensure we have a SequenceCollection for reference extraction
+        if not hasattr(source, '_seqs'):
+            seq_coll = SequenceCollection(source)
+        else:
+            seq_coll = source
         abs_t0 = fig._tr_start_abs_s
-        abs_t1 = abs_t0 + tr_dur_s
+        window_duration_us = fig.tr_duration_us
+        ref = _pypulseq_reference_window(seq_coll, subsequence_idx, abs_t0, window_duration_us)
 
-        # waveforms_and_times returns
-        #   (wave_data, tfp_exc, tfp_ref, t_adc, fp_adc)
-        # wave_data is a list of (2, N) ndarrays per channel.
-        result = seq.waveforms_and_times(append_RF=True, time_range=[abs_t0, abs_t1])
-        channels = result[0]  # list of (2, N) ndarrays
-
-        hz_per_m_to_mT_per_m = 1.0 / (gamma * 1e-3)
-        hz_to_uT = 1e6 / gamma
-
-        def _clip_tr(time_us, amp):
-            t = np.asarray(time_us)
-            a = np.asarray(amp)
-            if t.size == 0:
-                return t, a
-            mask = (t >= -1e-6) & (t <= fig.tr_duration_us + 1e-6)
-            return t[mask], a[mask]
-
-        channel_map = {
-            'gx': (0, hz_per_m_to_mT_per_m),
-            'gy': (1, hz_per_m_to_mT_per_m),
-            'gz': (2, hz_per_m_to_mT_per_m),
-        }
-
-        alpha = 0.7
-        for ch_name, (ch_idx, scale) in channel_map.items():
-            if ch_idx < len(channels):
-                arr = channels[ch_idx]
-                if arr.shape[1] > 0:
-                    t_us = (arr[0] - abs_t0) * 1e6  # relative µs
-                    amp = arr[1] * scale
-                    t_us, amp = _clip_tr(t_us, amp)
-                    t_us += fig.first_tr_start_us  # align with C base
-                    fig.axes[ch_name].plot(
-                        t_us * t_scale,
-                        amp,
-                        linewidth=_OVERLAY_LINEWIDTH,
-                        alpha=alpha,
-                        label=label,
-                    )
-
-        # RF magnitude & phase
-        if len(channels) > 3:
-            arr = channels[3]
-            if arr.shape[1] > 0:
-                t_us_rel = (arr[0] - abs_t0) * 1e6
-                rf_mag = np.abs(arr[1]) * hz_to_uT
-                rf_phase = np.angle(arr[1])
-                t_us_rel, rf_mag = _clip_tr(t_us_rel, rf_mag)
-                _, rf_phase = _clip_tr((arr[0] - abs_t0) * 1e6, rf_phase)
-                t_us = t_us_rel + fig.first_tr_start_us
-                fig.axes['rf_mag'].plot(
+        alpha = 1.0
+        for ch_name in ('gx', 'gy', 'gz'):
+            t_us, amp = ref[ch_name]
+            if len(t_us) > 0:
+                fig.axes[ch_name].plot(
                     t_us * t_scale,
-                    rf_mag,
+                    amp,
                     linewidth=_OVERLAY_LINEWIDTH,
                     alpha=alpha,
+                    color='black',
+                    linestyle='--',
                     label=label,
                 )
-                fig.axes['rf_phase'].plot(
-                    t_us * t_scale,
-                    rf_phase,
-                    linewidth=_OVERLAY_LINEWIDTH,
-                    alpha=alpha,
-                    label=label,
-                )
-
+        # RF magnitude
+        t_us, amp = ref['rf_mag']
+        if len(t_us) > 0:
+            fig.axes['rf_mag'].plot(
+                t_us * t_scale,
+                amp,
+                linewidth=_OVERLAY_LINEWIDTH,
+                alpha=alpha,
+                color='black',
+                linestyle='--',
+                label=label,
+            )
+        # No phase in reference extraction, skip rf_phase overlay
         if label:
             fig.axes['rf_mag'].legend(fontsize=8, loc='upper right')
-
         return fig
 
     # ================================================================

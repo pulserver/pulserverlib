@@ -88,6 +88,11 @@ class BlockDescriptor:
     start_us: float = 0.0
     duration_us: float = 0.0
     segment_idx: int = -1
+    rf_freq_offset_hz: float = 0.0
+    rf_phase_offset_rad: float = 0.0
+    adc_freq_offset_hz: float = 0.0
+    adc_phase_offset_rad: float = 0.0
+    rotation_matrix: list = field(default_factory=list)
 
 
 @dataclass
@@ -206,7 +211,20 @@ def get_tr_waveforms(
     rf_mag = ChannelWaveform(np.array(raw['rf_mag']['time_us']), rf_mag_uT)
     rf_phase = ChannelWaveform(np.array(raw['rf_phase']['time_us']), np.array(raw['rf_phase']['amplitude']))
     adc_events = [AdcEvent(**adc) for adc in raw['adc_events']]
-    blocks = [BlockDescriptor(**blk) for blk in raw['blocks']]
+    # Extract per-block scan table parameters if present
+    blocks = []
+    for blk in raw['blocks']:
+        block_kwargs = dict(
+            start_us=blk.get('start_us', 0.0),
+            duration_us=blk.get('duration_us', 0.0),
+            segment_idx=blk.get('segment_idx', -1),
+            rf_freq_offset_hz=blk.get('rf_freq_offset_hz', 0.0),
+            rf_phase_offset_rad=blk.get('rf_phase_offset_rad', 0.0),
+            adc_freq_offset_hz=blk.get('adc_freq_offset_hz', 0.0),
+            adc_phase_offset_rad=blk.get('adc_phase_offset_rad', 0.0),
+            rotation_matrix=blk.get('rotation_matrix', []),
+        )
+        blocks.append(BlockDescriptor(**block_kwargs))
 
     # Get TR timing info for pypulseq overlay
     tr_info = _find_tr(seq._cseq, subsequence_idx=subsequence_idx)

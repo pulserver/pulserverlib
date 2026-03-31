@@ -101,9 +101,10 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
     src_seq = seq._seqs[sequence_idx]
     gamma = seq.system.gamma
 
+    # Expand window slightly at the start to ensure first block is included
+    epsilon = 1e-9  # 1 ns
     abs_t1_s = abs_t0_s + window_duration_us * 1e-6
-
-    result = src_seq.waveforms_and_times(append_RF=True, time_range=[abs_t0_s, abs_t1_s])
+    result = src_seq.waveforms_and_times(append_RF=True, time_range=[abs_t0_s - epsilon, abs_t1_s])
     channels = result[0]
 
     hz_to_mT_per_m = 1.0 / (gamma * 1e-3)
@@ -142,7 +143,9 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
         arr = channels[3]
         if arr.shape[1] > 0:
             t_rel = (arr[0] - abs_t0_s) * 1e6
-            a_rel = np.abs(arr[1])  # Hz, match C-backend
+            # Convert RF from Hz to μT to match pulserver units
+            hz_to_uT = 1e6 / gamma
+            a_rel = np.abs(arr[1]) * hz_to_uT
             ref['rf_mag'] = _clip_window(t_rel, a_rel)
         else:
             ref['rf_mag'] = (np.empty(0), np.empty(0))
@@ -225,7 +228,7 @@ def validate(
     sequence_idx: int = 0,
     xml_path: Union[str, Path, None] = None,
     do_plot: bool = False,
-    tr_range: tuple[int, int] = (0, 1),
+    tr_instance: int | str = 0,
     show_rf_centers: bool = False,
     show_echoes: bool = False,
     show_segments: bool = True,
@@ -303,31 +306,33 @@ def validate(
 
     # TR metadata
     tr_info = _find_tr(seq._cseq, subsequence_idx=sequence_idx)
-    tr_start, tr_stop = tr_range
-    if tr_start < 0 or tr_stop < tr_start or tr_stop > tr_info['num_trs']:
-        raise ValueError(
-            f'tr_range {tr_range} out of bounds for subsequence with '
-            f'{tr_info["num_trs"]} TRs'
-        )
-
+    num_trs = tr_info['num_trs']
     has_prep = tr_info['num_prep_blocks'] > 0 and not tr_info['degenerate_prep']
     has_cooldown = tr_info['num_cooldown_blocks'] > 0 and not tr_info['degenerate_cooldown']
 
+    # Determine which TR to plot (for do_plot)
+    if isinstance(tr_instance, str):
+        # 'max_pos' or 'zero_var' special modes
+        plot_tr_idx = tr_instance
+    else:
+        # Support negative indexing for plotting
+        plot_tr_idx = tr_instance if tr_instance >= 0 else num_trs + tr_instance
+        if not (isinstance(plot_tr_idx, int) and 0 <= plot_tr_idx < num_trs):
+            raise ValueError(f"tr_instance {tr_instance} (mapped to {plot_tr_idx}) out of bounds for subsequence with {num_trs} TRs")
+
+    # Always validate all TRs (unless prep/cooldown is nondegenerate)
     if has_prep or has_cooldown:
-        # Treat subsequence as single full-pass TR
-        tr_start = 0
-        tr_stop = 1
-        # (prep/cooldown always included by backend)
+        tr_indices = [0]
         multi_tr = False
     else:
-        # (prep/cooldown always included by backend)
-        multi_tr = (tr_stop - tr_start) > 1
+        tr_indices = list(range(num_trs))
+        multi_tr = num_trs > 1
 
-    # ── Validate each TR in range ────────────────────────────
+    # ── Validate each TR ─────────────────────────────
     errors_per_tr: list[dict[str, float]] = []
     messages: list[str] = []
 
-    for tr_idx in range(tr_start, tr_stop):
+    for tr_idx in tr_indices:
         # C-backend waveforms (actual amplitudes for this TR)
         wf = get_tr_waveforms(
             seq,
@@ -371,6 +376,20 @@ def validate(
                     f'(tol {grad_atol:.4f} mT/m)'
                 )
 
+        # Compare per-block scan table parameters
+        rf_phase_offsets = [blk.rf_phase_offset_rad for blk in wf.blocks]
+        rf_freq_offsets = [blk.rf_freq_offset_hz for blk in wf.blocks]
+        adc_phase_offsets = [blk.adc_phase_offset_rad for blk in wf.blocks]
+        adc_freq_offsets = [blk.adc_freq_offset_hz for blk in wf.blocks]
+        rotation_max = 0.0
+        for blk in wf.blocks:
+            if blk.rotation_matrix:
+                rotation_max = max(rotation_max, np.max(np.abs(blk.rotation_matrix)))
+        tr_err['rf_phase_offset_rad'] = float(np.max(np.abs(rf_phase_offsets))) if rf_phase_offsets else 0.0
+        tr_err['rf_freq_offset_hz'] = float(np.max(np.abs(rf_freq_offsets))) if rf_freq_offsets else 0.0
+        tr_err['adc_phase_offset_rad'] = float(np.max(np.abs(adc_phase_offsets))) if adc_phase_offsets else 0.0
+        tr_err['adc_freq_offset_hz'] = float(np.max(np.abs(adc_freq_offsets))) if adc_freq_offsets else 0.0
+        tr_err['rotation_max_abs'] = rotation_max
 
         # Force reference RF arrays to be real
         ref_t_real = np.real(ref_t)
@@ -378,7 +397,6 @@ def validate(
 
         test_t = wf.rf_mag.time_us
         test_a = wf.rf_mag.amplitude
-
 
         # Interpolate both reference and test RF onto a common grid over the overlapping region
         t_min = max(ref_t_real[0], test_t[0]) if len(ref_t_real) and len(test_t) else 0.0
@@ -424,7 +442,7 @@ def validate(
             seq,
             sequence_idx=sequence_idx,
             xml_path=xml_path,
-            tr_idx=tr_range[0],
+            tr_idx=plot_tr_idx,
             show_rf_centers=show_rf_centers,
             show_echoes=show_echoes,
             show_segments=show_segments,
