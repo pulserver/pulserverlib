@@ -94,13 +94,10 @@ static py::dict _get_tr_waveforms(
     int subsequence_idx,
     int amplitude_mode,
     int tr_index,
-    bool include_prep,
-    bool include_cooldown,
     bool collapse_delays)
 {
     auto wf = pc.coll().get_tr_waveforms(
-        subsequence_idx, amplitude_mode, tr_index, include_prep, include_cooldown,
-        collapse_delays);
+        subsequence_idx, amplitude_mode, tr_index, collapse_delays);
     py::dict out;
 
     auto ch_to_dict = [](const pulseqlib::ChannelWaveform& ch) -> py::dict {
@@ -340,14 +337,12 @@ PYBIND11_MODULE(_pulseqlib_wrapper, m) {
           py::arg("collection"),
           py::arg("subsequence_idx") = 0);
 
-    m.def("_get_tr_waveforms", &_get_tr_waveforms,
-          py::arg("collection"),
-          py::arg("subsequence_idx") = 0,
-          py::arg("amplitude_mode") = 0,
-          py::arg("tr_index") = 0,
-          py::arg("include_prep") = false,
-          py::arg("include_cooldown") = false,
-          py::arg("collapse_delays") = false);
+        m.def("_get_tr_waveforms", &_get_tr_waveforms,
+            py::arg("collection"),
+            py::arg("subsequence_idx") = 0,
+            py::arg("amplitude_mode") = 0,
+            py::arg("tr_index") = 0,
+            py::arg("collapse_delays") = false);
 
         m.def("_calc_acoustic_spectra", &_calc_acoustic_spectra,
             py::arg("collection"),

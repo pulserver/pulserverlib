@@ -317,12 +317,10 @@ def validate(
         # Treat subsequence as single full-pass TR
         tr_start = 0
         tr_stop = 1
-        include_prep = has_prep
-        include_cooldown = has_cooldown
+        # (prep/cooldown always included by backend)
         multi_tr = False
     else:
-        include_prep = False
-        include_cooldown = False
+        # (prep/cooldown always included by backend)
         multi_tr = (tr_stop - tr_start) > 1
 
     # ── Validate each TR in range ────────────────────────────
@@ -336,8 +334,6 @@ def validate(
             subsequence_idx=sequence_idx,
             amplitude_mode='actual',  # use actual amplitudes for validation
             tr_index=tr_idx,
-            include_prep=True,
-            include_cooldown=True,
         )
 
         # Reference waveforms
@@ -379,16 +375,38 @@ def validate(
         # Force reference RF arrays to be real
         ref_t_real = np.real(ref_t)
         ref_a_real = np.real(ref_a)
+
         test_t = wf.rf_mag.time_us
         test_a = wf.rf_mag.amplitude
 
-        # Print diagnostics
-        print(f"[DEBUG] TR {tr_idx} REF RF: len={len(ref_t_real)}, min={ref_t_real.min() if len(ref_t_real) else 'NA'}, max={ref_t_real.max() if len(ref_t_real) else 'NA'}")
-        print(f"[DEBUG] TR {tr_idx} TEST RF: len={len(test_t)}, min={test_t.min() if len(test_t) else 'NA'}, max={test_t.max() if len(test_t) else 'NA'}")
 
-        # Interpolate reference onto test time base
-        ref_interp = np.interp(test_t, ref_t_real, ref_a_real, left=0.0, right=0.0)
-        rf_err = _rms_error(ref_interp, test_a)
+        # Interpolate both reference and test RF onto a common grid over the overlapping region
+        t_min = max(ref_t_real[0], test_t[0]) if len(ref_t_real) and len(test_t) else 0.0
+        t_max = min(ref_t_real[-1], test_t[-1]) if len(ref_t_real) and len(test_t) else 0.0
+        if t_max <= t_min:
+            messages.append(f"RF time overlap is empty: ref=[{ref_t_real[0] if len(ref_t_real) else 'NA'}, {ref_t_real[-1] if len(ref_t_real) else 'NA'}], test=[{test_t[0] if len(test_t) else 'NA'}, {test_t[-1] if len(test_t) else 'NA'}]")
+            errors_per_tr.append(tr_err)
+            continue
+        t_common = np.arange(np.ceil(t_min), np.floor(t_max) + 1)
+        if len(t_common) < 3:
+            messages.append(f"RF overlap region too small for robust comparison (len={len(t_common)})")
+            errors_per_tr.append(tr_err)
+            continue
+        # Ignore endpoints (first and last sample) as in MATLAB reference
+        t_common = t_common[1:-1]
+        if len(t_common) == 0:
+            messages.append(f"RF overlap region empty after ignoring endpoints.")
+            errors_per_tr.append(tr_err)
+            continue
+        # Interpolate absolute values
+        ref_interp = np.abs(np.interp(t_common, ref_t_real, ref_a_real, left=0.0, right=0.0))
+        test_interp = np.abs(np.interp(t_common, test_t, test_a, left=0.0, right=0.0))
+
+        # Print diagnostics
+        print(f"[DEBUG] TR {tr_idx} REF RF (interp): len={len(ref_interp)}, min={ref_interp.min() if len(ref_interp) else 'NA'}, max={ref_interp.max() if len(ref_interp) else 'NA'}")
+        print(f"[DEBUG] TR {tr_idx} TEST RF (interp): len={len(test_interp)}, min={test_interp.min() if len(test_interp) else 'NA'}, max={test_interp.max() if len(test_interp) else 'NA'}")
+
+        rf_err = _rms_error(ref_interp, test_interp)
         tr_err['rf_mag'] = rf_err
         if rf_err > rf_rms_percent:
             pfx = f'TR {tr_idx}: ' if multi_tr else ''

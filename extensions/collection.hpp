@@ -249,8 +249,6 @@ public:
         int ss                = 0,
         int amplitude_mode    = PULSEQLIB_AMP_MAX_POS,
         int tr_index          = 0,
-        bool include_prep     = false,
-        bool include_cooldown = false,
         bool collapse_delays  = false) const
     {
         pulseqlib_tr_waveforms cw;
@@ -260,7 +258,7 @@ public:
 
         int code = pulseqlib_get_tr_waveforms(
             coll_, ss, amplitude_mode, tr_index,
-            include_prep ? 1 : 0, include_cooldown ? 1 : 0,
+            1, 1, // always include prep and cooldown
             collapse_delays ? 1 : 0,
             &cw, &diag);
         check(code, diag);

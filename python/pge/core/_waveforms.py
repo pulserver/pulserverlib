@@ -1,5 +1,5 @@
 def calc_acoustic_spectra(
-    seq: SequenceCollection,
+    seq: 'SequenceCollection',
     subsequence_idx: int = 0,
     canonical_tr_idx: int = 0,
     target_window_size: int = 0,
@@ -20,7 +20,7 @@ def calc_acoustic_spectra(
     )
 
 def calc_pns(
-    seq: SequenceCollection,
+    seq: 'SequenceCollection',
     subsequence_idx: int = 0,
     canonical_tr_idx: int = 0,
     chronaxie_us: float = 360.0,
@@ -44,8 +44,10 @@ from typing import Literal
 
 import numpy as np
 
-from ._extension._pulseqlib_wrapper import _find_tr, _get_tr_waveforms
+
+# Import SequenceCollection before any type annotations use it
 from ._sequence import SequenceCollection
+from ._extension._pulseqlib_wrapper import _find_tr, _get_tr_waveforms
 
 # Physical-unit conversion constants
 _GAMMA_DEFAULT = 42.576e6  # Hz/T
@@ -144,8 +146,6 @@ def get_tr_waveforms(
     subsequence_idx: int = 0,
     amplitude_mode: Literal['max_pos', 'zero_var', 'actual'] = 'max_pos',
     tr_index: int = 0,
-    include_prep: bool = True,
-    include_cooldown: bool = True,
     collapse_delays: bool = False,
 ) -> TrWaveforms:
     """Extract native-timing TR waveforms from the segmented representation.
@@ -168,10 +168,7 @@ def get_tr_waveforms(
         - ``'actual'``  — signed amplitude for a specific TR instance.
     tr_index : int
         TR instance index (0-based).  Only used for ``'actual'`` mode.
-    include_prep : bool
-        (Ignored, always True) — always prepend preparation blocks.
-    include_cooldown : bool
-        (Ignored, always True) — always append cooldown blocks.
+    (Preparation and cooldown blocks are always included if present.)
     collapse_delays : bool
         Shrink pure-delay blocks (no RF, no grad, no ADC) to 0.1 ms
         at the C level, producing a compact waveform timeline.
@@ -196,8 +193,6 @@ def get_tr_waveforms(
         subsequence_idx,
         c_mode,
         tr_index,
-        True,
-        True,
         collapse_delays,
     )
 

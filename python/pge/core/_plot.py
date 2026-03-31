@@ -225,8 +225,6 @@ def plot(
                 subsequence_idx=subsequence_idx,
                 amplitude_mode=amplitude_mode,
                 tr_index=0,
-                include_prep=True,
-                include_cooldown=True,
                 collapse_delays=collapse_delays,
             )
             # Diagnostic: print block info for debugging canonical TR window
@@ -251,8 +249,6 @@ def plot(
                 subsequence_idx=subsequence_idx,
                 amplitude_mode=amplitude_mode,
                 tr_index=tr_index,
-                include_prep=True,
-                include_cooldown=True,
                 collapse_delays=collapse_delays,
             )
             # Mask to the TR window for the requested TR
@@ -294,16 +290,12 @@ def plot(
         from ._extension._pulseqlib_wrapper import _find_tr
 
         tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
-        include_prep = True
-        include_cooldown = True
 
         wf = get_tr_waveforms(
             source,
             subsequence_idx=subsequence_idx,
             amplitude_mode=amplitude_mode,
             tr_index=tr_index,
-            include_prep=include_prep,
-            include_cooldown=include_cooldown,
             collapse_delays=collapse_delays,
         )
         tr_dur = tr_info['tr_duration_us']
