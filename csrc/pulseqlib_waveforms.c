@@ -974,6 +974,7 @@ int pulseqlib__get_gradient_waveforms_range(
 
 int pulseqlib_get_tr_gradient_waveforms(
     const pulseqlib_collection* coll,
+    int subseq_idx,
     int canonical_tr_idx,
     pulseqlib_tr_gradient_waveforms* waveforms,
     pulseqlib_diagnostic* diag)
@@ -990,22 +991,12 @@ int pulseqlib_get_tr_gradient_waveforms(
     float* time_arr;
 
     memset(&uw, 0, sizeof(uw));
-    if (!coll || canonical_tr_idx < 0) {
+    if (!coll || canonical_tr_idx < 0 || subseq_idx < 0 || subseq_idx >= coll->num_subsequences) {
         if (diag) { pulseqlib_diagnostic_init(diag); diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; }
         return PULSEQLIB_ERR_INVALID_ARGUMENT;
     }
 
-    /*
-     * All current sequences are single-subsequence.  The second parameter
-     * was previously named `subseq_idx` but is now a canonical TR index
-     * (0-based) across the unique shot-ID combinations present in subseq 0.
-     * For single-canonical-TR sequences this is equivalent: only 0 is valid.
-     */
-    if (coll->num_subsequences < 1) {
-        if (diag) { pulseqlib_diagnostic_init(diag); diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; }
-        return PULSEQLIB_ERR_INVALID_ARGUMENT;
-    }
-    desc = &coll->descriptors[0];
+    desc = &coll->descriptors[subseq_idx];
 
     has_nd_prep = (desc->tr_descriptor.num_prep_blocks > 0 &&
                    !desc->tr_descriptor.degenerate_prep);
@@ -1032,9 +1023,7 @@ int pulseqlib_get_tr_gradient_waveforms(
             PULSEQLIB_FREE(unique_indices);
             PULSEQLIB_FREE(group_labels);
         }
-        /* Render the representative pass: blocks [rep * pass_len, pass_len).
-         * For a single-pass sequence rep_idx=0 and this matches the old
-         * behaviour of rendering block_table[0..pass_len-1]. */
+        /* Render the representative pass: blocks [rep * pass_len, pass_len). */
         start_block = rep_idx * desc->pass_len;
         block_count = desc->pass_len;
     } else {

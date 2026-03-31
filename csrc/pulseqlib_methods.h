@@ -167,28 +167,31 @@ int pulseqlib_check_consistency(
  * @c num_reps controls the number of repetitions the consumer
  * intends to play (>= 1).  For subsequences whose
  * @c IgnoreAverages definition is set, the multiplier is clamped
- * to 1.
+
+/**
+ * @brief Extract uniform-raster canonical TR gradient waveforms for a given subsequence.
  *
- * Typical use: UI preview of scan time before the sequence is
- * fully loaded.
+ * Returns canonical TR gradient waveforms (gx, gy, gz) for the requested
+ * canonical TR index within the specified subsequence. The canonical TRs are defined as unique shot-index
+ * patterns across the imaging region (for degenerate prep/cooldown) or unique
+ * pass patterns (for non-degenerate prep/cooldown).
  *
- * @param[out] info       Receives scan time summary.
- * @param[in]  file_path  Path to the first .seq file.
- * @param[in]  opts       Scanner limits (used for chain traversal).
- * @param[in]  num_reps   Number of repetitions (>= 1).
+ * The output arrays are allocated by the library and must be freed by the
+ * caller via pulseqlib_tr_gradient_waveforms_free().
+ *
+ * @param[in]  coll             Loaded collection.
+ * @param[in]  subseq_idx       Subsequence index (0-based).
+ * @param[in]  canonical_tr_idx Canonical TR index (0-based, within subsequence).
+ * @param[out] waveforms        Output waveforms (caller frees).
+ * @param[out] diag             Diagnostic on failure.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
-int pulseqlib_peek_scan_time(
-    pulseqlib_scan_time_info* info,
-    const char*               file_path,
-    const pulseqlib_opts*     opts,
-    int                       num_reps);
-
-/* ================================================================== */
-/*  Collection lifetime                                               */
-/* ================================================================== */
-
-/** @brief Free a collection and all owned memory. */
+int pulseqlib_get_tr_gradient_waveforms(
+    const pulseqlib_collection*    coll,
+    int                            subseq_idx,
+    int                            canonical_tr_idx,
+    pulseqlib_tr_gradient_waveforms* waveforms,
+    pulseqlib_diagnostic*          diag);
 void pulseqlib_collection_free(pulseqlib_collection* coll);
 
 /* ================================================================== */
