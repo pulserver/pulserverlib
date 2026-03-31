@@ -156,6 +156,7 @@ int pulseqlib_check_consistency(
 /*  Scan-time peek (fast estimate from definitions only)              */
 /* ================================================================== */
 
+
 /**
  * @brief Peek at scan time without full sequence loading.
  *
@@ -166,7 +167,21 @@ int pulseqlib_check_consistency(
  *
  * @c num_reps controls the number of repetitions the consumer
  * intends to play (>= 1).  For subsequences whose
- * @c IgnoreAverages definition is set, the multiplier is clamped
+ * @c IgnoreAverages definition is set, the multiplier is clamped to 1.
+ *
+ * Both @c total_duration_us and @c total_segment_boundaries are populated.
+ *
+ * @param[in]  file_path      Path to the first .seq file (may be chained).
+ * @param[in]  num_reps       Number of repetitions (>= 1).
+ * @param[out] total_duration_us        Receives total scan duration (us).
+ * @param[out] total_segment_boundaries Receives total segment boundaries (may be NULL).
+ * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
+ */
+int pulseqlib_peek_scan_time(
+    const char* file_path,
+    int num_reps,
+    long long* total_duration_us,
+    int* total_segment_boundaries);
 
 /**
  * @brief Extract uniform-raster canonical TR gradient waveforms for a given subsequence.
@@ -303,11 +318,6 @@ int pulseqlib_load_cache(
  * @param[out] diag             Diagnostic on failure.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
-int pulseqlib_get_tr_gradient_waveforms(
-    const pulseqlib_collection*    coll,
-    int                            canonical_tr_idx,
-    pulseqlib_tr_gradient_waveforms* waveforms,
-    pulseqlib_diagnostic*          diag);
 
 /** @brief Free waveform arrays inside a pulseqlib_tr_gradient_waveforms. */
 void pulseqlib_tr_gradient_waveforms_free(pulseqlib_tr_gradient_waveforms* w);
