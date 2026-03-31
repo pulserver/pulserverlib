@@ -470,8 +470,6 @@ def _validation_plot(
         seq,
         subsequence_idx=sequence_idx,
         tr_idx=tr_idx,
-        hide_prep=False,
-        hide_cooldown=False,
         collapse_delays=False,
         show_segments=show_segments,
         show_blocks=show_blocks,
