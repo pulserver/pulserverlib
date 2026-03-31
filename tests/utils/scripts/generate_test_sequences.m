@@ -943,7 +943,6 @@ function seq = write_mprage(write, num_slices, num_averages)
                 yscale = 0;
             end
         
-            rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
             rf_phase = mod(rf_phase + rf_inc, 360.0);
 
             rf_curr = rf;
@@ -961,6 +960,8 @@ function seq = write_mprage(write, num_slices, num_averages)
             seq.addBlock(gx_pre, gy_pre, gz_reph);
             seq.addBlock(gx, adc_curr);
             seq.addBlock(gx_spoil, gy_rew, gz_spoil);
+
+            rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
         end
         seq.addBlock(delayTR);
     end
@@ -1096,7 +1097,6 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
                 yscale = 0;
             end
         
-            rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
             rf_phase = mod(rf_phase + rf_inc, 360.0);
 
             rf_curr = rf;
@@ -1114,6 +1114,7 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
             seq.addBlock(gx_pre, gy_pre, gz_reph);
             seq.addBlock(gx, adc_curr);
             seq.addBlock(gx_spoil, gy_rew, gz_spoil);
+            rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
         end
         % Navigator: 3 orthogonal single-shot spirals
         % Axial (xy plane): slice-select on z
@@ -1241,7 +1242,6 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
         seq.addBlock(delayTI);
         
         for i = 1:num_shots
-            rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
             rf_phase = mod(rf_phase + rf_inc, 360.0);
             spoke_idx = spoke_idx + 1;
 
@@ -1264,6 +1264,7 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
                     mr.scaleGrad(gz_phase, zscale));
                 seq.addBlock(gx_rews{spoke_idx}, gy_rews{spoke_idx}, gz_spoil);
             end
+            rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
         end
 
         seq.addBlock(delayTR);
@@ -1389,7 +1390,6 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
         seq.addBlock(gz_spoil);
 
         % Spiral FLASH readout
-        rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
         rf_phase = mod(rf_phase + rf_inc, 360.0);
         spoke_idx = spoke_idx + 1;
 
@@ -1412,6 +1412,7 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
                 mr.scaleGrad(gz_phase, zscale));
             seq.addBlock(gx_rews{spoke_idx}, gy_rews{spoke_idx}, gz_spoil);
         end
+        rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
 
         %  Inversion module
         seq.addBlock(rf180);
@@ -1420,7 +1421,6 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
         
         % Multiple spiral FLASH shots
         for i = 1:num_shots
-            rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
             rf_phase = mod(rf_phase + rf_inc, 360.0);
             spoke_idx = spoke_idx + 1;
 
@@ -1443,6 +1443,7 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
                     mr.scaleGrad(gz_phase, zscale));
                 seq.addBlock(gx_rews{spoke_idx}, gy_rews{spoke_idx}, gz_spoil);
             end
+            rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
         end
 
         seq.addBlock(delayTR);

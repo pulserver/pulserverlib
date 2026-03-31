@@ -52,9 +52,9 @@ TotalDuration 0.0752
 29  50   0   3  12   5  0  0
 30 129   0   6   0   0  7  0
 31  50   0   7  11   1  0  0
-32 106   4   0   0   2  0  0
+32 106   9   0   0   2  0  0
 33  50   0   3  10   5  0  0
-34 129   0   6   0   0  3  0
+34 129   0   6   0   0  8  0
 35  50   0   7   9   1  0  0
 36  25   0   0   0   0  0  0
 
@@ -65,13 +65,14 @@ TotalDuration 0.0752
 #   excitation refocusing inversion saturation preparation other undefined
 [RF]
 1           25 1 2 3 10000 0 0 0 0 0 e
-2      54.8582 4 5 0 1000 60 0 0 0 1.46608 e
-3      54.8582 4 5 0 1000 60 0 0 0 4.39823 e
-4      54.8582 4 5 0 1000 60 0 0 0 2.51327 e
-5      54.8582 4 5 0 1000 60 0 0 0 2.0944 e
-6      54.8582 4 5 0 1000 60 0 0 0 3.14159 e
-7      54.8582 4 5 0 1000 60 0 0 0 5.65487 e
-8      54.8582 4 5 0 1000 60 0 0 0 3.35103 e
+2      54.8582 4 5 0 1000 60 0 0 0 0 e
+3      54.8582 4 5 0 1000 60 0 0 0 1.46608 e
+4      54.8582 4 5 0 1000 60 0 0 0 4.39823 e
+5      54.8582 4 5 0 1000 60 0 0 0 2.51327 e
+6      54.8582 4 5 0 1000 60 0 0 0 2.0944 e
+7      54.8582 4 5 0 1000 60 0 0 0 3.14159 e
+8      54.8582 4 5 0 1000 60 0 0 0 5.65487 e
+9      54.8582 4 5 0 1000 60 0 0 0 3.35103 e
 
 # Format of arbitrary gradients:
 #   time_shape_id of 0 means default timing (stepping with grad_raster starting at 1/2 of grad_raster)
@@ -104,13 +105,14 @@ TotalDuration 0.0752
 # id num dwell delay freqPPM phasePPM freq phase phase_id
 # ..  ..    ns    us     ppm  rad/MHz   Hz   rad       ..
 [ADC]
-1 64 40000 20 0 0 0 1.46608 0
-2 64 40000 20 0 0 0 4.39823 0
-3 64 40000 20 0 0 0 2.51327 0
-4 64 40000 20 0 0 0 2.0944 0
-5 64 40000 20 0 0 0 3.14159 0
-6 64 40000 20 0 0 0 5.65487 0
-7 64 40000 20 0 0 0 3.35103 0
+1 64 40000 20 0 0 0 0 0
+2 64 40000 20 0 0 0 1.46608 0
+3 64 40000 20 0 0 0 4.39823 0
+4 64 40000 20 0 0 0 2.51327 0
+5 64 40000 20 0 0 0 2.0944 0
+6 64 40000 20 0 0 0 3.14159 0
+7 64 40000 20 0 0 0 5.65487 0
+8 64 40000 20 0 0 0 3.35103 0
 
 # Sequence Shapes
 [SHAPES]
@@ -1182,4 +1184,4 @@ num_samples 4
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash 18c53bb69dfad86ae82a929a99b5d773
+Hash 2a3c05c35a1047fe0ed9f80c2039f50b

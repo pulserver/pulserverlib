@@ -39,8 +39,8 @@ TotalDuration 0.03792
 #   excitation refocusing inversion saturation preparation other undefined
 [RF]
 1           25 1 2 3 10000 0 0 0 0 0 e
-2      13.8889 1 2 4 1000 0 0 0 0 1.46608 e
-3      13.8889 1 2 4 1000 0 0 0 0 4.39823 e
+2      13.8889 1 2 4 1000 0 0 0 0 0 e
+3      13.8889 1 2 4 1000 0 0 0 0 1.46608 e
 
 # Format of arbitrary gradients:
 #   time_shape_id of 0 means default timing (stepping with grad_raster starting at 1/2 of grad_raster)
@@ -63,8 +63,8 @@ TotalDuration 0.03792
 # id num dwell delay freqPPM phasePPM freq phase phase_id
 # ..  ..    ns    us     ppm  rad/MHz   Hz   rad       ..
 [ADC]
-1 64 80000 0 0 0 0 1.46608 0
-2 64 80000 0 0 0 0 4.39823 0
+1 64 80000 0 0 0 0 0 0
+2 64 80000 0 0 0 0 1.46608 0
 
 # Format of extension lists:
 # id type ref next_id
@@ -657,4 +657,4 @@ num_samples 4
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash d3dbdf37cacbffcf3b75c0e79d810602
+Hash b86e30b2ce56938d5016b4b12a98a529

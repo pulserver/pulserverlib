@@ -59,12 +59,12 @@ TotalDuration 0.11376
 #   excitation refocusing inversion saturation preparation other undefined
 [RF]
 1           25 1 2 3 10000 0 0 0 0 0 e
-2      13.8889 1 2 4 1000 0 0 0 0 1.46608 e
-3      13.8889 1 2 4 1000 0 0 0 0 4.39823 e
-4      13.8889 1 2 4 1000 0 0 0 0 2.51327 e
-5      13.8889 1 2 4 1000 0 0 0 0 2.0944 e
-6      13.8889 1 2 4 1000 0 0 0 0 3.14159 e
-7      13.8889 1 2 4 1000 0 0 0 0 5.65487 e
+2      13.8889 1 2 4 1000 0 0 0 0 0 e
+3      13.8889 1 2 4 1000 0 0 0 0 1.46608 e
+4      13.8889 1 2 4 1000 0 0 0 0 4.39823 e
+5      13.8889 1 2 4 1000 0 0 0 0 2.51327 e
+6      13.8889 1 2 4 1000 0 0 0 0 2.0944 e
+7      13.8889 1 2 4 1000 0 0 0 0 3.14159 e
 
 # Format of arbitrary gradients:
 #   time_shape_id of 0 means default timing (stepping with grad_raster starting at 1/2 of grad_raster)
@@ -109,12 +109,12 @@ TotalDuration 0.11376
 # id num dwell delay freqPPM phasePPM freq phase phase_id
 # ..  ..    ns    us     ppm  rad/MHz   Hz   rad       ..
 [ADC]
-1 64 80000 0 0 0 0 1.46608 0
-2 64 80000 0 0 0 0 4.39823 0
-3 64 80000 0 0 0 0 2.51327 0
-4 64 80000 0 0 0 0 2.0944 0
-5 64 80000 0 0 0 0 3.14159 0
-6 64 80000 0 0 0 0 5.65487 0
+1 64 80000 0 0 0 0 0 0
+2 64 80000 0 0 0 0 1.46608 0
+3 64 80000 0 0 0 0 4.39823 0
+4 64 80000 0 0 0 0 2.51327 0
+5 64 80000 0 0 0 0 2.0944 0
+6 64 80000 0 0 0 0 3.14159 0
 
 # Sequence Shapes
 [SHAPES]
@@ -3396,4 +3396,4 @@ num_samples 4
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash 623569285200b222be7f099bfb2b8c08
+Hash 99d99677971395fdbbd83596b4eb14e8

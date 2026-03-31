@@ -1182,17 +1182,19 @@ static int fill_rf_waveform_for_flat_block(
     idx = start_idx;
     for (i = 0; i < npts; ++i) {
         float t_sample;
+        float freq_term;
         if (has_time_shape && i < decomp_time.num_uncompressed_samples)
             t_sample = t0 + delay_us + decomp_time.samples[i];
         else
             t_sample = t0 + delay_us + 0.5f * rf_raster_us
                        + (float)i * rf_raster_us;
+        freq_term = 2.0f * (float)M_PI * rtab->freq_offset * (t_sample * 1e-6f);
 
         time_mag[idx] = t_sample;
         mag[idx]      = amp * decomp_mag.samples[i];    /* Hz */
         phase[idx]    = (decomp_phase.samples && i < decomp_phase.num_uncompressed_samples)
-                        ? decomp_phase.samples[i] + rtab->phase_offset
-                        : rtab->phase_offset;           /* rad */
+                        ? decomp_phase.samples[i] + rtab->phase_offset + freq_term
+                        : rtab->phase_offset + freq_term; /* rad */
         idx++;
     }
 

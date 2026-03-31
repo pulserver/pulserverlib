@@ -50,9 +50,9 @@ TotalDuration 0.18708
 1           25 1 2 3 5000 0 0 0 0 0 e
 2           25 1 2 4 10000 0 0 0 0 0 e
 3           25 1 2 3 5000 0 0 0 0 3.14159 e
-4      13.8889 1 2 5 1000 0 0 0 0 1.46608 e
-5      13.8889 1 2 5 1000 0 0 0 0 4.39823 e
-6      13.8889 1 2 5 1000 0 0 0 0 2.51327 e
+4      13.8889 1 2 5 1000 0 0 0 0 0 e
+5      13.8889 1 2 5 1000 0 0 0 0 1.46608 e
+6      13.8889 1 2 5 1000 0 0 0 0 4.39823 e
 
 # Format of arbitrary gradients:
 #   time_shape_id of 0 means default timing (stepping with grad_raster starting at 1/2 of grad_raster)
@@ -75,9 +75,9 @@ TotalDuration 0.18708
 # id num dwell delay freqPPM phasePPM freq phase phase_id
 # ..  ..    ns    us     ppm  rad/MHz   Hz   rad       ..
 [ADC]
-1 64 80000 0 0 0 0 1.46608 0
-2 64 80000 0 0 0 0 4.39823 0
-3 64 80000 0 0 0 0 2.51327 0
+1 64 80000 0 0 0 0 0 0
+2 64 80000 0 0 0 0 1.46608 0
+3 64 80000 0 0 0 0 4.39823 0
 
 # Format of extension lists:
 # id type ref next_id
@@ -675,4 +675,4 @@ num_samples 4
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash 42fe5e2b6179be26d169e427fd290261
+Hash 3f9ca79081151c04f425b271d16d20e0
