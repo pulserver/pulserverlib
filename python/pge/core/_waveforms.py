@@ -129,6 +129,8 @@ class TrWaveforms:
     gz: ChannelWaveform = field(default_factory=ChannelWaveform)
     rf_mag: ChannelWaveform = field(default_factory=ChannelWaveform)
     rf_phase: ChannelWaveform = field(default_factory=ChannelWaveform)
+    rf_mag_channels: list = field(default_factory=list)    # per-channel ChannelWaveform; empty for single-Tx
+    rf_phase_channels: list = field(default_factory=list)  # per-channel ChannelWaveform; empty for single-Tx
     adc_events: list = field(default_factory=list)
     blocks: list = field(default_factory=list)
     total_duration_us: float = 0.0
@@ -219,6 +221,23 @@ def get_tr_waveforms(
     rf_mag_uT = rf_mag_hz * (1e6 / gamma)
     rf_mag = ChannelWaveform(np.array(raw['rf_mag']['time_us']), rf_mag_uT)
     rf_phase = ChannelWaveform(np.array(raw['rf_phase']['time_us']), rf_phase_raw)
+    # For pTx (num_rf_channels > 1), split the flat channel-major array into
+    # per-channel ChannelWaveform objects.
+    nch = raw.get('num_rf_channels', 1)
+    if nch > 1 and len(rf_mag_uT) % nch == 0:
+        npts = len(rf_mag_uT) // nch
+        t_rf = np.array(raw['rf_mag']['time_us'])
+        rf_mag_channels = [
+            ChannelWaveform(t_rf[c * npts:(c + 1) * npts], rf_mag_uT[c * npts:(c + 1) * npts])
+            for c in range(nch)
+        ]
+        rf_phase_channels = [
+            ChannelWaveform(t_rf[c * npts:(c + 1) * npts], rf_phase_raw[c * npts:(c + 1) * npts])
+            for c in range(nch)
+        ]
+    else:
+        rf_mag_channels = []
+        rf_phase_channels = []
     adc_events = [AdcEvent(**adc) for adc in raw['adc_events']]
     # Extract per-block scan table parameters if present
     blocks = []
@@ -250,6 +269,8 @@ def get_tr_waveforms(
         gz=gz,
         rf_mag=rf_mag,
         rf_phase=rf_phase,
+        rf_mag_channels=rf_mag_channels,
+        rf_phase_channels=rf_phase_channels,
         adc_events=adc_events,
         blocks=blocks,
         total_duration_us=raw['total_duration_us'],

@@ -109,8 +109,9 @@ static py::dict _get_tr_waveforms(
     out["gx"]       = ch_to_dict(wf.gx);
     out["gy"]       = ch_to_dict(wf.gy);
     out["gz"]       = ch_to_dict(wf.gz);
-    out["rf_mag"]   = ch_to_dict(wf.rf_mag);
-    out["rf_phase"] = ch_to_dict(wf.rf_phase);
+    out["rf_mag"]          = ch_to_dict(wf.rf_mag);
+    out["rf_phase"]        = ch_to_dict(wf.rf_phase);
+    out["num_rf_channels"] = wf.num_rf_channels;
 
     // ADC events
     py::list adc_list;

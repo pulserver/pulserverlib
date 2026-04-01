@@ -266,7 +266,11 @@ typedef struct pulseqlib_tr_waveforms {
     pulseqlib_channel_waveform gy;
     pulseqlib_channel_waveform gz;
 
-    /* RF channels (channel-0 only for pTx) */
+    /* RF channels.  num_rf_channels == 1 for single-Tx.  For pTx
+     * (num_rf_channels > 1), rf_mag.amplitude and rf_phase.amplitude
+     * are channel-major flat arrays: ch0[0..npts-1], ch1[0..npts-1], ...
+     * rf_mag.num_samples == num_rf_channels * npts_per_channel.       */
+    int                        num_rf_channels;  /**< 1 for single-Tx, nch for pTx */
     pulseqlib_channel_waveform rf_mag;    /**< amplitude in Hz           */
     pulseqlib_channel_waveform rf_phase;  /**< amplitude in rad          */
 
@@ -286,6 +290,7 @@ typedef struct pulseqlib_tr_waveforms {
     PULSEQLIB_CHANNEL_WAVEFORM_INIT, \
     PULSEQLIB_CHANNEL_WAVEFORM_INIT, \
     PULSEQLIB_CHANNEL_WAVEFORM_INIT, \
+    1,                               \
     PULSEQLIB_CHANNEL_WAVEFORM_INIT, \
     PULSEQLIB_CHANNEL_WAVEFORM_INIT, \
     0, NULL,  0, NULL,  0.0f \

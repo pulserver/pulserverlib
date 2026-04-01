@@ -275,6 +275,7 @@ public:
         copy_ch(w.gz,       cw.gz);
         copy_ch(w.rf_mag,   cw.rf_mag);
         copy_ch(w.rf_phase, cw.rf_phase);
+        w.num_rf_channels = cw.num_rf_channels;
 
         w.adc_events.resize(static_cast<size_t>(cw.num_adc_events));
         for (int i = 0; i < cw.num_adc_events; ++i) {

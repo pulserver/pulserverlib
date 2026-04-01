@@ -157,6 +157,28 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
             rf_phase = np.angle(arr[1])
             ref['rf_mag'] = _clip_window(t_rel, rf_mag)
             ref['rf_phase'] = _clip_window(t_rel, rf_phase)
+
+            # Multichannel RF detection: in pTx pypulseq the channels are
+            # concatenated so the first time value repeats once per channel.
+            nch = 1
+            n_total = arr.shape[1]
+            if n_total > 1:
+                n_repeat = int(np.sum(arr[0] == arr[0, 0]))
+                if n_repeat > 1 and n_total % n_repeat == 0:
+                    nch = n_repeat
+            if nch > 1:
+                npts_ch = n_total // nch
+                rf_mag_ch_list = []
+                rf_phase_ch_list = []
+                for c in range(nch):
+                    sl = slice(c * npts_ch, (c + 1) * npts_ch)
+                    t_c = np.real((arr[0, sl] - abs_t0_s) * 1e6)
+                    sig_c = arr[1, sl]
+                    rf_mag_ch_list.append(_clip_window(t_c, np.abs(sig_c) * hz_to_uT))
+                    rf_phase_ch_list.append(_clip_window(t_c, np.angle(sig_c)))
+                ref['rf_mag_channels'] = rf_mag_ch_list
+                ref['rf_phase_channels'] = rf_phase_ch_list
+            # RF shim detection (pTx calibration mode): TODO when supported.
         else:
             ref['rf_mag'] = (np.empty(0), np.empty(0))
             ref['rf_phase'] = (np.empty(0), np.empty(0))
@@ -266,11 +288,59 @@ def validate(
     rf_rms_percent: float = 10.0,
 ) -> None:
     """
-    Validate all subsequences and all TRs. Stop at first failure.
-    If do_plot, plot the failing or requested/default TR/subseq.
+    Validate subsequences and TRs against pypulseq or an XML reference.
+
+    Behaviour
+    ---------
+    - No subseq/TR specified: loop over everything, stop at first failure.
+      ``do_plot=True`` plots the failing (subseq, TR) only; no plot on pass.
+    - subseq/TR specified: validate only the requested pair and always plot
+      when ``do_plot=True`` (even on pass).
+      Providing only one of *subsequence_idx* / *tr_instance* is valid when
+      there is a single subsequence (``subsequence_idx`` defaults to 0).
     """
     from ._extension._pulseqlib_wrapper import _find_tr
 
+    num_subseq = seq.num_sequences
+
+    # ── resolve the targeted (subseq, tr) scope ──────────────────────
+    targeted = (subsequence_idx is not None) or (tr_instance is not None)
+
+    if targeted:
+        if subsequence_idx is None:
+            if num_subseq == 1:
+                subsequence_idx = 0
+            else:
+                raise ValueError(
+                    'subsequence_idx must be specified when the sequence '
+                    f'has {num_subseq} subsequences and tr_instance is given.'
+                )
+        if subsequence_idx < 0 or subsequence_idx >= num_subseq:
+            raise ValueError(
+                f'subsequence_idx={subsequence_idx} out of range '
+                f'(valid: 0..{num_subseq - 1})'
+            )
+        tr_info_target = _find_tr(seq._cseq, subsequence_idx=subsequence_idx)
+        num_total = _total_addressable_trs(tr_info_target)
+        if tr_instance is None:
+            tr_instance = 0
+        elif tr_instance < 0:
+            tr_instance = num_total + tr_instance
+        if tr_instance < 0 or tr_instance >= num_total:
+            raise ValueError(
+                f'tr_instance={tr_instance} out of range for {num_total} TRs '
+                f'(valid: 0..{num_total - 1} or -{num_total}..-1)'
+            )
+        ss_range = [subsequence_idx]
+        tr_range = {subsequence_idx: [tr_instance]}
+    else:
+        ss_range = list(range(num_subseq))
+        tr_range = {}
+        for ss in ss_range:
+            tr_info = _find_tr(seq._cseq, subsequence_idx=ss)
+            tr_range[ss] = list(range(_total_addressable_trs(tr_info)))
+
+    # ── common derived settings ───────────────────────────────────────
     sys = seq.system
     if grad_atol is None:
         grad_atol = 3.0 * sys.max_slew * sys.grad_raster_time * 1e3
@@ -281,18 +351,17 @@ def validate(
     else:
         _max_grad_plot = None
 
-    num_subseq = seq.num_sequences
+    # ── validation loop ───────────────────────────────────────────────
     fail = False
     fail_msg = []
     fail_subseq_idx = None
     fail_tr_idx = None
 
-    # Loop over all subsequences and all TRs
-    for ss_idx in range(num_subseq):
+    for ss_idx in ss_range:
         tr_info = _find_tr(seq._cseq, subsequence_idx=ss_idx)
-        num_trs = _total_addressable_trs(tr_info)
-        multi_tr = num_trs > 1
-        for tr_idx in range(num_trs):
+        num_trs_ss = _total_addressable_trs(tr_info)
+        multi_tr = num_trs_ss > 1
+        for tr_idx in tr_range[ss_idx]:
             messages = []
             wf = get_tr_waveforms(
                 seq,
@@ -330,8 +399,6 @@ def validate(
                         f'(tol {grad_atol:.4f} mT/m)'
                     )
 
-            # Per-block scan table parameters (for phase validation) -- handled in _plot, not needed here
-
             # RF envelope (magnitude)
             ref_t_real = np.real(ref_t)
             ref_a_real = np.real(ref_a)
@@ -359,10 +426,9 @@ def validate(
                                 f'{pfx}RF mismatch: {rf_err:.1f}% RMS (tol {rf_rms_percent:.1f}%)'
                             )
 
-            # RF phase validation (C backend already includes all offsets)
+            # RF phase validation
             test_phase_t = np.real(wf.rf_phase.time_us)
             test_phase_a = np.real(np.copy(wf.rf_phase.amplitude))
-            # Compare to reference if available (if ref contains phase)
             if 'rf_phase' in ref and len(test_phase_t) > 0:
                 ref_phase_t, ref_phase_a = ref['rf_phase']
                 ref_phase_t = np.real(ref_phase_t)
@@ -375,14 +441,12 @@ def validate(
                     if len(t_common_p) > 0:
                         ref_interp_p = np.interp(t_common_p, ref_phase_t, ref_phase_a, left=0.0, right=0.0)
                         test_interp_p = np.interp(t_common_p, test_phase_t, test_phase_a, left=0.0, right=0.0)
-                        # Mask to RF-active region to avoid comparing arbitrary phase where amplitude=0
                         ref_mag_t, ref_mag_a = ref['rf_mag']
                         ref_mag_interp = np.interp(t_common_p, np.real(ref_mag_t), ref_mag_a, left=0.0, right=0.0)
                         test_mag_interp = np.interp(t_common_p, np.real(wf.rf_mag.time_us), wf.rf_mag.amplitude, left=0.0, right=0.0)
                         mag_peak = max(ref_mag_interp.max(), test_mag_interp.max(), 1e-30)
                         active = (np.maximum(ref_mag_interp, test_mag_interp) > 0.05 * mag_peak)
                         if active.sum() > 0:
-                            # Angle-wrapped difference handles 2π periodicity; result in radians
                             phase_diff = np.angle(np.exp(1j * (test_interp_p[active] - ref_interp_p[active])))
                             phase_err = float(np.sqrt(np.mean(phase_diff ** 2)))
                             phase_tol = 0.1  # radians
@@ -392,14 +456,13 @@ def validate(
                                     f'{pfx}RF phase mismatch: {phase_err:.3f} rad RMS (tol {phase_tol:.3f} rad)'
                                 )
 
-            # ADC phase validation (with per-block offsets)
+            # ADC phase validation
             for adc in wf.adc_events:
                 if adc.num_samples > 0 and adc.duration_us > 0:
                     dwell_time = adc.duration_us / adc.num_samples
                     t_adc = np.real(adc.onset_us + np.arange(adc.num_samples) * dwell_time)
                     t_adc_s = t_adc * 1e-6
                     adc_phase = np.real(adc.phase_offset_rad + 2 * np.pi * adc.freq_offset_hz * t_adc_s)
-                    # If reference contains ADC phase, compare here (not always available)
                     if 'adc_phase' in ref:
                         ref_adc_t, ref_adc_a = ref['adc_phase']
                         ref_adc_t = np.real(ref_adc_t)
@@ -428,49 +491,44 @@ def validate(
         if fail:
             break
 
-    # Determine what to plot
-    plot_ss = fail_subseq_idx if fail else (subsequence_idx if subsequence_idx is not None else 0)
+    # ── report ────────────────────────────────────────────────────────
     if fail:
-        plot_tr = fail_tr_idx  # already an absolute TR index from the loop
-    else:
-        # tr_instance is an absolute TR index (0 = first prep/dummy TR).
-        # Negative values count backward from the end.
-        tr_info_plot = _find_tr(seq._cseq, subsequence_idx=plot_ss)
-        num_total = _total_addressable_trs(tr_info_plot)
-        if tr_instance is None:
-            plot_tr = 0  # default: first TR
-        elif tr_instance < 0:
-            plot_tr = num_total + tr_instance
-        else:
-            plot_tr = tr_instance
-        if plot_tr < 0 or plot_tr >= num_total:
-            raise ValueError(
-                f'tr_instance={tr_instance} out of range for {num_total} TRs '
-                f'(valid: 0..{num_total - 1} or -{num_total}..-1)'
+        print('Validation failed:')
+        for msg in fail_msg:
+            print(f'  - {msg}')
+        # Always plot the failing (subseq, TR) when do_plot=True
+        if do_plot:
+            _validation_plot(
+                seq,
+                sequence_idx=fail_subseq_idx,
+                xml_path=xml_path,
+                tr_idx=fail_tr_idx,
+                show_rf_centers=show_rf_centers,
+                show_echoes=show_echoes,
+                show_segments=show_segments,
+                show_blocks=show_blocks,
+                max_grad_mT_per_m=_max_grad_plot,
+                ok=False,
+                messages=fail_msg,
             )
-    
-    if do_plot:
+        raise RuntimeError('Validation failed:\n' + '\n'.join(fail_msg))
+
+    print('Validation passed.')
+    # Plot only when a specific (subseq, TR) was requested
+    if do_plot and targeted:
         _validation_plot(
             seq,
-            sequence_idx=plot_ss,
+            sequence_idx=subsequence_idx,
             xml_path=xml_path,
-            tr_idx=plot_tr,
+            tr_idx=tr_instance,
             show_rf_centers=show_rf_centers,
             show_echoes=show_echoes,
             show_segments=show_segments,
             show_blocks=show_blocks,
             max_grad_mT_per_m=_max_grad_plot,
-            ok=not fail,
-            messages=fail_msg if fail else [],
+            ok=True,
+            messages=[],
         )
-
-    if fail:
-        print('Validation failed:')
-        for msg in fail_msg:
-            print(f'  - {msg}')
-        raise RuntimeError('Validation failed:\n' + '\n'.join(fail_msg))
-
-    print('Validation passed.')
 
 # ── validation plot (private) ────────────────────────────────────────
 

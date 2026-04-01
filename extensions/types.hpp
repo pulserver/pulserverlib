@@ -182,8 +182,9 @@ struct TrWaveforms {
     ChannelWaveform gx;         // Hz/m
     ChannelWaveform gy;         // Hz/m
     ChannelWaveform gz;         // Hz/m
-    ChannelWaveform rf_mag;     // Hz
-    ChannelWaveform rf_phase;   // rad
+    int             num_rf_channels = 1;  // 1 for single-Tx, nch for pTx
+    ChannelWaveform rf_mag;     // Hz  (channel-major when num_rf_channels > 1)
+    ChannelWaveform rf_phase;   // rad (channel-major when num_rf_channels > 1)
     std::vector<AdcEvent>        adc_events;
     std::vector<TrBlockDescriptor> blocks;
     float total_duration_us = 0.0f;

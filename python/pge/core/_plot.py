@@ -293,6 +293,12 @@ def plot(
                 return t[mask], a[mask]
             wf.rf_mag.time_us, wf.rf_mag.amplitude = _mask_tr(wf.rf_mag.time_us, wf.rf_mag.amplitude)
             wf.rf_phase.time_us, wf.rf_phase.amplitude = _mask_tr(wf.rf_phase.time_us, wf.rf_phase.amplitude)
+            wf.rf_mag_channels = [
+                ChannelWaveform(*_mask_tr(ch.time_us, ch.amplitude)) for ch in wf.rf_mag_channels
+            ]
+            wf.rf_phase_channels = [
+                ChannelWaveform(*_mask_tr(ch.time_us, ch.amplitude)) for ch in wf.rf_phase_channels
+            ]
             wf.gx.time_us, wf.gx.amplitude = _mask_tr(wf.gx.time_us, wf.gx.amplitude)
             wf.gy.time_us, wf.gy.amplitude = _mask_tr(wf.gy.time_us, wf.gy.amplitude)
             wf.gz.time_us, wf.gz.amplitude = _mask_tr(wf.gz.time_us, wf.gz.amplitude)
@@ -381,6 +387,16 @@ def plot(
                 label='pulserver',
             )
         ax.set_ylabel('|RF| (uT)')
+        # Per-channel RF magnitude overlay (pTx)
+        if wf.rf_mag_channels:
+            for cidx, ch_c in enumerate(wf.rf_mag_channels):
+                if ch_c.time_us.size > 0:
+                    ax.plot(
+                        _t(ch_c.time_us), ch_c.amplitude,
+                        color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
+                        linewidth=_MAIN_LINEWIDTH, linestyle='-',
+                        alpha=0.75, label=f'ch{cidx}',
+                    )
 
         # ── RF phase ──
         ax = axes['rf_phase']
@@ -399,6 +415,16 @@ def plot(
         ax.set_ylabel('RF phase (rad)')
         ax.set_yticks([-np.pi, 0, np.pi])
         ax.set_yticklabels(['-pi', '0', 'pi'])
+        # Per-channel RF phase overlay (pTx)
+        if wf.rf_phase_channels:
+            for cidx, ch_c in enumerate(wf.rf_phase_channels):
+                if ch_c.time_us.size > 0:
+                    ax.plot(
+                        _t(ch_c.time_us), _wrap_phase(ch_c.amplitude),
+                        color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
+                        linewidth=_MAIN_LINEWIDTH, linestyle='-',
+                        alpha=0.75, label=f'ch{cidx}',
+                    )
 
         # ── ADC phase envelope ──
         ax = axes['adc']
@@ -592,6 +618,25 @@ def plot(
                     linestyle='--',
                     label=f'{label or "pypulseq"}',
                 )
+        # Per-channel RF overlay (pTx)
+        if 'rf_mag_channels' in ref:
+            for cidx, (t_c, amp_c) in enumerate(ref['rf_mag_channels']):
+                if len(t_c) > 0:
+                    fig.axes['rf_mag'].plot(
+                        t_c * t_scale, amp_c,
+                        linewidth=_OVERLAY_LINEWIDTH, alpha=0.75,
+                        color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
+                        linestyle='--', label=f'ch{cidx}',
+                    )
+        if 'rf_phase_channels' in ref:
+            for cidx, (t_c, amp_c) in enumerate(ref['rf_phase_channels']):
+                if len(t_c) > 0:
+                    fig.axes['rf_phase'].plot(
+                        t_c * t_scale, _wrap_phase(amp_c),
+                        linewidth=_OVERLAY_LINEWIDTH, alpha=0.75,
+                        color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
+                        linestyle='--', label=f'ch{cidx}',
+                    )
         # ADC phase overlay if available
         if 'adc_phase' in ref:
             t_us, amp = ref['adc_phase']

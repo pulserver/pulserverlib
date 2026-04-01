@@ -1101,7 +1101,7 @@ static int count_rf_samples_for_flat_block(
     const pulseqlib_block_definition* bdef;
     const pulseqlib_rf_definition* rdef;
     const pulseqlib_shape_arbitrary* shape;
-    int shape_idx, nch;
+    int shape_idx;
 
     bte = &desc->block_table[block_idx];
     bdef = &desc->block_definitions[bte->id];
@@ -1111,8 +1111,8 @@ static int count_rf_samples_for_flat_block(
     shape_idx = rdef->mag_shape_id - 1;
     if (shape_idx < 0 || shape_idx >= desc->num_shapes) return 0;
     shape = &desc->shapes[shape_idx];
-    nch = (rdef->num_channels > 1) ? rdef->num_channels : 1;
-    return shape->num_uncompressed_samples / nch;
+    /* return total samples across all channels (nch * npts_per_channel) */
+    return shape->num_uncompressed_samples;
 }
 
 /*
@@ -1124,7 +1124,8 @@ static int fill_rf_waveform_for_flat_block(
     const pulseqlib_sequence_descriptor* desc,
     int block_idx,
     float* time_mag, float* mag, float* phase,
-    int start_idx, float t0)
+    int start_idx, float t0,
+    int* out_nch)
 {
     const pulseqlib_block_table_element* bte;
     const pulseqlib_block_definition* bdef;
@@ -1132,7 +1133,7 @@ static int fill_rf_waveform_for_flat_block(
     const pulseqlib_rf_table_element* rtab;
     pulseqlib_shape_arbitrary decomp_mag, decomp_phase, decomp_time;
     float rf_raster_us, delay_us, amp;
-    int nch, npts, i, idx;
+    int nch, npts, i, idx, c, src_i;
     int has_time_shape;
 
     bte = &desc->block_table[block_idx];
@@ -1178,24 +1179,28 @@ static int fill_rf_waveform_for_flat_block(
             has_time_shape = 1;
     }
 
-    /* fill arrays (channel 0 only) */
+    /* fill all channels (channel-major order: ch0[0..npts-1], ch1[0..npts-1], ...) */
     idx = start_idx;
-    for (i = 0; i < npts; ++i) {
-        float t_local;  /* time from RF pulse start, µs – matches pypulseq rf.t */
-        float freq_term;
-        if (has_time_shape && i < decomp_time.num_uncompressed_samples)
-            t_local = decomp_time.samples[i];
-        else
-            t_local = 0.5f * rf_raster_us + (float)i * rf_raster_us;
-        freq_term = 2.0f * (float)M_PI * rtab->freq_offset * (t_local * 1e-6f);
+    for (c = 0; c < nch; ++c) {
+        for (i = 0; i < npts; ++i) {
+            float t_local;  /* time from RF pulse start, µs – matches pypulseq rf.t */
+            float freq_term;
+            src_i = c * npts + i;
+            if (has_time_shape && i < decomp_time.num_uncompressed_samples)
+                t_local = decomp_time.samples[i];
+            else
+                t_local = 0.5f * rf_raster_us + (float)i * rf_raster_us;
+            freq_term = 2.0f * (float)M_PI * rtab->freq_offset * (t_local * 1e-6f);
 
-        time_mag[idx] = t0 + delay_us + t_local;
-        mag[idx]      = amp * decomp_mag.samples[i];    /* Hz */
-        phase[idx]    = (decomp_phase.samples && i < decomp_phase.num_uncompressed_samples)
-                        ? decomp_phase.samples[i] + rtab->phase_offset + freq_term
-                        : rtab->phase_offset + freq_term; /* rad */
-        idx++;
+            time_mag[idx] = t0 + delay_us + t_local;
+            mag[idx]      = amp * decomp_mag.samples[src_i];    /* Hz */
+            phase[idx]    = (decomp_phase.samples && src_i < decomp_phase.num_uncompressed_samples)
+                            ? decomp_phase.samples[src_i] + rtab->phase_offset + freq_term
+                            : rtab->phase_offset + freq_term; /* rad */
+            idx++;
+        }
     }
+    if (out_nch) *out_nch = nch;
 
     if (decomp_mag.samples)   PULSEQLIB_FREE(decomp_mag.samples);
     if (decomp_phase.samples) PULSEQLIB_FREE(decomp_phase.samples);
@@ -1241,7 +1246,7 @@ int pulseqlib_get_tr_waveforms(
     int main_region_start, main_region_end;
     int n, block_idx, k;
     int total_gx, total_gy, total_gz, total_rf, total_adc;
-    int idx_gx, idx_gy, idx_gz, idx_rf, idx_adc;
+    int idx_gx, idx_gy, idx_gz, idx_rf, idx_adc, rf_nch, this_nch;
     float t0, block_dur_us;
     const pulseqlib_block_table_element* bte;
     const pulseqlib_block_definition* bdef;
@@ -1256,6 +1261,10 @@ int pulseqlib_get_tr_waveforms(
     float* pos_max_gy;
     float* pos_max_gz;
     float actual_amp[PULSEQLIB_MAX_GRAD_SHOTS];
+    /* rotation post-pass variables */
+    int interp_result, n_uniform, blk_n, rot_id, s;
+    float target_raster_us, blk_end, t_sample_rot, vec[3], rot_out[3];
+    const float* R;
 
     pos_max_gx = NULL;
     pos_max_gy = NULL;
@@ -1424,6 +1433,7 @@ int pulseqlib_get_tr_waveforms(
     /* ---- PASS 2: fill ---- */
     t0 = 0.0f;
     idx_gx = 0; idx_gy = 0; idx_gz = 0; idx_rf = 0; idx_adc = 0;
+    rf_nch = 1;
 
     main_region_start = tr->num_prep_blocks + tr->imaging_tr_start;
     main_region_end = main_region_start + tr->num_trs * tr->tr_size;
@@ -1530,9 +1540,11 @@ int pulseqlib_get_tr_waveforms(
         }
 
         /* ---- RF ---- */
+        this_nch = 1;
         idx_rf += fill_rf_waveform_for_flat_block(desc, block_idx,
             out->rf_mag.time_us, out->rf_mag.amplitude,
-            out->rf_phase.amplitude, idx_rf, t0);
+            out->rf_phase.amplitude, idx_rf, t0, &this_nch);
+        if (this_nch > rf_nch) rf_nch = this_nch;
 
         /* ---- ADC ---- */
         if (amplitude_mode == PULSEQLIB_AMP_ACTUAL) {
@@ -1571,6 +1583,69 @@ int pulseqlib_get_tr_waveforms(
     if (pos_max_gy) PULSEQLIB_FREE(pos_max_gy);
     if (pos_max_gz) PULSEQLIB_FREE(pos_max_gz);
 
+    /* ---- Interpolate gradients to uniform 0.5 grad raster ----
+     * After this, all three axes share the same time base, which
+     * makes the rotation post-pass trivial. */
+    {
+        int num_gx = idx_gx, num_gy = idx_gy, num_gz = idx_gz;
+        target_raster_us = 0.5f * desc->grad_raster_us;
+
+        interp_result = interpolate_to_uniform(
+            &out->gx.time_us, &out->gx.amplitude,
+            &num_gx, target_raster_us);
+        if (PULSEQLIB_FAILED(interp_result)) {
+            diag->code = interp_result; return interp_result;
+        }
+        interp_result = interpolate_to_uniform(
+            &out->gy.time_us, &out->gy.amplitude,
+            &num_gy, target_raster_us);
+        if (PULSEQLIB_FAILED(interp_result)) {
+            diag->code = interp_result; return interp_result;
+        }
+        interp_result = interpolate_to_uniform(
+            &out->gz.time_us, &out->gz.amplitude,
+            &num_gz, target_raster_us);
+        if (PULSEQLIB_FAILED(interp_result)) {
+            diag->code = interp_result; return interp_result;
+        }
+
+        /* All three axes should have the same sample count; use min
+         * as a safety clamp against float rounding. */
+        n_uniform = num_gx;
+        if (num_gy < n_uniform) n_uniform = num_gy;
+        if (num_gz < n_uniform) n_uniform = num_gz;
+        idx_gx = n_uniform;
+        idx_gy = n_uniform;
+        idx_gz = n_uniform;
+    }
+
+    /* ---- Rotation post-pass ----
+     * All three grad axes now share the same uniform time base.
+     * Walk through samples, find each sample's block, and apply R^T
+     * if that block has a rotation. */
+    blk_n = 0;
+    blk_end = out->blocks[0].start_us + out->blocks[0].duration_us;
+    for (s = 0; s < n_uniform; ++s) {
+        t_sample_rot = out->gx.time_us[s];
+        while (blk_n + 1 < block_count && t_sample_rot >= blk_end) {
+            blk_n++;
+            blk_end = out->blocks[blk_n].start_us
+                    + out->blocks[blk_n].duration_us;
+        }
+        bte = &desc->block_table[block_start + blk_n];
+        rot_id = bte->rotation_id;
+        if (rot_id < 0 || rot_id >= desc->num_rotations) continue;
+        if (bte->norot_flag) continue;
+        R = desc->rotation_matrices[rot_id];
+        vec[0] = out->gx.amplitude[s];
+        vec[1] = out->gy.amplitude[s];
+        vec[2] = out->gz.amplitude[s];
+        pulseqlib__apply_rotation(rot_out, R, vec, 1);
+        out->gx.amplitude[s] = rot_out[0];
+        out->gy.amplitude[s] = rot_out[1];
+        out->gz.amplitude[s] = rot_out[2];
+    }
+
     /* rf_phase shares time_us with rf_mag */
     if (total_rf > 0) {
         memcpy(out->rf_phase.time_us, out->rf_mag.time_us,
@@ -1582,6 +1657,7 @@ int pulseqlib_get_tr_waveforms(
     out->gz.num_samples       = idx_gz;
     out->rf_mag.num_samples   = idx_rf;
     out->rf_phase.num_samples = idx_rf;
+    out->num_rf_channels      = rf_nch;
     out->num_adc_events       = idx_adc;
     out->num_blocks           = block_count;
     out->total_duration_us    = t0;
