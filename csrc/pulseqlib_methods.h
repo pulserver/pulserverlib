@@ -342,9 +342,9 @@ void pulseqlib_tr_gradient_waveforms_free(pulseqlib_tr_gradient_waveforms* w);
  * For modes 0 and 1, @p tr_index is ignored (canonical main TR is used).
  * For mode 2, @p tr_index selects the TR instance (0-based).
  *
- * @p include_prep / @p include_cooldown add prep / cooldown blocks
- * before / after the main TR.  Prep is only valid for the first TR,
- * cooldown only for the last.
+ * For degenerate (or absent) prep/cooldown the output covers a single
+ * canonical TR (which already includes dummy TRs).  For non-degenerate
+ * prep/cooldown the output covers the full pass.
  *
  * Block descriptors in the output carry segment assignment (or -1 for
  * prep / cooldown blocks).  The caller is responsible for freeing via
@@ -354,8 +354,7 @@ void pulseqlib_tr_gradient_waveforms_free(pulseqlib_tr_gradient_waveforms* w);
  * @param[in]  subseq_idx         Subsequence index (0 for single-seq).
  * @param[in]  amplitude_mode     PULSEQLIB_AMP_MAX_POS / _ZERO_VAR / _ACTUAL.
  * @param[in]  tr_index           TR instance (only for _ACTUAL mode).
- * @param[in]  include_prep       Non-zero to prepend prep blocks.
- * @param[in]  include_cooldown   Non-zero to append cooldown blocks.
+ * @param[in]  collapse_delays    Non-zero to shrink pure-delay blocks.
  * @param[out] out                Output waveforms (caller frees).
  * @param[out] diag               Diagnostic on error.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
@@ -365,8 +364,6 @@ int pulseqlib_get_tr_waveforms(
     int                             subseq_idx,
     int                             amplitude_mode,
     int                             tr_index,
-    int                             include_prep,
-    int                             include_cooldown,
     int                             collapse_delays,
     pulseqlib_tr_waveforms*         out,
     pulseqlib_diagnostic*           diag);

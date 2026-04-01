@@ -304,14 +304,13 @@ def plot(
             from ._validate import _total_addressable_trs
             num_trs = _total_addressable_trs(tr_info)
             first_tr_start_us = wf.blocks[0].start_us if wf.blocks else 0.0
-            from ._validate import _abs_tr_start_s
-            _abs_s = _abs_tr_start_s(
-                source._seqs[subsequence_idx],
-                tr_info['num_prep_blocks'],
-                0,
-                tr_info['tr_duration_us'],
-                tr_info.get('imaging_tr_start'),
+            from ._validate import _abs_block_start_s
+            has_nd = (
+                (tr_info['num_prep_blocks'] > 0 and not tr_info['degenerate_prep'])
+                or (tr_info['num_cooldown_blocks'] > 0 and not tr_info['degenerate_cooldown'])
             )
+            _abs_s = 0.0 if has_nd else _abs_block_start_s(
+                source._seqs[subsequence_idx], tr_info['num_prep_blocks'])
         else:
             wf = get_tr_waveforms(
                 source,
@@ -344,14 +343,10 @@ def plot(
             wf.blocks = [blk for blk in wf.blocks if t0 <= blk.start_us < t1]
             num_trs = 1
             first_tr_start_us = t0
-            from ._validate import _abs_tr_start_s
-            _abs_s = _abs_tr_start_s(
+            from ._validate import _abs_block_start_s
+            _abs_s = _abs_block_start_s(
                 source._seqs[subsequence_idx],
-                tr_info['num_prep_blocks'],
-                tr_index,
-                tr_info['tr_duration_us'],
-                tr_info.get('imaging_tr_start'),
-            )
+                tr_index * tr_info['tr_size'])
 
     # ── Time helpers ──
     t_scale = 1e-3 if time_unit == 'ms' else 1.0
@@ -385,15 +380,11 @@ def plot(
 
         # Absolute start time of displayed TR within the pypulseq seq
         # (needed for Branch 2 overlay alignment).
-        from ._validate import _abs_tr_start_s
+        from ._validate import _abs_block_start_s
 
-        _abs_s = _abs_tr_start_s(
+        _abs_s = _abs_block_start_s(
             source._seqs[subsequence_idx],
-            tr_info['num_prep_blocks'],
-            tr_index,
-            tr_info['tr_duration_us'],
-            tr_info.get('imaging_tr_start'),
-        )
+            tr_index * tr_info['tr_size'])
 
         if figsize is None:
             figsize = (14, 8)

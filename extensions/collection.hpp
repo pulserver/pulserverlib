@@ -258,7 +258,6 @@ public:
 
         int code = pulseqlib_get_tr_waveforms(
             coll_, ss, amplitude_mode, tr_index,
-            1, 1, // always include prep and cooldown
             collapse_delays ? 1 : 0,
             &cw, &diag);
         check(code, diag);

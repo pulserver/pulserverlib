@@ -219,12 +219,9 @@ def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info):
         Times are relative to TR start; amplitudes in mT/m (grad) or
         µT (RF magnitude).
     """
-    t0 = _abs_tr_start_s(
+    t0 = _abs_block_start_s(
         seq._seqs[sequence_idx],
-        tr_info['num_prep_blocks'],
-        tr_idx,
-        tr_info['tr_duration_us'],
-        tr_info.get('imaging_tr_start'),
+        tr_idx * tr_info['tr_size'],
     )
     return _pypulseq_reference_window(seq, sequence_idx, t0, tr_info['tr_duration_us'])
 
@@ -371,12 +368,9 @@ def validate(
             )
             # Reference extraction
             if xml_path is None:
-                abs_t0 = _abs_tr_start_s(
+                abs_t0 = _abs_block_start_s(
                     seq._seqs[ss_idx],
-                    tr_info['num_prep_blocks'],
-                    tr_idx,
-                    tr_info['tr_duration_us'],
-                    tr_info.get('imaging_tr_start'),
+                    tr_idx * tr_info['tr_size'],
                 )
                 ref = _pypulseq_reference_window(
                     seq, ss_idx, abs_t0, wf.total_duration_us

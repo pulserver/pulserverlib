@@ -1232,8 +1232,6 @@ int pulseqlib_get_tr_waveforms(
     int subseq_idx,
     int amplitude_mode,
     int tr_index,
-    int include_prep,
-    int include_cooldown,
     int collapse_delays,
     pulseqlib_tr_waveforms* out,
     pulseqlib_diagnostic* diag)
@@ -1308,15 +1306,10 @@ int pulseqlib_get_tr_waveforms(
         /* Canonical main TR (first imaging instance) */
         tr_block_start = tr->num_prep_blocks + tr->imaging_tr_start;
         /*
-         * Patch: For degenerate prep/cooldown (GRE), always return only a single canonical TR.
-         * For non-degenerate, retain full-pass behavior if both include_prep/cooldown and (has_nd_prep || has_nd_cool).
+         * Degenerate (or absent) prep/cooldown: return a single canonical TR.
+         * Non-degenerate: return the full pass (prep + imaging + cooldown).
          */
-        if (!(has_nd_prep || has_nd_cool)) {
-            // Degenerate: only a single canonical TR
-            block_start = tr_block_start;
-            block_count = tr->tr_size;
-        } else if (include_prep && include_cooldown && (has_nd_prep || has_nd_cool)) {
-            // Non-degenerate: full pass
+        if (has_nd_prep || has_nd_cool) {
             block_start = 0;
             block_count = desc->pass_len;
         } else {
