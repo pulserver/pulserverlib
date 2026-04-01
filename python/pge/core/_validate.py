@@ -62,9 +62,53 @@ def _rms_error(ref, test):
     return 100.0 * np.sqrt(np.mean((ref - test) ** 2)) / norm
 
 
-def _total_addressable_trs(tr_info):
-    """Total TRs addressable in ACTUAL mode (prep + imaging + cooldown)."""
-    return tr_info['num_trs'] + tr_info['num_prep_trs'] + tr_info['num_cooldown_trs']
+def _is_non_degenerate(tr_info):
+    """True for bSSFP-like layouts where each ACTUAL-mode TR spans a full pass.
+
+    In that case the waveform length already encodes all averages, so the
+    instance count does NOT change with num_averages.
+    """
+    has_nd_prep = (not tr_info['degenerate_prep'] and tr_info['num_prep_blocks'] > 0)
+    has_nd_cool = (not tr_info['degenerate_cooldown'] and tr_info['num_cooldown_blocks'] > 0)
+    return has_nd_prep or has_nd_cool
+
+
+def _total_addressable_trs(tr_info, num_averages=1):
+    """Total TRs addressable in ACTUAL mode.
+
+    Non-degenerate (bSSFP): averages are embedded in each TR waveform —
+    instance count is constant at ``num_trs + num_prep_trs + num_cooldown_trs``.
+
+    Degenerate (GRE-like): prep/cooldown play once; imaging repeats
+    ``num_averages`` times, giving ``num_prep_trs + num_averages * num_trs
+    + num_cooldown_trs``.
+    """
+    if _is_non_degenerate(tr_info):
+        return tr_info['num_trs'] + tr_info['num_prep_trs'] + tr_info['num_cooldown_trs']
+    return (tr_info['num_prep_trs']
+            + num_averages * tr_info['num_trs']
+            + tr_info['num_cooldown_trs'])
+
+
+def _canonical_c_tr_index(tr_idx, tr_info, num_averages=1):
+    """Map a flat validate-loop tr_idx to the C library tr_index.
+
+    Non-degenerate: identity — the C library already handles the full pass.
+
+    Degenerate: prep and cooldown indices pass through unchanged; imaging
+    indices are wrapped modulo ``num_trs`` so they always point at a
+    canonical block in the pypulseq file.
+    """
+    if _is_non_degenerate(tr_info):
+        return tr_idx
+    num_prep = tr_info['num_prep_trs']
+    num_trs = tr_info['num_trs']
+    if tr_idx < num_prep:
+        return tr_idx
+    if tr_idx < num_prep + num_averages * num_trs:
+        return num_prep + (tr_idx - num_prep) % num_trs
+    cool_idx = tr_idx - num_prep - num_averages * num_trs
+    return num_prep + num_trs + cool_idx
 
 
 def _abs_tr_start_s(
@@ -209,7 +253,7 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
 # ── reference extraction ─────────────────────────────────────────────
 
 
-def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info):
+def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1):
     """Extract reference waveforms from pypulseq for a single TR.
 
     Returns
@@ -219,9 +263,10 @@ def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info):
         Times are relative to TR start; amplitudes in mT/m (grad) or
         µT (RF magnitude).
     """
+    c_idx = _canonical_c_tr_index(tr_idx, tr_info, num_averages)
     t0 = _abs_block_start_s(
         seq._seqs[sequence_idx],
-        tr_idx * tr_info['tr_size'],
+        c_idx * tr_info['tr_size'],
     )
     return _pypulseq_reference_window(seq, sequence_idx, t0, tr_info['tr_duration_us'])
 
@@ -272,15 +317,11 @@ def _xml_reference(xml_path):
 def validate(
     seq: SequenceCollection,
     *,
+    num_averages: int = 1,
     subsequence_idx: int | None = None,
     tr_instance: int | None = None,
     xml_path: str | Path | None = None,
     do_plot: bool = False,
-    show_rf_centers: bool = False,
-    show_echoes: bool = False,
-    show_segments: bool = True,
-    show_blocks: bool = False,
-    max_grad_mT_per_m: float | bool | None = True,
     grad_atol: float | None = None,
     rf_rms_percent: float = 10.0,
 ) -> None:
@@ -318,7 +359,7 @@ def validate(
                 f'(valid: 0..{num_subseq - 1})'
             )
         tr_info_target = _find_tr(seq._cseq, subsequence_idx=subsequence_idx)
-        num_total = _total_addressable_trs(tr_info_target)
+        num_total = _total_addressable_trs(tr_info_target, num_averages)
         if tr_instance is None:
             tr_instance = 0
         elif tr_instance < 0:
@@ -335,18 +376,13 @@ def validate(
         tr_range = {}
         for ss in ss_range:
             tr_info = _find_tr(seq._cseq, subsequence_idx=ss)
-            tr_range[ss] = list(range(_total_addressable_trs(tr_info)))
+            tr_range[ss] = list(range(_total_addressable_trs(tr_info, num_averages)))
 
     # ── common derived settings ───────────────────────────────────────
     sys = seq.system
     if grad_atol is None:
         grad_atol = 3.0 * sys.max_slew * sys.grad_raster_time * 1e3
-    if max_grad_mT_per_m is True:
-        _max_grad_plot = sys.max_grad / sys.gamma * 1e3
-    elif isinstance(max_grad_mT_per_m, (int, float)) and max_grad_mT_per_m is not False:
-        _max_grad_plot = float(max_grad_mT_per_m)
-    else:
-        _max_grad_plot = None
+    _max_grad_plot = sys.max_grad / sys.gamma * 1e3
 
     # ── validation loop ───────────────────────────────────────────────
     fail = False
@@ -356,29 +392,30 @@ def validate(
 
     for ss_idx in ss_range:
         tr_info = _find_tr(seq._cseq, subsequence_idx=ss_idx)
-        num_trs_ss = _total_addressable_trs(tr_info)
+        num_trs_ss = _total_addressable_trs(tr_info, num_averages)
         multi_tr = num_trs_ss > 1
         for tr_idx in tr_range[ss_idx]:
             messages = []
+            c_idx = _canonical_c_tr_index(tr_idx, tr_info, num_averages)
             wf = get_tr_waveforms(
                 seq,
                 subsequence_idx=ss_idx,
                 amplitude_mode='actual',
-                tr_index=tr_idx,
+                tr_index=c_idx,
             )
             # Reference extraction
             if xml_path is None:
-                abs_t0 = _abs_block_start_s(
-                    seq._seqs[ss_idx],
-                    tr_idx * tr_info['tr_size'],
-                )
-                ref = _pypulseq_reference_window(
-                    seq, ss_idx, abs_t0, wf.total_duration_us
-                )
-                ref_t, ref_a = ref['rf_mag']
+                ref = _pypulseq_reference(seq, ss_idx, tr_idx, tr_info, num_averages)
             else:
                 ref = _xml_reference(xml_path)
-                ref_t, ref_a = ref['rf_mag']
+            # Sort every (t, a) entry so time axes are monotone.
+            for _k in list(ref.keys()):
+                if isinstance(ref[_k], tuple):
+                    _t, _a = np.asarray(ref[_k][0]), np.asarray(ref[_k][1])
+                    if _t.ndim == 1 and len(_t) > 1:
+                        _ord = np.argsort(_t)
+                        ref[_k] = (_t[_ord], _a[_ord])
+            ref_t, ref_a = ref['rf_mag']
 
             # Compare gradients
             for ch in ('gx', 'gy', 'gz'):
@@ -497,10 +534,6 @@ def validate(
                 sequence_idx=fail_subseq_idx,
                 xml_path=xml_path,
                 tr_idx=fail_tr_idx,
-                show_rf_centers=show_rf_centers,
-                show_echoes=show_echoes,
-                show_segments=show_segments,
-                show_blocks=show_blocks,
                 max_grad_mT_per_m=_max_grad_plot,
                 ok=False,
                 messages=fail_msg,
@@ -515,10 +548,6 @@ def validate(
             sequence_idx=subsequence_idx,
             xml_path=xml_path,
             tr_idx=tr_instance,
-            show_rf_centers=show_rf_centers,
-            show_echoes=show_echoes,
-            show_segments=show_segments,
-            show_blocks=show_blocks,
             max_grad_mT_per_m=_max_grad_plot,
             ok=True,
             messages=[],
@@ -532,10 +561,6 @@ def _validation_plot(
     sequence_idx,
     xml_path,
     tr_idx,
-    show_rf_centers,
-    show_echoes,
-    show_segments,
-    show_blocks,
     max_grad_mT_per_m,
     ok,
     messages,
@@ -549,11 +574,11 @@ def _validation_plot(
         subsequence_idx=sequence_idx,
         tr_idx=tr_idx,
         collapse_delays=False,
-        show_segments=show_segments,
-        show_blocks=show_blocks,
+        show_segments=False,
+        show_blocks=False,
         show_slew=False,
-        show_rf_centers=show_rf_centers,
-        show_echoes=show_echoes,
+        show_rf_centers=False,
+        show_echoes=False,
         max_grad_mT_per_m=max_grad_mT_per_m,
         max_slew_T_per_m_per_s=None,
     )

@@ -131,8 +131,8 @@ def test_validate_handles_unsorted_reference_times(simple_gre_seq, monkeypatch):
     sc = SequenceCollection(simple_gre_seq)
     orig = _validate_mod._pypulseq_reference
 
-    def _unsorted_reference(seq, sequence_idx, tr_idx, tr_info):
-        ref = orig(seq, sequence_idx, tr_idx, tr_info)
+    def _unsorted_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1):
+        ref = orig(seq, sequence_idx, tr_idx, tr_info, num_averages)
         out = {}
         for key, value in ref.items():
             t, a = value
@@ -147,26 +147,22 @@ def test_validate_handles_unsorted_reference_times(simple_gre_seq, monkeypatch):
 
     monkeypatch.setattr(_validate_mod, "_pypulseq_reference", _unsorted_reference)
 
-    result = sc.validate(
-        sequence_idx=0,
-        do_plot=False,
-        tr_range=(0, 1),
-    )
+    result = sc.validate(subsequence_idx=0, do_plot=False)
 
     assert result is None
 
 
-def test_validate_passes_for_supported_generated_sequences(validate_pass_seq_path, capsys):
+def test_validate_passes_for_supported_generated_sequences(validate_pass_seq_path, num_averages, capsys):
     sc = SequenceCollection(str(validate_pass_seq_path))
 
-    result = sc.validate(sequence_idx=0, do_plot=False, tr_range=(0, 1))
+    result = sc.validate(num_averages=num_averages)
 
     captured = capsys.readouterr()
     assert result is None
     assert 'Validation passed.' in captured.out
 
 
-def test_validate_bssfp_full_range_includes_prep_and_cooldown(capsys):
+def test_validate_bssfp_full_range_includes_prep_and_cooldown(num_averages, capsys):
     sc = SequenceCollection(
         str(
             Path('/home/mcencini/pulserverlib/tests/utils/expected')
@@ -174,7 +170,7 @@ def test_validate_bssfp_full_range_includes_prep_and_cooldown(capsys):
         )
     )
 
-    result = sc.validate(sequence_idx=0, do_plot=False, tr_range=(0, 8))
+    result = sc.validate(num_averages=num_averages)
 
     captured = capsys.readouterr()
     assert result is None
@@ -185,7 +181,7 @@ def test_validate_known_generated_failures_raise(known_validate_failure_seq_path
     sc = SequenceCollection(str(known_validate_failure_seq_path))
 
     with pytest.raises(RuntimeError, match='Validation failed'):
-        sc.validate(sequence_idx=0, do_plot=False, tr_range=(0, 1))
+        sc.validate()
 
     captured = capsys.readouterr()
     assert 'Validation failed:' in captured.out
@@ -197,8 +193,8 @@ def test_validate_raises_on_failure(simple_gre_seq, monkeypatch):
     sc = SequenceCollection(simple_gre_seq)
     orig = _validate_mod._pypulseq_reference
 
-    def _bad_reference(seq, sequence_idx, tr_idx, tr_info):
-        ref = orig(seq, sequence_idx, tr_idx, tr_info)
+    def _bad_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1):
+        ref = orig(seq, sequence_idx, tr_idx, tr_info, num_averages)
         out = {}
         for key, value in ref.items():
             t, a = value
@@ -214,9 +210,6 @@ def test_validate_raises_on_failure(simple_gre_seq, monkeypatch):
 
     with pytest.raises(RuntimeError, match='Validation failed'):
         sc.validate(
-            sequence_idx=0,
-            do_plot=False,
-            tr_range=(0, 1),
             grad_atol=1e-9,
             rf_rms_percent=1e-9,
         )

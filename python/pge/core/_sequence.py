@@ -561,14 +561,10 @@ class SequenceCollection(pp.Sequence):
     def validate(
         self,
         *,
-        subsequence_idx: int = 0,
+        num_averages: int = 1,
         do_plot: bool = False,
+        subsequence_idx: int = 0,
         tr_instance: int | None = None,
-        show_rf_centers: bool = False,
-        show_echoes: bool = False,
-        show_segments: bool = True,
-        show_blocks: bool = False,
-        max_grad_mT_per_m: float | bool | None = True,
         grad_atol: float | None = None,
         rf_rms_percent: float = 10.0,
     ) -> bool:
@@ -578,14 +574,10 @@ class SequenceCollection(pp.Sequence):
         from ._validate import validate as _validate_impl
         return _validate_impl(
             self,
+            num_averages=num_averages,
             do_plot=do_plot,
             subsequence_idx=subsequence_idx,
             tr_instance=tr_instance,
-            show_rf_centers=show_rf_centers,
-            show_echoes=show_echoes,
-            show_segments=show_segments,
-            show_blocks=show_blocks,
-            max_grad_mT_per_m=max_grad_mT_per_m,
             grad_atol=grad_atol,
             rf_rms_percent=rf_rms_percent,
         )
