@@ -674,7 +674,8 @@ int pulseqlib__get_gradient_waveforms_range(
     int block_count,
     int amplitude_mode,
     const int* tr_group_labels,
-    int target_group)
+    int target_group,
+    const int* block_order)
 {
     pulseqlib_diagnostic local_diag;
     int n, block_idx;
@@ -729,9 +730,18 @@ int pulseqlib__get_gradient_waveforms_range(
         diag->code = PULSEQLIB_ERR_TR_NO_BLOCKS;
         return diag->code;
     }
-    if (block_start < 0 || block_start + block_count > desc->num_blocks) {
+    if (!block_order &&
+        (block_start < 0 || block_start + block_count > desc->num_blocks)) {
         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT;
         return diag->code;
+    }
+    if (block_order) {
+        for (n = 0; n < block_count; ++n) {
+            if (block_order[n] < 0 || block_order[n] >= desc->num_blocks) {
+                diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT;
+                return diag->code;
+            }
+        }
     }
 
     /* position-max amplitudes (only for worst-case main-TR mode) */
@@ -776,7 +786,7 @@ int pulseqlib__get_gradient_waveforms_range(
     /* ---- pass 1: count samples ---- */
     total_gx = 0; total_gy = 0; total_gz = 0;
     for (n = 0; n < block_count; ++n) {
-        block_idx    = block_start + n;
+        block_idx    = block_order ? block_order[n] : block_start + n;
         bte          = &desc->block_table[block_idx];
         block_def_id = bte->id;
         bdef         = &desc->block_definitions[block_def_id];
@@ -828,7 +838,7 @@ int pulseqlib__get_gradient_waveforms_range(
     /* ---- pass 2: fill ---- */
     t0 = 0.0f; idx_gx = 0; idx_gy = 0; idx_gz = 0;
     for (n = 0; n < block_count; ++n) {
-        block_idx    = block_start + n;
+        block_idx    = block_order ? block_order[n] : block_start + n;
         bte          = &desc->block_table[block_idx];
         block_def_id = bte->id;
         bdef         = &desc->block_definitions[block_def_id];
@@ -988,9 +998,11 @@ int pulseqlib_get_tr_gradient_waveforms(
     int  rep_idx;
     int  start_block, block_count;
     int  rc, i;
+    int* block_order;
     float* time_arr;
 
     memset(&uw, 0, sizeof(uw));
+    block_order = NULL;
     if (!coll || canonical_tr_idx < 0 || subseq_idx < 0 || subseq_idx >= coll->num_subsequences) {
         if (diag) { pulseqlib_diagnostic_init(diag); diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; }
         return PULSEQLIB_ERR_INVALID_ARGUMENT;
@@ -1023,9 +1035,35 @@ int pulseqlib_get_tr_gradient_waveforms(
             PULSEQLIB_FREE(unique_indices);
             PULSEQLIB_FREE(group_labels);
         }
-        /* Render the representative pass: blocks [rep * pass_len, pass_len). */
-        start_block = rep_idx * desc->pass_len;
-        block_count = desc->pass_len;
+        /* Render the representative pass with average expansion:
+         * prep + num_averages * imaging + cooldown. */
+        {
+            int pass_base = rep_idx * desc->pass_len;
+            int prep_blk = desc->tr_descriptor.num_prep_blocks;
+            int img_len = desc->tr_descriptor.num_trs * desc->tr_descriptor.tr_size;
+            int cool_blk = desc->tr_descriptor.num_cooldown_blocks;
+            int num_avgs = (desc->num_averages > 0) ? desc->num_averages : 1;
+            int exp_count = prep_blk + num_avgs * img_len + cool_blk;
+            int avg_i;
+            int pos_i;
+
+            block_order = (int*)PULSEQLIB_ALLOC((size_t)exp_count * sizeof(int));
+            if (!block_order) {
+                if (diag) { pulseqlib_diagnostic_init(diag); diag->code = PULSEQLIB_ERR_ALLOC_FAILED; }
+                return PULSEQLIB_ERR_ALLOC_FAILED;
+            }
+
+            block_count = exp_count;
+            i = 0;
+            for (pos_i = 0; pos_i < prep_blk; ++pos_i)
+                block_order[i++] = pass_base + pos_i;
+            for (avg_i = 0; avg_i < num_avgs; ++avg_i)
+                for (pos_i = 0; pos_i < img_len; ++pos_i)
+                    block_order[i++] = pass_base + prep_blk + pos_i;
+            for (pos_i = 0; pos_i < cool_blk; ++pos_i)
+                block_order[i++] = pass_base + prep_blk + img_len + pos_i;
+            start_block = 0;
+        }
     } else {
         /* Degenerate (e.g. GRE): one canonical TR per unique shot pattern
          * within the imaging region. */
@@ -1053,13 +1091,24 @@ int pulseqlib_get_tr_gradient_waveforms(
 
     rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
              start_block, block_count,
-             PULSEQLIB_AMP_ACTUAL, NULL, 0);
-    if (PULSEQLIB_FAILED(rc)) return rc;
-    if (!waveforms) { pulseqlib__uniform_grad_waveforms_free(&uw); return PULSEQLIB_ERR_NULL_POINTER; }
+             PULSEQLIB_AMP_ACTUAL, NULL, 0, block_order);
+    if (PULSEQLIB_FAILED(rc)) {
+        if (block_order) PULSEQLIB_FREE(block_order);
+        return rc;
+    }
+    if (!waveforms) {
+        pulseqlib__uniform_grad_waveforms_free(&uw);
+        if (block_order) PULSEQLIB_FREE(block_order);
+        return PULSEQLIB_ERR_NULL_POINTER;
+    }
     memset(waveforms, 0, sizeof(*waveforms));
     /* build common time array */
     time_arr = (float*)PULSEQLIB_ALLOC((size_t)uw.num_samples * sizeof(float));
-    if (!time_arr) { pulseqlib__uniform_grad_waveforms_free(&uw); return PULSEQLIB_ERR_ALLOC_FAILED; }
+    if (!time_arr) {
+        pulseqlib__uniform_grad_waveforms_free(&uw);
+        if (block_order) PULSEQLIB_FREE(block_order);
+        return PULSEQLIB_ERR_ALLOC_FAILED;
+    }
     for (i = 0; i < uw.num_samples; ++i) time_arr[i] = (float)i * uw.raster_us;
     /* gx */
     waveforms->gx.num_samples = uw.num_samples;
@@ -1068,7 +1117,12 @@ int pulseqlib_get_tr_gradient_waveforms(
     waveforms->gx.seg_label = NULL;
     /* gy */
     time_arr = (float*)PULSEQLIB_ALLOC((size_t)uw.num_samples * sizeof(float));
-    if (!time_arr) { pulseqlib__uniform_grad_waveforms_free(&uw); pulseqlib_tr_gradient_waveforms_free(waveforms); return PULSEQLIB_ERR_ALLOC_FAILED; }
+    if (!time_arr) {
+        pulseqlib__uniform_grad_waveforms_free(&uw);
+        pulseqlib_tr_gradient_waveforms_free(waveforms);
+        if (block_order) PULSEQLIB_FREE(block_order);
+        return PULSEQLIB_ERR_ALLOC_FAILED;
+    }
     for (i = 0; i < uw.num_samples; ++i) time_arr[i] = (float)i * uw.raster_us;
     waveforms->gy.num_samples = uw.num_samples;
     waveforms->gy.amplitude_hz_per_m = uw.gy; uw.gy = NULL;
@@ -1076,12 +1130,18 @@ int pulseqlib_get_tr_gradient_waveforms(
     waveforms->gy.seg_label = NULL;
     /* gz */
     time_arr = (float*)PULSEQLIB_ALLOC((size_t)uw.num_samples * sizeof(float));
-    if (!time_arr) { pulseqlib__uniform_grad_waveforms_free(&uw); pulseqlib_tr_gradient_waveforms_free(waveforms); return PULSEQLIB_ERR_ALLOC_FAILED; }
+    if (!time_arr) {
+        pulseqlib__uniform_grad_waveforms_free(&uw);
+        pulseqlib_tr_gradient_waveforms_free(waveforms);
+        if (block_order) PULSEQLIB_FREE(block_order);
+        return PULSEQLIB_ERR_ALLOC_FAILED;
+    }
     for (i = 0; i < uw.num_samples; ++i) time_arr[i] = (float)i * uw.raster_us;
     waveforms->gz.num_samples = uw.num_samples;
     waveforms->gz.amplitude_hz_per_m = uw.gz; uw.gz = NULL;
     waveforms->gz.time_us = time_arr;
     waveforms->gz.seg_label = NULL;
+    if (block_order) PULSEQLIB_FREE(block_order);
     return PULSEQLIB_SUCCESS;
 }
 

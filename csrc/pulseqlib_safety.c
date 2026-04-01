@@ -47,6 +47,73 @@ static void pulseqlib__select_canonical_tr_window_idx(
     *num_instances = 1;
     *tr_duration_us = trd->tr_duration_us;
 }
+
+static int pulseqlib__build_pass_expanded_block_order(
+    const struct pulseqlib_sequence_descriptor* desc,
+    int pass_base,
+    int** out_block_order,
+    int* out_block_count,
+    float* out_duration_us)
+{
+    const struct pulseqlib_tr_descriptor* trd;
+    int prep_blk, img_len, cool_blk, num_avgs, exp_count;
+    int* block_order;
+    int avg_i, pos_i, n;
+
+    if (!desc || !out_block_order || !out_block_count) {
+        return PULSEQLIB_ERR_INVALID_ARGUMENT;
+    }
+
+    trd = &desc->tr_descriptor;
+    prep_blk = trd->num_prep_blocks;
+    img_len = trd->num_trs * trd->tr_size;
+    cool_blk = trd->num_cooldown_blocks;
+    num_avgs = (desc->num_averages > 0) ? desc->num_averages : 1;
+    exp_count = prep_blk + num_avgs * img_len + cool_blk;
+
+    if (exp_count <= 0) {
+        return PULSEQLIB_ERR_TR_NO_BLOCKS;
+    }
+
+    block_order = (int*)PULSEQLIB_ALLOC((size_t)exp_count * sizeof(int));
+    if (!block_order) {
+        return PULSEQLIB_ERR_ALLOC_FAILED;
+    }
+
+    n = 0;
+    for (pos_i = 0; pos_i < prep_blk; ++pos_i)
+        block_order[n++] = pass_base + pos_i;
+    for (avg_i = 0; avg_i < num_avgs; ++avg_i)
+        for (pos_i = 0; pos_i < img_len; ++pos_i)
+            block_order[n++] = pass_base + prep_blk + pos_i;
+    for (pos_i = 0; pos_i < cool_blk; ++pos_i)
+        block_order[n++] = pass_base + prep_blk + img_len + pos_i;
+
+    if (out_duration_us) {
+        *out_duration_us = 0.0f;
+        for (pos_i = 0; pos_i < exp_count; ++pos_i) {
+            int blk_idx;
+            const struct pulseqlib_block_table_element* bte;
+            const struct pulseqlib_block_definition* bdef;
+
+            blk_idx = block_order[pos_i];
+            if (blk_idx < 0 || blk_idx >= desc->num_blocks) {
+                PULSEQLIB_FREE(block_order);
+                return PULSEQLIB_ERR_INVALID_ARGUMENT;
+            }
+            bte = &desc->block_table[blk_idx];
+            bdef = &desc->block_definitions[bte->id];
+            *out_duration_us += (bte->duration_us >= 0)
+                ? (float)bte->duration_us
+                : (float)bdef->duration_us;
+        }
+    }
+
+    *out_block_order = block_order;
+    *out_block_count = exp_count;
+    return PULSEQLIB_SUCCESS;
+}
+
 /* pulseqlib_safety.c -- safety checks, acoustic analysis, PNS, segment timing
  *
  * Public functions:
@@ -278,7 +345,7 @@ int pulseqlib__calc_segment_timing(
     /* ---- Step A: build min-amplitude k-space trajectory ---- */
     if (tr_size > 0) {
         result = pulseqlib__get_gradient_waveforms_range(desc, &min_waveforms, diag,
-            num_prep, tr_size, PULSEQLIB_AMP_ZERO_VAR, NULL, 0);
+            num_prep, tr_size, PULSEQLIB_AMP_ZERO_VAR, NULL, 0, NULL);
 
         if (!PULSEQLIB_FAILED(result) && min_waveforms.num_samples >= 2) {
             n_samples = min_waveforms.num_samples;
@@ -1721,13 +1788,17 @@ int pulseqlib_calc_acoustic_spectra(
     const pulseqlib_forbidden_band* forbidden_bands)
 {
     const pulseqlib_sequence_descriptor* desc;
+    const pulseqlib_tr_descriptor* trd;
     pulseqlib__uniform_grad_waveforms uw;
     pulseqlib_diagnostic local_diag;
     int rc, start_block, block_count, amplitude_mode, num_instances;
+    int* block_order;
+    int has_nd_prep, has_nd_cool;
     float tr_duration_us;
 
     (void)opts;
     memset(&uw, 0, sizeof(uw));
+    block_order = NULL;
     if (!diag) { pulseqlib_diagnostic_init(&local_diag); diag = &local_diag; }
     else       { pulseqlib_diagnostic_init(diag); }
     if (!coll || !spectra) { diag->code = PULSEQLIB_ERR_NULL_POINTER; return diag->code; }
@@ -1735,6 +1806,7 @@ int pulseqlib_calc_acoustic_spectra(
         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; return diag->code;
     }
     desc = &coll->descriptors[subseq_idx];
+    trd = &desc->tr_descriptor;
     /* Select the canonical TR window for the given canonical_tr_idx */
     if (canonical_tr_idx < 0 || canonical_tr_idx >= desc->tr_descriptor.num_trs) {
         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; return diag->code;
@@ -1749,19 +1821,40 @@ int pulseqlib_calc_acoustic_spectra(
         &num_instances,
         &tr_duration_us);
 
+    has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
+    has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
+    if (has_nd_prep || has_nd_cool) {
+        rc = pulseqlib__build_pass_expanded_block_order(
+            desc,
+            start_block,
+            &block_order,
+            &block_count,
+            &tr_duration_us);
+        if (PULSEQLIB_FAILED(rc)) {
+            diag->code = rc;
+            return rc;
+        }
+        start_block = 0;
+    }
+
     rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
         start_block,
         block_count,
         amplitude_mode,
         NULL,
-        0);
-    if (PULSEQLIB_FAILED(rc)) return rc;
+        0,
+        block_order);
+    if (PULSEQLIB_FAILED(rc)) {
+        if (block_order) PULSEQLIB_FREE(block_order);
+        return rc;
+    }
     rc = calc_acoustic_spectra_from_uniform(spectra, diag, &uw,
         target_window_size, target_resolution_hz, max_freq_hz,
         num_instances,
         tr_duration_us,
         num_forbidden_bands, forbidden_bands);
     pulseqlib__uniform_grad_waveforms_free(&uw);
+    if (block_order) PULSEQLIB_FREE(block_order);
     return rc;
 }
 
@@ -1994,13 +2087,17 @@ int pulseqlib_calc_pns(
     const pulseqlib_pns_params* params)
 {
     const pulseqlib_sequence_descriptor* desc;
+    const pulseqlib_tr_descriptor* trd;
     pulseqlib__uniform_grad_waveforms uw;
     pulseqlib_diagnostic local_diag;
     int rc, start_block, block_count, amplitude_mode, num_instances;
+    int* block_order;
+    int has_nd_prep, has_nd_cool;
     float tr_duration_us;
 
     (void)opts;
     memset(&uw, 0, sizeof(uw));
+    block_order = NULL;
     if (!diag) { pulseqlib_diagnostic_init(&local_diag); diag = &local_diag; }
     else       { pulseqlib_diagnostic_init(diag); }
     if (!coll || !result || !params) { diag->code = PULSEQLIB_ERR_NULL_POINTER; return diag->code; }
@@ -2008,6 +2105,7 @@ int pulseqlib_calc_pns(
         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; return diag->code;
     }
     desc = &coll->descriptors[subseq_idx];
+    trd = &desc->tr_descriptor;
     if (canonical_tr_idx < 0 || canonical_tr_idx >= desc->tr_descriptor.num_trs) {
         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; return diag->code;
     }
@@ -2022,15 +2120,36 @@ int pulseqlib_calc_pns(
     (void)num_instances;
     (void)tr_duration_us;
 
+    has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
+    has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
+    if (has_nd_prep || has_nd_cool) {
+        rc = pulseqlib__build_pass_expanded_block_order(
+            desc,
+            start_block,
+            &block_order,
+            &block_count,
+            NULL);
+        if (PULSEQLIB_FAILED(rc)) {
+            diag->code = rc;
+            return rc;
+        }
+        start_block = 0;
+    }
+
     rc = pulseqlib__get_gradient_waveforms_range(desc, &uw, diag,
         start_block,
         block_count,
         amplitude_mode,
         NULL,
-        0);
-    if (PULSEQLIB_FAILED(rc)) return rc;
+        0,
+        block_order);
+    if (PULSEQLIB_FAILED(rc)) {
+        if (block_order) PULSEQLIB_FREE(block_order);
+        return rc;
+    }
     rc = calc_pns_from_uniform(result, diag, opts->gamma_hz_per_t, &uw, params);
     pulseqlib__uniform_grad_waveforms_free(&uw);
+    if (block_order) PULSEQLIB_FREE(block_order);
     return rc;
 }
 
@@ -2372,6 +2491,8 @@ int pulseqlib_check_safety(
     pulseqlib_acoustic_spectra spectra;
     pulseqlib_pns_result pns_result;
     int start_block, block_count, amplitude_mode, num_instances;
+    int* block_order;
+    int has_nd_prep, has_nd_cool;
     float tr_duration_us;
     float pns_combined, max_pns;
 
@@ -2397,6 +2518,8 @@ int pulseqlib_check_safety(
     for (s = 0; s < coll->num_subsequences; ++s) {
         desc = &coll->descriptors[s];
         trd = &desc->tr_descriptor;
+        unique_tr_indices = NULL;
+        tr_group_labels = NULL;
 
         pulseqlib__select_canonical_tr_window(
             desc,
@@ -2406,6 +2529,24 @@ int pulseqlib_check_safety(
             &num_instances,
             &tr_duration_us);
         (void)amplitude_mode;
+        block_order = NULL;
+        has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
+        has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
+        if (has_nd_prep || has_nd_cool) {
+            rc = pulseqlib__build_pass_expanded_block_order(
+                desc,
+                start_block,
+                &block_order,
+                &block_count,
+                &tr_duration_us);
+            if (PULSEQLIB_FAILED(rc)) {
+                if (unique_tr_indices) PULSEQLIB_FREE(unique_tr_indices);
+                if (tr_group_labels)   PULSEQLIB_FREE(tr_group_labels);
+                if (block_order) PULSEQLIB_FREE(block_order);
+                return rc;
+            }
+            start_block = 0;
+        }
 
         /* Evaluate one canonical TR per shot-ID combination. */
         unique_tr_indices = NULL;
@@ -2426,10 +2567,11 @@ int pulseqlib_check_safety(
                 start_block,
                 block_count,
                 PULSEQLIB_AMP_MAX_POS,
-                tr_group_labels, u);
+                tr_group_labels, u, block_order);
             if (PULSEQLIB_FAILED(rc)) {
                 if (unique_tr_indices) PULSEQLIB_FREE(unique_tr_indices);
                 if (tr_group_labels)   PULSEQLIB_FREE(tr_group_labels);
+                if (block_order) PULSEQLIB_FREE(block_order);
                 return rc;
             }
 
@@ -2446,6 +2588,7 @@ int pulseqlib_check_safety(
                     pulseqlib__uniform_grad_waveforms_free(&uw);
                     if (unique_tr_indices) PULSEQLIB_FREE(unique_tr_indices);
                     if (tr_group_labels)   PULSEQLIB_FREE(tr_group_labels);
+                    if (block_order) PULSEQLIB_FREE(block_order);
                     return rc;
                 }
             }
@@ -2475,6 +2618,7 @@ int pulseqlib_check_safety(
                     pulseqlib__uniform_grad_waveforms_free(&uw);
                     if (unique_tr_indices) PULSEQLIB_FREE(unique_tr_indices);
                     if (tr_group_labels)   PULSEQLIB_FREE(tr_group_labels);
+                    if (block_order) PULSEQLIB_FREE(block_order);
                     return rc;
                 }
             }
@@ -2484,6 +2628,7 @@ int pulseqlib_check_safety(
 
         if (unique_tr_indices) PULSEQLIB_FREE(unique_tr_indices);
         if (tr_group_labels)   PULSEQLIB_FREE(tr_group_labels);
+        if (block_order) PULSEQLIB_FREE(block_order);
     }
 
     return PULSEQLIB_SUCCESS;

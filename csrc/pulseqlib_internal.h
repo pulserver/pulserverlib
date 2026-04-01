@@ -1030,7 +1030,8 @@ int   pulseqlib__get_gradient_waveforms_range(
           pulseqlib_diagnostic* diag,
           int block_start, int block_count,
           int amplitude_mode,
-          const int* tr_group_labels, int target_group);
+          const int* tr_group_labels, int target_group,
+          const int* block_order);
 
 /* Find unique shot-index TR variants (multi-shot, degenerate prep/cooldown).
  * Returns count of unique groups; caller frees both output arrays. */

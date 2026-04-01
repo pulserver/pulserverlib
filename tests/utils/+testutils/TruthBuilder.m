@@ -598,39 +598,17 @@ classdef TruthBuilder < handle
                 end
                 obj.canonical_seqs{1} = seg_cseq;
 
-                % ---- Build canonical waveform: full SINGLE pass (not avg-expanded) ----
-                % Mirrors pulseqlib_get_tr_gradient_waveforms which renders block_table
-                % [0 .. pass_len-1] for non-degenerate sequences — i.e. the prep,
-                % one imaging loop, and cooldown, all in one slice-execution.
-                % This is the same for all avg counts since gradients are invariant
-                % to RF phase (which is the only thing that changes between averages).
-                wf_cseq = mr.Sequence(obj.sys);
-                for pos = 1:pass_len
-                    block = obj.seq.getBlock(pass_start + pos - 1);
-                    args = {};
-                    if isfield(block, 'rf') && ~isempty(block.rf)
-                        args{end+1} = block.rf; %#ok<AGROW>
-                    end
-                    ax_names = {'gx', 'gy', 'gz'};
-                    for a = 1:3
-                        axn = ax_names{a};
-                        if isfield(block, axn) && ~isempty(block.(axn))
-                            args{end+1} = block.(axn); %#ok<AGROW>
-                        end
-                    end
-                    if isfield(block, 'adc') && ~isempty(block.adc)
-                        args{end+1} = block.adc; %#ok<AGROW>
-                    end
-                    if isempty(args)
-                        wf_cseq.addBlock(mr.makeDelay(block.blockDuration));
-                    else
-                        wf_cseq.addBlock(args{:});
-                    end
-                end
-
-                wave_data = wf_cseq.waveforms_and_times(false);
+                % ---- Build canonical waveform: average-expanded pass ----
+                % The canonical TR waveform includes prep (once==1) on the first
+                % average, imaging (once==0) on ALL averages, and cooldown
+                % (once==2) on the last average.  This matches the intended
+                % semantics of pulseqlib_get_tr_gradient_waveforms for
+                % non-degenerate sequences: the gradient waveform over the
+                % full expanded pass that the safety / acoustic / PNS analyses
+                % operate on.  Reuse seg_cseq which already has this expansion.
+                wave_data = seg_cseq.waveforms_and_times(false);
                 raster = 0.5 * obj.sys.gradRasterTime;
-                times = 0.0 : raster : wf_cseq.duration;
+                times = 0.0 : raster : seg_cseq.duration;
                 samples = zeros(length(times), 3);
                 for c = 1:3
                     if c <= length(wave_data) && ~isempty(wave_data{c})
