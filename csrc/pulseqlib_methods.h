@@ -355,6 +355,7 @@ void pulseqlib_tr_gradient_waveforms_free(pulseqlib_tr_gradient_waveforms* w);
  * @param[in]  amplitude_mode     PULSEQLIB_AMP_MAX_POS / _ZERO_VAR / _ACTUAL.
  * @param[in]  tr_index           TR instance (only for _ACTUAL mode).
  * @param[in]  collapse_delays    Non-zero to shrink pure-delay blocks.
+ * @param[in]  num_averages       Override average count (0 = use descriptor default).
  * @param[out] out                Output waveforms (caller frees).
  * @param[out] diag               Diagnostic on error.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
@@ -365,6 +366,7 @@ int pulseqlib_get_tr_waveforms(
     int                             amplitude_mode,
     int                             tr_index,
     int                             collapse_delays,
+    int                             num_averages,
     pulseqlib_tr_waveforms*         out,
     pulseqlib_diagnostic*           diag);
 

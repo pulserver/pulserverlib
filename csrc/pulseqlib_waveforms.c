@@ -1264,6 +1264,7 @@ int pulseqlib_get_tr_waveforms(
     int amplitude_mode,
     int tr_index,
     int collapse_delays,
+    int num_averages,
     pulseqlib_tr_waveforms* out,
     pulseqlib_diagnostic* diag)
 {
@@ -1297,6 +1298,7 @@ int pulseqlib_get_tr_waveforms(
     /* average-expansion variables */
     int* block_order;
     int pass_base;
+    int eff_num_averages;
 
     pos_max_gx = NULL;
     pos_max_gy = NULL;
@@ -1319,6 +1321,7 @@ int pulseqlib_get_tr_waveforms(
 
     desc = &coll->descriptors[subseq_idx];
     tr   = &desc->tr_descriptor;
+    eff_num_averages = (num_averages > 0) ? num_averages : desc->num_averages;
     has_nd_prep = (tr->num_prep_blocks > 0 && !tr->degenerate_prep);
     has_nd_cool = (tr->num_cooldown_blocks > 0 && !tr->degenerate_cooldown);
 
@@ -1332,7 +1335,7 @@ int pulseqlib_get_tr_waveforms(
         if (has_nd_prep || has_nd_cool) {
             /* Non-degenerate: tr_index selects a pass (0..num_passes-1).
              * Return the full pass with average expansion. */
-            int num_avgs = desc->num_averages;
+            int num_avgs = eff_num_averages;
             if (tr_index < 0 || tr_index >= desc->num_passes) {
                 diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT;
                 return diag->code;
@@ -1367,7 +1370,7 @@ int pulseqlib_get_tr_waveforms(
             /* Degenerate / no prep: flat TR index with average expansion.
              * Imaging TRs wrap modulo num_trs so repeated averages map
              * back to canonical block positions. */
-            int num_avgs = desc->num_averages;
+            int num_avgs = eff_num_averages;
             int total_actual_trs = tr->num_prep_trs
                                  + num_avgs * tr->num_trs
                                  + tr->num_cooldown_trs;

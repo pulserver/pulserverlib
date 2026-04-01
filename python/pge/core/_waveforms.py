@@ -154,6 +154,7 @@ def get_tr_waveforms(
     amplitude_mode: Literal['max_pos', 'zero_var', 'actual'] = 'max_pos',
     tr_index: int = 0,
     collapse_delays: bool = False,
+    num_averages: int = 0,
 ) -> TrWaveforms:
     """Extract native-timing TR waveforms from the segmented representation.
 
@@ -179,6 +180,9 @@ def get_tr_waveforms(
     collapse_delays : bool
         Shrink pure-delay blocks (no RF, no grad, no ADC) to 0.1 ms
         at the C level, producing a compact waveform timeline.
+    num_averages : int
+        Override average count for ACTUAL mode.  0 uses the descriptor
+        default stored at load time.
 
     Returns
     -------
@@ -201,6 +205,7 @@ def get_tr_waveforms(
         c_mode,
         tr_index,
         collapse_delays,
+        num_averages,
     )
 
     # Unpack raw waveform arrays

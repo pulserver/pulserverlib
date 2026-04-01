@@ -163,6 +163,7 @@ def plot(
     figsize=None,
     fig=None,
     label=None,
+    num_averages: int = 0,
 ):
     """Plot native-timing TR waveforms.
 
@@ -294,6 +295,7 @@ def plot(
                 amplitude_mode=amplitude_mode,
                 tr_index=0,
                 collapse_delays=collapse_delays,
+                num_averages=num_averages,
             )
             # Diagnostic: print block info for debugging canonical TR window
             print(f"[DEBUG] Number of waveform blocks: {len(wf.blocks)}")
@@ -318,6 +320,7 @@ def plot(
                 amplitude_mode=amplitude_mode,
                 tr_index=tr_index,
                 collapse_delays=collapse_delays,
+                num_averages=num_averages,
             )
             # Mask to the TR window for the requested TR
             tr_dur = tr_info['tr_duration_us']
@@ -367,6 +370,7 @@ def plot(
             amplitude_mode=amplitude_mode,
             tr_index=tr_index,
             collapse_delays=collapse_delays,
+            num_averages=num_averages,
         )
         tr_dur = tr_info['tr_duration_us']
         from ._validate import _total_addressable_trs

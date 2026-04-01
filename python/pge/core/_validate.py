@@ -263,6 +263,66 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
 # ── reference extraction ─────────────────────────────────────────────
 
 
+def _concat_refs(segments):
+    """Concatenate reference dicts from multiple (offset_us, ref) segments.
+
+    Each *ref* is a dict returned by :func:`_pypulseq_reference_window`.
+    Times in each ref are relative to that segment's start; *offset_us*
+    shifts them into the combined timeline.
+    """
+    result = {}
+
+    for key in ('gx', 'gy', 'gz', 'rf_mag', 'rf_phase'):
+        parts_t, parts_a = [], []
+        for off, ref in segments:
+            if key in ref:
+                t, a = ref[key]
+                t = np.asarray(t)
+                a = np.asarray(a)
+                if len(t) > 0:
+                    parts_t.append(t + off)
+                    parts_a.append(a)
+        if parts_t:
+            result[key] = (np.concatenate(parts_t), np.concatenate(parts_a))
+        else:
+            result[key] = (np.empty(0), np.empty(0))
+
+    # Multichannel RF
+    for key in ('rf_mag_channels', 'rf_phase_channels'):
+        nch = 0
+        for _, ref in segments:
+            if key in ref:
+                nch = max(nch, len(ref[key]))
+        if nch == 0:
+            continue
+        ch_list = []
+        for c in range(nch):
+            parts_t, parts_a = [], []
+            for off, ref in segments:
+                if key in ref and c < len(ref[key]):
+                    t, a = ref[key][c]
+                    t = np.asarray(t)
+                    a = np.asarray(a)
+                    if len(t) > 0:
+                        parts_t.append(t + off)
+                        parts_a.append(a)
+            if parts_t:
+                ch_list.append((np.concatenate(parts_t), np.concatenate(parts_a)))
+            else:
+                ch_list.append((np.empty(0), np.empty(0)))
+        result[key] = ch_list
+
+    # ADC events
+    adc_events = []
+    for off, ref in segments:
+        if 'adc_events' in ref:
+            for onset, freq, phase in ref['adc_events']:
+                adc_events.append((onset + off, freq, phase))
+    result['adc_events'] = adc_events
+
+    return result
+
+
 def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1,
                         duration_us=None):
     """Extract reference waveforms from pypulseq for a single TR.
@@ -286,6 +346,40 @@ def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1,
         seq._seqs[sequence_idx],
         blk_offset,
     )
+
+    # Non-degenerate (bSSFP-like) with num_averages > 1: the C library
+    # replicates imaging blocks inside each pass.  Build a tiled reference
+    # by extracting prep / imaging / cooldown separately and repeating the
+    # imaging portion.
+    if _is_non_degenerate(tr_info) and num_averages > 1:
+        src_seq = seq._seqs[sequence_idx]
+        n_prep = tr_info['num_prep_blocks']
+        n_img = tr_info['num_trs'] * tr_info['tr_size']
+        n_cool = tr_info['num_cooldown_blocks']
+
+        t_img_s = _abs_block_start_s(src_seq, blk_offset + n_prep)
+        t_cool_s = _abs_block_start_s(src_seq, blk_offset + n_prep + n_img)
+        t_end_s = _abs_block_start_s(src_seq, blk_offset + n_prep + n_img + n_cool)
+
+        prep_dur_us = (t_img_s - t0) * 1e6
+        img_dur_us = (t_cool_s - t_img_s) * 1e6
+        cool_dur_us = (t_end_s - t_cool_s) * 1e6
+
+        segments = []
+        if prep_dur_us > 0:
+            segments.append((0.0, _pypulseq_reference_window(
+                seq, sequence_idx, t0, prep_dur_us)))
+        ref_img = _pypulseq_reference_window(
+            seq, sequence_idx, t_img_s, img_dur_us)
+        for k in range(num_averages):
+            segments.append((prep_dur_us + k * img_dur_us, ref_img))
+        if cool_dur_us > 0:
+            segments.append((
+                prep_dur_us + num_averages * img_dur_us,
+                _pypulseq_reference_window(seq, sequence_idx, t_cool_s, cool_dur_us),
+            ))
+        return _concat_refs(segments)
+
     if duration_us is None:
         duration_us = tr_info['tr_duration_us']
     return _pypulseq_reference_window(seq, sequence_idx, t0, duration_us)
@@ -421,6 +515,7 @@ def validate(
                 subsequence_idx=ss_idx,
                 amplitude_mode='actual',
                 tr_index=tr_idx,
+                num_averages=num_averages,
             )
             # Reference extraction
             if xml_path is None:
@@ -560,6 +655,7 @@ def validate(
                 max_grad_mT_per_m=_max_grad_plot,
                 ok=False,
                 messages=fail_msg,
+                num_averages=num_averages,
             )
         raise RuntimeError('Validation failed:\n' + '\n'.join(fail_msg))
 
@@ -574,6 +670,7 @@ def validate(
             max_grad_mT_per_m=_max_grad_plot,
             ok=True,
             messages=[],
+            num_averages=num_averages,
         )
 
 # ── validation plot (private) ────────────────────────────────────────
@@ -587,6 +684,7 @@ def _validation_plot(
     max_grad_mT_per_m,
     ok,
     messages,
+    num_averages=0,
 ):
     """Create the comparison overlay using :func:`_plot.plot`."""
     from ._plot import plot as _plot_impl
@@ -603,6 +701,7 @@ def _validation_plot(
         show_rf_centers=False,
         show_echoes=False,
         max_grad_mT_per_m=max_grad_mT_per_m,
+        num_averages=num_averages,
         max_slew_T_per_m_per_s=None,
     )
 
