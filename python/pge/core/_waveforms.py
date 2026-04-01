@@ -206,11 +206,19 @@ def get_tr_waveforms(
     gx = ChannelWaveform(np.array(raw['gx']['time_us']), np.array(raw['gx']['amplitude']) * hz_per_m_to_mT_per_m)
     gy = ChannelWaveform(np.array(raw['gy']['time_us']), np.array(raw['gy']['amplitude']) * hz_per_m_to_mT_per_m)
     gz = ChannelWaveform(np.array(raw['gz']['time_us']), np.array(raw['gz']['amplitude']) * hz_per_m_to_mT_per_m)
-    # Convert RF magnitude from Hz to µT for validation (µT = 1e6 / gamma * Hz)
+    # Convert RF magnitude from Hz to µT for validation (µT = 1e6 / gamma * Hz).
+    # The C backend stores signed magnitude (negative for negative lobes) with
+    # phase separate.  Convert to unsigned magnitude + adjusted phase so the
+    # phase of negative lobes is π, matching the pypulseq convention.
     rf_mag_hz = np.array(raw['rf_mag']['amplitude'])
+    rf_phase_raw = np.array(raw['rf_phase']['amplitude'])
+    neg = rf_mag_hz < 0
+    rf_mag_hz = np.abs(rf_mag_hz)
+    rf_phase_raw = rf_phase_raw.copy()
+    rf_phase_raw[neg] += np.pi
     rf_mag_uT = rf_mag_hz * (1e6 / gamma)
     rf_mag = ChannelWaveform(np.array(raw['rf_mag']['time_us']), rf_mag_uT)
-    rf_phase = ChannelWaveform(np.array(raw['rf_phase']['time_us']), np.array(raw['rf_phase']['amplitude']))
+    rf_phase = ChannelWaveform(np.array(raw['rf_phase']['time_us']), rf_phase_raw)
     adc_events = [AdcEvent(**adc) for adc in raw['adc_events']]
     # Extract per-block scan table parameters if present
     blocks = []

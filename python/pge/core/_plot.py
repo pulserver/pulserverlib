@@ -11,6 +11,14 @@ from ._waveforms import ChannelWaveform, get_tr_waveforms
 
 # Matplotlib is imported lazily to avoid hard dependency at import time.
 
+
+def _wrap_phase(x):
+    """Wrap phase to (-pi, pi], snapping values near -pi to +pi."""
+    w = (np.asarray(x, dtype=float) + np.pi) % (2 * np.pi) - np.pi
+    w[np.isclose(w, -np.pi)] = np.pi
+    return w
+
+
 # ── MATLAB lines-like palette for style parity ───────────────────────
 _MATLAB_LINES = [
     '#0072BD',
@@ -217,11 +225,21 @@ def plot(
                 tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
             else:
                 tr_info = None
-        num_trs = tr_info['num_trs'] if tr_info else None
+        if tr_info is not None:
+            from ._validate import _total_addressable_trs
+            num_trs = _total_addressable_trs(tr_info)
+        else:
+            num_trs = None
         idx = int(tr_idx)
-        if num_trs is not None and idx < 0:
-            idx = num_trs + idx
-        amplitude_mode = 'actual' if idx > 0 else 'max_pos'
+        if num_trs is not None:
+            if idx < 0:
+                idx = num_trs + idx
+            if idx < 0 or idx >= num_trs:
+                raise ValueError(
+                    f'tr_idx={tr_idx} out of range for {num_trs} TRs '
+                    f'(valid: 0..{num_trs - 1} or -{num_trs}..-1)'
+                )
+        amplitude_mode = 'actual'
         tr_index = idx
 
     # Always plot the canonical TR window(s) as defined by the C backend
@@ -245,7 +263,8 @@ def plot(
                 print(f"[DEBUG] Block start_us: {[b.start_us for b in wf.blocks]}")
                 print(f"[DEBUG] Block duration_us: {[b.duration_us for b in wf.blocks]}")
             tr_dur = tr_info['tr_duration_us']
-            num_trs = tr_info['num_trs']
+            from ._validate import _total_addressable_trs
+            num_trs = _total_addressable_trs(tr_info)
             first_tr_start_us = wf.blocks[0].start_us if wf.blocks else 0.0
             from ._validate import _abs_tr_start_s
             _abs_s = _abs_tr_start_s(
@@ -311,7 +330,8 @@ def plot(
             collapse_delays=collapse_delays,
         )
         tr_dur = tr_info['tr_duration_us']
-        num_trs = tr_info['num_trs']
+        from ._validate import _total_addressable_trs
+        num_trs = _total_addressable_trs(tr_info)
         # Compute actual start time of first TR from waveform blocks
         first_tr_start_us = 0.0
         for blk in wf.blocks:
@@ -367,7 +387,7 @@ def plot(
         ch = wf.rf_phase
         # Plot RF phase directly from C backend (already includes all offsets)
         if ch.time_us.size > 0:
-            rf_phase_wrapped = (ch.amplitude + np.pi) % (2 * np.pi) - np.pi
+            rf_phase_wrapped = _wrap_phase(ch.amplitude)
             ax.plot(
                 _t(ch.time_us),
                 rf_phase_wrapped,
@@ -565,7 +585,7 @@ def plot(
             if len(t_us) > 0:
                 fig.axes['rf_phase'].plot(
                     t_us * t_scale,
-                    amp,
+                    _wrap_phase(amp),
                     linewidth=_OVERLAY_LINEWIDTH,
                     alpha=alpha,
                     color='black',
@@ -749,19 +769,27 @@ def _plot_segmented(ax, t_fn, ch, blocks, **kwargs):
 
     if len(t) == 0:
         return
+    first = True
     run_start = 0
     for i in range(1, len(t)):
         if seg_idx[i] != seg_idx[run_start]:
+            kw = dict(**kwargs)
+            if first:
+                kw['label'] = 'pulserver'
+                first = False
             ax.plot(
                 t_fn(t[run_start:i]),
                 a[run_start:i],
                 color=_seg_color(seg_idx[run_start]),
-                **kwargs,
+                **kw,
             )
             run_start = i
+    kw = dict(**kwargs)
+    if first:
+        kw['label'] = 'pulserver'
     ax.plot(
         t_fn(t[run_start:]),
         a[run_start:],
         color=_seg_color(seg_idx[run_start]),
-        **kwargs,
+        **kw,
     )

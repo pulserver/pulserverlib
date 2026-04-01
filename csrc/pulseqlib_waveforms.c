@@ -1181,16 +1181,15 @@ static int fill_rf_waveform_for_flat_block(
     /* fill arrays (channel 0 only) */
     idx = start_idx;
     for (i = 0; i < npts; ++i) {
-        float t_sample;
+        float t_local;  /* time from RF pulse start, µs – matches pypulseq rf.t */
         float freq_term;
         if (has_time_shape && i < decomp_time.num_uncompressed_samples)
-            t_sample = t0 + delay_us + decomp_time.samples[i];
+            t_local = decomp_time.samples[i];
         else
-            t_sample = t0 + delay_us + 0.5f * rf_raster_us
-                       + (float)i * rf_raster_us;
-        freq_term = 2.0f * (float)M_PI * rtab->freq_offset * (t_sample * 1e-6f);
+            t_local = 0.5f * rf_raster_us + (float)i * rf_raster_us;
+        freq_term = 2.0f * (float)M_PI * rtab->freq_offset * (t_local * 1e-6f);
 
-        time_mag[idx] = t_sample;
+        time_mag[idx] = t0 + delay_us + t_local;
         mag[idx]      = amp * decomp_mag.samples[i];    /* Hz */
         phase[idx]    = (decomp_phase.samples && i < decomp_phase.num_uncompressed_samples)
                         ? decomp_phase.samples[i] + rtab->phase_offset + freq_term
@@ -1287,7 +1286,9 @@ int pulseqlib_get_tr_waveforms(
 
     /* ---- determine block range ---- */
     if (amplitude_mode == PULSEQLIB_AMP_ACTUAL) {
-        if (tr_index < 0 || tr_index >= tr->num_trs) {
+        int total_actual_trs = tr->num_trs + tr->num_prep_trs
+                             + tr->num_cooldown_trs;
+        if (tr_index < 0 || tr_index >= total_actual_trs) {
             diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT;
             return diag->code;
         }

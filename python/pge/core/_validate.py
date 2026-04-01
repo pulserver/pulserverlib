@@ -62,6 +62,11 @@ def _rms_error(ref, test):
     return 100.0 * np.sqrt(np.mean((ref - test) ** 2)) / norm
 
 
+def _total_addressable_trs(tr_info):
+    """Total TRs addressable in ACTUAL mode (prep + imaging + cooldown)."""
+    return tr_info['num_trs'] + tr_info['num_prep_trs'] + tr_info['num_cooldown_trs']
+
+
 def _abs_tr_start_s(
     src_seq,
     num_prep_blocks: int,
@@ -136,8 +141,8 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
         if ch_idx < len(channels):
             arr = channels[ch_idx]
             if arr.shape[1] > 0:
-                t_rel = (arr[0] - abs_t0_s) * 1e6
-                a_rel = arr[1] * hz_to_mT_per_m
+                t_rel = np.real((arr[0] - abs_t0_s) * 1e6)
+                a_rel = np.real(arr[1]) * hz_to_mT_per_m
                 ref[ch_name] = _clip_window(t_rel, a_rel)
                 continue
         ref[ch_name] = (np.empty(0), np.empty(0))
@@ -146,7 +151,7 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
     if len(channels) > 3:
         arr = channels[3]
         if arr.shape[1] > 0:
-            t_rel = (arr[0] - abs_t0_s) * 1e6
+            t_rel = np.real((arr[0] - abs_t0_s) * 1e6)
             hz_to_uT = 1e6 / gamma
             rf_mag = np.abs(arr[1]) * hz_to_uT
             rf_phase = np.angle(arr[1])
@@ -159,16 +164,20 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
         ref['rf_mag'] = (np.empty(0), np.empty(0))
         ref['rf_phase'] = (np.empty(0), np.empty(0))
 
-    # ADC phase (if available in channels[4])
-    if len(channels) > 4:
-        arr = channels[4]
-        if arr.shape[1] > 0:
-            t_rel = (arr[0] - abs_t0_s) * 1e6
-            # Assume arr[1] is complex: phase is angle
-            adc_phase = np.angle(arr[1])
-            ref['adc_phase'] = _clip_window(t_rel, adc_phase)
-        else:
-            ref['adc_phase'] = (np.empty(0), np.empty(0))
+    # ADC phase from result[3] (t_adc) and result[4] (fp_adc)
+    t_adc = np.asarray(result[3])          # absolute sample times (s)
+    fp_adc = np.asarray(result[4])         # (num_events, 2): [freq_offset, phase_offset]
+    if t_adc.size > 0 and fp_adc.size > 0:
+        # Expand per-event offsets to per-sample total phase.
+        # pypulseq returns one (freq, phase) pair per ADC event;
+        # for simplicity assign all samples to the single event
+        # (multi-event case: split by event boundaries if needed).
+        freq_off = fp_adc[0, 0] if fp_adc.ndim == 2 else float(fp_adc[0])
+        phase_off = fp_adc[0, 1] if fp_adc.ndim == 2 else float(fp_adc[1])
+        t_rel_adc = (t_adc - abs_t0_s) * 1e6          # µs, TR-relative
+        t_rel_adc_s = t_adc - abs_t0_s                  # s, TR-relative
+        adc_phase = phase_off + 2 * np.pi * freq_off * t_rel_adc_s
+        ref['adc_phase'] = (t_rel_adc, adc_phase)
     else:
         ref['adc_phase'] = (np.empty(0), np.empty(0))
 
@@ -281,7 +290,7 @@ def validate(
     # Loop over all subsequences and all TRs
     for ss_idx in range(num_subseq):
         tr_info = _find_tr(seq._cseq, subsequence_idx=ss_idx)
-        num_trs = tr_info['num_trs']
+        num_trs = _total_addressable_trs(tr_info)
         multi_tr = num_trs > 1
         for tr_idx in range(num_trs):
             messages = []
@@ -293,8 +302,13 @@ def validate(
             )
             # Reference extraction
             if xml_path is None:
-                block_start = 0
-                abs_t0 = _abs_block_start_s(seq._seqs[ss_idx], block_start)
+                abs_t0 = _abs_tr_start_s(
+                    seq._seqs[ss_idx],
+                    tr_info['num_prep_blocks'],
+                    tr_idx,
+                    tr_info['tr_duration_us'],
+                    tr_info.get('imaging_tr_start'),
+                )
                 ref = _pypulseq_reference_window(
                     seq, ss_idx, abs_t0, wf.total_duration_us
                 )
@@ -349,7 +363,7 @@ def validate(
             test_phase_t = np.real(wf.rf_phase.time_us)
             test_phase_a = np.real(np.copy(wf.rf_phase.amplitude))
             # Compare to reference if available (if ref contains phase)
-            if 'rf_phase' in ref:
+            if 'rf_phase' in ref and len(test_phase_t) > 0:
                 ref_phase_t, ref_phase_a = ref['rf_phase']
                 ref_phase_t = np.real(ref_phase_t)
                 ref_phase_a = np.real(ref_phase_a)
@@ -361,14 +375,22 @@ def validate(
                     if len(t_common_p) > 0:
                         ref_interp_p = np.interp(t_common_p, ref_phase_t, ref_phase_a, left=0.0, right=0.0)
                         test_interp_p = np.interp(t_common_p, test_phase_t, test_phase_a, left=0.0, right=0.0)
-                        phase_err = _rms_error(ref_interp_p, test_interp_p)
-                        # Add a tolerance for phase error if desired (e.g., 0.1 rad)
-                        phase_tol = 0.1
-                        if phase_err > phase_tol:
-                            pfx = f'TR {tr_idx}: ' if multi_tr else ''
-                            messages.append(
-                                f'{pfx}RF phase mismatch: {phase_err:.3f} RMS (tol {phase_tol:.3f})'
-                            )
+                        # Mask to RF-active region to avoid comparing arbitrary phase where amplitude=0
+                        ref_mag_t, ref_mag_a = ref['rf_mag']
+                        ref_mag_interp = np.interp(t_common_p, np.real(ref_mag_t), ref_mag_a, left=0.0, right=0.0)
+                        test_mag_interp = np.interp(t_common_p, np.real(wf.rf_mag.time_us), wf.rf_mag.amplitude, left=0.0, right=0.0)
+                        mag_peak = max(ref_mag_interp.max(), test_mag_interp.max(), 1e-30)
+                        active = (np.maximum(ref_mag_interp, test_mag_interp) > 0.05 * mag_peak)
+                        if active.sum() > 0:
+                            # Angle-wrapped difference handles 2π periodicity; result in radians
+                            phase_diff = np.angle(np.exp(1j * (test_interp_p[active] - ref_interp_p[active])))
+                            phase_err = float(np.sqrt(np.mean(phase_diff ** 2)))
+                            phase_tol = 0.1  # radians
+                            if phase_err > phase_tol:
+                                pfx = f'TR {tr_idx}: ' if multi_tr else ''
+                                messages.append(
+                                    f'{pfx}RF phase mismatch: {phase_err:.3f} rad RMS (tol {phase_tol:.3f} rad)'
+                                )
 
             # ADC phase validation (with per-block offsets)
             for adc in wf.adc_events:
@@ -408,7 +430,24 @@ def validate(
 
     # Determine what to plot
     plot_ss = fail_subseq_idx if fail else (subsequence_idx if subsequence_idx is not None else 0)
-    plot_tr = fail_tr_idx if fail else (tr_instance if tr_instance is not None else 0)
+    if fail:
+        plot_tr = fail_tr_idx  # already an absolute TR index from the loop
+    else:
+        # tr_instance is an absolute TR index (0 = first prep/dummy TR).
+        # Negative values count backward from the end.
+        tr_info_plot = _find_tr(seq._cseq, subsequence_idx=plot_ss)
+        num_total = _total_addressable_trs(tr_info_plot)
+        if tr_instance is None:
+            plot_tr = 0  # default: first TR
+        elif tr_instance < 0:
+            plot_tr = num_total + tr_instance
+        else:
+            plot_tr = tr_instance
+        if plot_tr < 0 or plot_tr >= num_total:
+            raise ValueError(
+                f'tr_instance={tr_instance} out of range for {num_total} TRs '
+                f'(valid: 0..{num_total - 1} or -{num_total}..-1)'
+            )
     
     if do_plot:
         _validation_plot(
@@ -476,7 +515,8 @@ def _validation_plot(
     status = 'PASS' if ok else 'FAIL'
     colour = 'green' if ok else 'red'
     handle.fig.suptitle(
-        f'validate()  \u2014  {status}', fontweight='bold', color=colour
+        f'validate()  \u2014  {status}  (subseq={sequence_idx}, TR={tr_idx})',
+        fontweight='bold', color=colour,
     )
     # Only show error messages in the plot if you want detailed debugging; suppress for user-facing plots
     # (per user request, do not print per-TR error messages on the plot)
