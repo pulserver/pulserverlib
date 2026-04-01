@@ -248,6 +248,7 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
                 (float(t_rel_adc[0]), float(fp_adc[0, 0]), float(fp_adc[0, 1]))
             ]
             phase_all = fp_adc[0, 1] + 2 * np.pi * fp_adc[0, 0] * (t_rel_adc * 1e-6)
+            ref['adc_phase'] = (t_rel_adc, phase_all)
         else:
             # Split samples across events via gap detection
             dt = np.diff(t_adc)
@@ -255,16 +256,38 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
             boundaries = np.where(dt > 3 * median_dt)[0] + 1
             ev_starts = np.concatenate([[0], boundaries])
             ev_ends = np.concatenate([boundaries, [len(t_adc)]])
+
+            phase_t_parts = []
+            phase_a_parts = []
             for ev_idx in range(min(len(ev_starts), num_events)):
                 onset_us = float(t_rel_adc[ev_starts[ev_idx]])
                 ref['adc_events'].append(
                     (onset_us, float(fp_adc[ev_idx, 0]), float(fp_adc[ev_idx, 1]))
                 )
                 sl = slice(ev_starts[ev_idx], ev_ends[ev_idx])
-                phase_all[sl] = (fp_adc[ev_idx, 1]
-                                 + 2 * np.pi * fp_adc[ev_idx, 0]
-                                 * (t_rel_adc[sl] * 1e-6))
-        ref['adc_phase'] = (t_rel_adc, phase_all)
+                t_ev = t_rel_adc[sl]
+                a_ev = (fp_adc[ev_idx, 1]
+                        + 2 * np.pi * fp_adc[ev_idx, 0]
+                        * (t_ev * 1e-6))
+                phase_all[sl] = a_ev
+
+                if t_ev.size > 0:
+                    phase_t_parts.append(t_ev)
+                    phase_a_parts.append(a_ev)
+
+                # Represent non-ADC gaps explicitly as zero phase so plotting
+                # does not linearly connect adjacent ADC events across gaps.
+                if ev_idx + 1 < min(len(ev_starts), num_events):
+                    t_gap_start = float(t_rel_adc[ev_ends[ev_idx] - 1])
+                    t_gap_end = float(t_rel_adc[ev_starts[ev_idx + 1]])
+                    if t_gap_end > t_gap_start:
+                        phase_t_parts.append(np.array([t_gap_start, t_gap_end], dtype=float))
+                        phase_a_parts.append(np.array([0.0, 0.0], dtype=float))
+
+            if phase_t_parts:
+                ref['adc_phase'] = (np.concatenate(phase_t_parts), np.concatenate(phase_a_parts))
+            else:
+                ref['adc_phase'] = (t_rel_adc, phase_all)
 
     return ref
 
@@ -732,8 +755,22 @@ def _validation_plot(
     # (per user request, do not print per-TR error messages on the plot)
     for gname in ('gx', 'gy', 'gz'):
         ax = handle.axes[gname]
+
+        def _line_peak_abs(line):
+            y = np.asarray(line.get_ydata(), dtype=float)
+            if y.size == 0:
+                return 0.0
+            y = y[np.isfinite(y)]
+            if y.size == 0:
+                return 0.0
+            # Ignore flat horizontal reference lines (e.g. +/- max_grad),
+            # otherwise all gradient panels inherit the same y-scale.
+            if np.ptp(y) == 0.0:
+                return 0.0
+            return float(np.max(np.abs(y)))
+
         ymax = max(
-            max((np.max(np.abs(line.get_ydata())) for line in ax.get_lines() if len(line.get_ydata()) > 0), default=0.0),
+            max((_line_peak_abs(line) for line in ax.get_lines()), default=0.0),
             1.0,
         )
         ax.set_ylim(-ymax * 1.1, ymax * 1.1)
