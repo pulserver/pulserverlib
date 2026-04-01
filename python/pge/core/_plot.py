@@ -19,6 +19,44 @@ def _wrap_phase(x):
     return w
 
 
+def _insert_nan_gaps(t, *arrs, gap_factor=5.0):
+    """Insert NaN rows where consecutive time samples jump by > gap_factor * median dt.
+
+    Returns (t_out, *arrs_out) with NaN sentinels so matplotlib breaks the line.
+    """
+    t = np.asarray(t, dtype=float)
+    if len(t) < 2:
+        return (t, *(np.asarray(a, dtype=float) for a in arrs))
+    dt = np.diff(t)
+    median_dt = np.median(dt[dt > 0]) if np.any(dt > 0) else 1.0
+    gap_idx = np.where(dt > gap_factor * median_dt)[0]
+    if len(gap_idx) == 0:
+        return (t, *(np.asarray(a, dtype=float) for a in arrs))
+    # Build new arrays with NaN inserted after each gap
+    n_new = len(t) + len(gap_idx)
+    t_out = np.empty(n_new)
+    arr_outs = [np.empty(n_new) for _ in arrs]
+    src = 0
+    dst = 0
+    for gi in gap_idx:
+        length = gi + 1 - src
+        t_out[dst:dst + length] = t[src:src + length]
+        for ao, a in zip(arr_outs, arrs):
+            ao[dst:dst + length] = np.asarray(a, dtype=float)[src:src + length]
+        dst += length
+        t_out[dst] = np.nan
+        for ao in arr_outs:
+            ao[dst] = np.nan
+        dst += 1
+        src = gi + 1
+    # Copy remainder
+    length = len(t) - src
+    t_out[dst:dst + length] = t[src:src + length]
+    for ao, a in zip(arr_outs, arrs):
+        ao[dst:dst + length] = np.asarray(a, dtype=float)[src:src + length]
+    return (t_out, *arr_outs)
+
+
 # ── MATLAB lines-like palette for style parity ───────────────────────
 _MATLAB_LINES = [
     '#0072BD',
@@ -378,9 +416,10 @@ def plot(
         ax = axes['rf_mag']
         ch = wf.rf_mag
         if ch.time_us.size > 0:
+            t_rf, a_rf = _insert_nan_gaps(ch.time_us, ch.amplitude)
             ax.plot(
-                _t(ch.time_us),
-                ch.amplitude,
+                _t(t_rf),
+                a_rf,
                 color='gray',
                 linewidth=_MAIN_LINEWIDTH,
                 linestyle='-',
@@ -404,9 +443,10 @@ def plot(
         # Plot RF phase directly from C backend (already includes all offsets)
         if ch.time_us.size > 0:
             rf_phase_wrapped = _wrap_phase(ch.amplitude)
+            t_rf_ph, a_rf_ph = _insert_nan_gaps(ch.time_us, rf_phase_wrapped)
             ax.plot(
-                _t(ch.time_us),
-                rf_phase_wrapped,
+                _t(t_rf_ph),
+                a_rf_ph,
                 color='gray',
                 linewidth=_MAIN_LINEWIDTH,
                 linestyle='-',
@@ -429,6 +469,7 @@ def plot(
         # ── ADC phase envelope ──
         ax = axes['adc']
         # Only plot for real ADC events (not dummy TRs)
+        adc_labeled = False
         for adc in wf.adc_events:
             if adc.num_samples > 0 and adc.duration_us > 0:
                 dwell_time = adc.duration_us / adc.num_samples  # us
@@ -437,9 +478,11 @@ def plot(
                 adc_phase = adc.phase_offset_rad + 2 * np.pi * adc.freq_offset_hz * t_adc_s
                 # Wrap phase to [-pi, pi]
                 adc_phase_wrapped = (adc_phase + np.pi) % (2 * np.pi) - np.pi
-                ax.plot(_t(t_adc), adc_phase_wrapped, color='purple', linewidth=_MAIN_LINEWIDTH, label='pulserver')
+                lbl = 'pulserver' if not adc_labeled else None
+                ax.plot(_t(t_adc), adc_phase_wrapped, color='purple', linewidth=_MAIN_LINEWIDTH, label=lbl)
                 # Shadowed region
                 ax.fill_between(_t(t_adc), 0, np.maximum(adc_phase_wrapped, 1.0), color='purple', alpha=0.15)
+                adc_labeled = True
         ax.set_ylabel('ADC phase (rad)')
         ax.set_yticks([-np.pi, 0, np.pi])
         ax.set_yticklabels(['-pi', '0', 'pi'])
