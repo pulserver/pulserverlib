@@ -237,25 +237,34 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
     t_adc = np.asarray(result[3])          # absolute sample times (s)
     fp_adc = np.asarray(result[4])         # (num_events, 2): [freq_offset, phase_offset]
     ref['adc_events'] = []
+    ref['adc_phase'] = (np.empty(0), np.empty(0))
     if t_adc.size > 0 and fp_adc.size > 0:
         fp_adc = np.atleast_2d(fp_adc)
         num_events = fp_adc.shape[0]
         t_rel_adc = (t_adc - abs_t0_s) * 1e6          # µs, TR-relative
+        phase_all = np.zeros_like(t_rel_adc)
         if num_events == 1:
             ref['adc_events'] = [
                 (float(t_rel_adc[0]), float(fp_adc[0, 0]), float(fp_adc[0, 1]))
             ]
+            phase_all = fp_adc[0, 1] + 2 * np.pi * fp_adc[0, 0] * (t_rel_adc * 1e-6)
         else:
             # Split samples across events via gap detection
             dt = np.diff(t_adc)
             median_dt = np.median(dt) if len(dt) > 0 else 1e-6
             boundaries = np.where(dt > 3 * median_dt)[0] + 1
             ev_starts = np.concatenate([[0], boundaries])
+            ev_ends = np.concatenate([boundaries, [len(t_adc)]])
             for ev_idx in range(min(len(ev_starts), num_events)):
                 onset_us = float(t_rel_adc[ev_starts[ev_idx]])
                 ref['adc_events'].append(
                     (onset_us, float(fp_adc[ev_idx, 0]), float(fp_adc[ev_idx, 1]))
                 )
+                sl = slice(ev_starts[ev_idx], ev_ends[ev_idx])
+                phase_all[sl] = (fp_adc[ev_idx, 1]
+                                 + 2 * np.pi * fp_adc[ev_idx, 0]
+                                 * (t_rel_adc[sl] * 1e-6))
+        ref['adc_phase'] = (t_rel_adc, phase_all)
 
     return ref
 
@@ -272,7 +281,7 @@ def _concat_refs(segments):
     """
     result = {}
 
-    for key in ('gx', 'gy', 'gz', 'rf_mag', 'rf_phase'):
+    for key in ('gx', 'gy', 'gz', 'rf_mag', 'rf_phase', 'adc_phase'):
         parts_t, parts_a = [], []
         for off, ref in segments:
             if key in ref:
@@ -347,11 +356,13 @@ def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1,
         blk_offset,
     )
 
-    # Non-degenerate (bSSFP-like) with num_averages > 1: the C library
-    # replicates imaging blocks inside each pass.  Build a tiled reference
+    # Non-degenerate (bSSFP-like): the C library returns a full pass with
+    # prep + eff_num_averages*imaging + cooldown.  Build a tiled reference
     # by extracting prep / imaging / cooldown separately and repeating the
-    # imaging portion.
-    if _is_non_degenerate(tr_info) and num_averages > 1:
+    # imaging portion.  This applies even for num_averages <= 1 so the
+    # overlay always spans the complete pass.
+    if _is_non_degenerate(tr_info):
+        eff_navg = max(num_averages, 1)
         src_seq = seq._seqs[sequence_idx]
         n_prep = tr_info['num_prep_blocks']
         n_img = tr_info['num_trs'] * tr_info['tr_size']
@@ -371,11 +382,11 @@ def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1,
                 seq, sequence_idx, t0, prep_dur_us)))
         ref_img = _pypulseq_reference_window(
             seq, sequence_idx, t_img_s, img_dur_us)
-        for k in range(num_averages):
+        for k in range(eff_navg):
             segments.append((prep_dur_us + k * img_dur_us, ref_img))
         if cool_dur_us > 0:
             segments.append((
-                prep_dur_us + num_averages * img_dur_us,
+                prep_dur_us + eff_navg * img_dur_us,
                 _pypulseq_reference_window(seq, sequence_idx, t_cool_s, cool_dur_us),
             ))
         return _concat_refs(segments)

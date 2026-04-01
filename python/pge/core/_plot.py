@@ -137,6 +137,9 @@ class PlotHandle:
         first_tr_start_us,
         *,
         _tr_start_abs_s=0.0,
+        _tr_index=0,
+        _num_averages=0,
+        _subsequence_idx=0,
     ):
         self.fig = fig
         self.axes = axes
@@ -144,6 +147,9 @@ class PlotHandle:
         self.num_trs = num_trs
         self.first_tr_start_us = first_tr_start_us
         self._tr_start_abs_s = _tr_start_abs_s
+        self._tr_index = _tr_index
+        self._num_averages = _num_averages
+        self._subsequence_idx = _subsequence_idx
 
 
 def plot(
@@ -599,6 +605,9 @@ def plot(
             num_trs=num_trs,
             first_tr_start_us=first_tr_start_us,
             _tr_start_abs_s=_abs_s,
+            _tr_index=tr_index,
+            _num_averages=num_averages,
+            _subsequence_idx=subsequence_idx,
         )
 
     # ================================================================
@@ -606,17 +615,19 @@ def plot(
     # ================================================================
     if is_pulseq:
         assert fig is not None
-        # Use the same windowing as validation for the overlay
-
-        from ._validate import _pypulseq_reference_window
-        # Ensure we have a SequenceCollection for reference extraction
+        # Use the same tiled reference extraction as validation so that
+        # non-degenerate sequences (bSSFP) show prep + N*imaging + cooldown.
+        from ._validate import _pypulseq_reference
+        from ._extension._pulseqlib_wrapper import _find_tr
         if not hasattr(source, '_seqs'):
             seq_coll = SequenceCollection(source)
         else:
             seq_coll = source
-        abs_t0 = fig._tr_start_abs_s
-        window_duration_us = fig.tr_duration_us
-        ref = _pypulseq_reference_window(seq_coll, subsequence_idx, abs_t0, window_duration_us)
+        tr_info = _find_tr(seq_coll._cseq, subsequence_idx=fig._subsequence_idx)
+        ref = _pypulseq_reference(
+            seq_coll, fig._subsequence_idx, fig._tr_index, tr_info,
+            fig._num_averages,
+        )
 
         alpha = 1.0
         for ch_name in ('gx', 'gy', 'gz'):
@@ -681,7 +692,7 @@ def plot(
             if len(t_us) > 0:
                 fig.axes['adc'].plot(
                     t_us * t_scale,
-                    amp,
+                    _wrap_phase(amp),
                     linewidth=_OVERLAY_LINEWIDTH,
                     alpha=alpha,
                     color='black',
