@@ -171,17 +171,17 @@ int pulseqlib_check_consistency(
  *
  * Both @c total_duration_us and @c total_segment_boundaries are populated.
  *
- * @param[in]  file_path      Path to the first .seq file (may be chained).
- * @param[in]  num_reps       Number of repetitions (>= 1).
- * @param[out] total_duration_us        Receives total scan duration (us).
- * @param[out] total_segment_boundaries Receives total segment boundaries (may be NULL).
+ * @param[out] info       Receives scan time summary.
+ * @param[in]  file_path  Path to the first .seq file (may be chained).
+ * @param[in]  opts       Library options.
+ * @param[in]  num_reps   Number of repetitions (>= 1).
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
 int pulseqlib_peek_scan_time(
+    pulseqlib_scan_time_info* info,
     const char* file_path,
-    int num_reps,
-    long long* total_duration_us,
-    int* total_segment_boundaries);
+    const pulseqlib_opts* opts,
+    int num_reps);
 
 /**
  * @brief Extract uniform-raster canonical TR gradient waveforms for a given subsequence.

@@ -18,18 +18,15 @@
 #define TOSTRING(x) STRINGIFY(x)
 
 #if defined(NDEBUG)
-# define KISS_FFT_LOG_MSG(severity, ...) ((void)0)
+# define KISS_FFT_LOG_MSG  (void)sizeof
 #else
-# define KISS_FFT_LOG_MSG(severity, ...) \
-    fprintf(stderr, "[" #severity "] " __FILE__ ":" TOSTRING(__LINE__) " "); \
-    fprintf(stderr, __VA_ARGS__); \
-    fprintf(stderr, "\n")
+# define KISS_FFT_LOG_MSG  (void)sizeof
 #endif
 
-#define KISS_FFT_ERROR(...) KISS_FFT_LOG_MSG(ERROR, __VA_ARGS__)
-#define KISS_FFT_WARNING(...) KISS_FFT_LOG_MSG(WARNING, __VA_ARGS__)
-#define KISS_FFT_INFO(...) KISS_FFT_LOG_MSG(INFO, __VA_ARGS__)
-#define KISS_FFT_DEBUG(...) KISS_FFT_LOG_MSG(DEBUG, __VA_ARGS__)
+#define KISS_FFT_ERROR   KISS_FFT_LOG_MSG
+#define KISS_FFT_WARNING KISS_FFT_LOG_MSG
+#define KISS_FFT_INFO    KISS_FFT_LOG_MSG
+#define KISS_FFT_DEBUG   KISS_FFT_LOG_MSG
 
 
 

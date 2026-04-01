@@ -28,6 +28,7 @@
  *   pulseqlib__resolve_segment       pulseqlib__resolve_block
  */
 
+#include <math.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -99,39 +100,6 @@ static int get_grad_id_by_axis(const pulseqlib_block_definition* bdef, int axis)
         case PULSEQLIB_GRAD_AXIS_Z: return bdef->gz_id;
         default: return -1;
     }
-}
-
-static int get_grad_event_id_by_axis(const pulseqlib_block_table_element* bte, int axis)
-{
-    switch (axis) {
-        case PULSEQLIB_GRAD_AXIS_X: return bte->gx_id;
-        case PULSEQLIB_GRAD_AXIS_Y: return bte->gy_id;
-        case PULSEQLIB_GRAD_AXIS_Z: return bte->gz_id;
-        default: return -1;
-    }
-}
-
-/* Resolve the grad_definition index through the actual max-energy
- * block_table entry.  Returns -1 when the axis has no gradient. */
-static int resolve_grad_def_via_max_energy(
-    const pulseqlib_sequence_descriptor* desc,
-    const pulseqlib_tr_segment* seg,
-    int local_blk, int axis)
-{
-    int scan_idx, block_table_idx, raw_grad_id;
-    const pulseqlib_block_table_element* bte;
-
-    if (seg->max_energy_start_block < 0) return -1;
-    scan_idx = seg->max_energy_start_block + local_blk;
-    if (scan_idx < 0 || scan_idx >= desc->scan_table_len) return -1;
-    block_table_idx = desc->scan_table_block_idx[scan_idx];
-    if (block_table_idx < 0 || block_table_idx >= desc->num_blocks)
-        return -1;
-    bte = &desc->block_table[block_table_idx];
-    raw_grad_id = get_grad_event_id_by_axis(bte, axis);
-    if (raw_grad_id < 0 || raw_grad_id >= desc->grad_table_size)
-        return -1;
-    return desc->grad_table[raw_grad_id].id;
 }
 
 static const pulseqlib_block_table_element* resolve_block_table_via_max_energy(
@@ -1475,13 +1443,13 @@ float pulseqlib_get_rf_max_amplitude_hz(
     rdef = &desc->rf_definitions[bdef->rf_id];
 
     bte = resolve_block_table_via_max_energy(desc, seg, local_blk);
-    if (!bte) return fabsf(rdef->stats.base_amplitude_hz);
+    if (!bte) return (float)fabs(rdef->stats.base_amplitude_hz);
 
     rf_event_id = bte->rf_id;
     if (rf_event_id >= 0 && rf_event_id < desc->rf_table_size)
-        return fabsf(desc->rf_table[rf_event_id].amplitude);
+        return (float)fabs(desc->rf_table[rf_event_id].amplitude);
 
-    return fabsf(rdef->stats.base_amplitude_hz);
+    return (float)fabs(rdef->stats.base_amplitude_hz);
 }
 
 /* ================================================================== */
@@ -2720,6 +2688,7 @@ int pulseqlib_get_subseq_info(
     info->num_adc_occurrences  = pulseqlib__get_num_adc_occurrences(coll, subseq_idx);
     info->num_label_columns    = pulseqlib__get_num_label_columns(coll, subseq_idx);
     info->num_passes           = coll->descriptors[subseq_idx].num_passes;
+    info->num_averages         = coll->descriptors[subseq_idx].num_averages;
 
     return PULSEQLIB_SUCCESS;
 }

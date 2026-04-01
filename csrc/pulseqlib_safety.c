@@ -23,13 +23,19 @@ static void pulseqlib__select_canonical_tr_window_idx(
         *amplitude_mode = PULSEQLIB_AMP_MAX_POS;
         *num_instances = 1;
         *tr_duration_us = 0.0f;
-        for (int n = 0; n < pass_len; ++n) {
-            int idx = *start_block + n;
-            const struct pulseqlib_block_table_element* bte = &desc->block_table[idx];
-            const struct pulseqlib_block_definition* bdef = &desc->block_definitions[bte->id];
-            *tr_duration_us += (bte->duration_us >= 0)
-                ? (float)bte->duration_us
-                : (float)bdef->duration_us;
+        {
+            int n;
+            for (n = 0; n < pass_len; ++n) {
+                int idx;
+                const struct pulseqlib_block_table_element* bte;
+                const struct pulseqlib_block_definition* bdef;
+                idx = *start_block + n;
+                bte = &desc->block_table[idx];
+                bdef = &desc->block_definitions[bte->id];
+                *tr_duration_us += (bte->duration_us >= 0)
+                    ? (float)bte->duration_us
+                    : (float)bdef->duration_us;
+            }
         }
         return;
     }

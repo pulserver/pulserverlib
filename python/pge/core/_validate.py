@@ -65,8 +65,8 @@ def _rms_error(ref, test):
 def _is_non_degenerate(tr_info):
     """True for bSSFP-like layouts where each ACTUAL-mode TR spans a full pass.
 
-    In that case the waveform length already encodes all averages, so the
-    instance count does NOT change with num_averages.
+    In that case the C library returns one waveform per *pass* (slice), with
+    imaging blocks replicated ``num_averages`` times inside each pass.
     """
     has_nd_prep = (not tr_info['degenerate_prep'] and tr_info['num_prep_blocks'] > 0)
     has_nd_cool = (not tr_info['degenerate_cooldown'] and tr_info['num_cooldown_blocks'] > 0)
@@ -74,41 +74,44 @@ def _is_non_degenerate(tr_info):
 
 
 def _total_addressable_trs(tr_info, num_averages=1):
-    """Total TRs addressable in ACTUAL mode.
+    """Total TRs addressable in ACTUAL mode (matches C-side logic).
 
-    Non-degenerate (bSSFP): averages are embedded in each TR waveform —
-    instance count is constant at ``num_trs + num_prep_trs + num_cooldown_trs``.
+    Non-degenerate (bSSFP): ``num_passes`` — each pass is a single TR that
+    embeds all averages.
 
     Degenerate (GRE-like): prep/cooldown play once; imaging repeats
     ``num_averages`` times, giving ``num_prep_trs + num_averages * num_trs
     + num_cooldown_trs``.
     """
     if _is_non_degenerate(tr_info):
-        return tr_info['num_trs'] + tr_info['num_prep_trs'] + tr_info['num_cooldown_trs']
+        return tr_info['num_passes']
     return (tr_info['num_prep_trs']
             + num_averages * tr_info['num_trs']
             + tr_info['num_cooldown_trs'])
 
 
-def _canonical_c_tr_index(tr_idx, tr_info, num_averages=1):
-    """Map a flat validate-loop tr_idx to the C library tr_index.
+def _canonical_pypulseq_block(tr_idx, tr_info, num_averages=1):
+    """Map a validate-loop *tr_idx* to the 0-based block offset used to
+    locate the corresponding time window in the pypulseq Sequence object.
 
-    Non-degenerate: identity — the C library already handles the full pass.
-
-    Degenerate: prep and cooldown indices pass through unchanged; imaging
-    indices are wrapped modulo ``num_trs`` so they always point at a
-    canonical block in the pypulseq file.
+    Non-degenerate: tr_idx selects a pass; block offset = pass_idx * pass_len.
+    Degenerate: imaging indices wrap modulo ``num_trs`` to canonical blocks.
     """
     if _is_non_degenerate(tr_info):
-        return tr_idx
+        pass_len = (tr_info['num_prep_blocks']
+                    + tr_info['num_trs'] * tr_info['tr_size']
+                    + tr_info['num_cooldown_blocks'])
+        return tr_idx * pass_len
     num_prep = tr_info['num_prep_trs']
     num_trs = tr_info['num_trs']
     if tr_idx < num_prep:
-        return tr_idx
-    if tr_idx < num_prep + num_averages * num_trs:
-        return num_prep + (tr_idx - num_prep) % num_trs
-    cool_idx = tr_idx - num_prep - num_averages * num_trs
-    return num_prep + num_trs + cool_idx
+        canonical_tr = tr_idx
+    elif tr_idx < num_prep + num_averages * num_trs:
+        canonical_tr = num_prep + (tr_idx - num_prep) % num_trs
+    else:
+        cool_idx = tr_idx - num_prep - num_averages * num_trs
+        canonical_tr = num_prep + num_trs + cool_idx
+    return canonical_tr * tr_info['tr_size']
 
 
 def _abs_tr_start_s(
@@ -230,22 +233,29 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
         ref['rf_mag'] = (np.empty(0), np.empty(0))
         ref['rf_phase'] = (np.empty(0), np.empty(0))
 
-    # ADC phase from result[3] (t_adc) and result[4] (fp_adc)
+    # ADC per-event data from result[3] (t_adc) and result[4] (fp_adc)
     t_adc = np.asarray(result[3])          # absolute sample times (s)
     fp_adc = np.asarray(result[4])         # (num_events, 2): [freq_offset, phase_offset]
+    ref['adc_events'] = []
     if t_adc.size > 0 and fp_adc.size > 0:
-        # Expand per-event offsets to per-sample total phase.
-        # pypulseq returns one (freq, phase) pair per ADC event;
-        # for simplicity assign all samples to the single event
-        # (multi-event case: split by event boundaries if needed).
-        freq_off = fp_adc[0, 0] if fp_adc.ndim == 2 else float(fp_adc[0])
-        phase_off = fp_adc[0, 1] if fp_adc.ndim == 2 else float(fp_adc[1])
+        fp_adc = np.atleast_2d(fp_adc)
+        num_events = fp_adc.shape[0]
         t_rel_adc = (t_adc - abs_t0_s) * 1e6          # µs, TR-relative
-        t_rel_adc_s = t_adc - abs_t0_s                  # s, TR-relative
-        adc_phase = phase_off + 2 * np.pi * freq_off * t_rel_adc_s
-        ref['adc_phase'] = (t_rel_adc, adc_phase)
-    else:
-        ref['adc_phase'] = (np.empty(0), np.empty(0))
+        if num_events == 1:
+            ref['adc_events'] = [
+                (float(t_rel_adc[0]), float(fp_adc[0, 0]), float(fp_adc[0, 1]))
+            ]
+        else:
+            # Split samples across events via gap detection
+            dt = np.diff(t_adc)
+            median_dt = np.median(dt) if len(dt) > 0 else 1e-6
+            boundaries = np.where(dt > 3 * median_dt)[0] + 1
+            ev_starts = np.concatenate([[0], boundaries])
+            for ev_idx in range(min(len(ev_starts), num_events)):
+                onset_us = float(t_rel_adc[ev_starts[ev_idx]])
+                ref['adc_events'].append(
+                    (onset_us, float(fp_adc[ev_idx, 0]), float(fp_adc[ev_idx, 1]))
+                )
 
     return ref
 
@@ -253,8 +263,16 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
 # ── reference extraction ─────────────────────────────────────────────
 
 
-def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1):
+def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1,
+                        duration_us=None):
     """Extract reference waveforms from pypulseq for a single TR.
+
+    Parameters
+    ----------
+    duration_us : float | None
+        Override window duration.  When *None*, uses ``tr_duration_us`` from
+        *tr_info* for degenerate TRs, or the full pass duration (computed from
+        block_durations) for non-degenerate.
 
     Returns
     -------
@@ -263,12 +281,14 @@ def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1):
         Times are relative to TR start; amplitudes in mT/m (grad) or
         µT (RF magnitude).
     """
-    c_idx = _canonical_c_tr_index(tr_idx, tr_info, num_averages)
+    blk_offset = _canonical_pypulseq_block(tr_idx, tr_info, num_averages)
     t0 = _abs_block_start_s(
         seq._seqs[sequence_idx],
-        c_idx * tr_info['tr_size'],
+        blk_offset,
     )
-    return _pypulseq_reference_window(seq, sequence_idx, t0, tr_info['tr_duration_us'])
+    if duration_us is None:
+        duration_us = tr_info['tr_duration_us']
+    return _pypulseq_reference_window(seq, sequence_idx, t0, duration_us)
 
 
 def _xml_reference(xml_path):
@@ -396,16 +416,18 @@ def validate(
         multi_tr = num_trs_ss > 1
         for tr_idx in tr_range[ss_idx]:
             messages = []
-            c_idx = _canonical_c_tr_index(tr_idx, tr_info, num_averages)
             wf = get_tr_waveforms(
                 seq,
                 subsequence_idx=ss_idx,
                 amplitude_mode='actual',
-                tr_index=c_idx,
+                tr_index=tr_idx,
             )
             # Reference extraction
             if xml_path is None:
-                ref = _pypulseq_reference(seq, ss_idx, tr_idx, tr_info, num_averages)
+                ref = _pypulseq_reference(
+                    seq, ss_idx, tr_idx, tr_info, num_averages,
+                    duration_us=wf.total_duration_us,
+                )
             else:
                 ref = _xml_reference(xml_path)
             # Sort every (t, a) entry so time axes are monotone.
@@ -457,7 +479,9 @@ def validate(
                                 f'{pfx}RF mismatch: {rf_err:.1f}% RMS (tol {rf_rms_percent:.1f}%)'
                             )
 
-            # RF phase validation
+            # RF phase validation — use complex RF comparison so that
+            # sign-convention differences (π phase flip at RF edges) are
+            # handled naturally instead of inflating the phase RMS.
             test_phase_t = np.real(wf.rf_phase.time_us)
             test_phase_a = np.real(np.copy(wf.rf_phase.amplitude))
             if 'rf_phase' in ref and len(test_phase_t) > 0:
@@ -478,41 +502,40 @@ def validate(
                         mag_peak = max(ref_mag_interp.max(), test_mag_interp.max(), 1e-30)
                         active = (np.maximum(ref_mag_interp, test_mag_interp) > 0.05 * mag_peak)
                         if active.sum() > 0:
-                            phase_diff = np.angle(np.exp(1j * (test_interp_p[active] - ref_interp_p[active])))
-                            phase_err = float(np.sqrt(np.mean(phase_diff ** 2)))
-                            phase_tol = 0.1  # radians
+                            ref_c = ref_mag_interp[active] * np.exp(1j * ref_interp_p[active])
+                            test_c = test_mag_interp[active] * np.exp(1j * test_interp_p[active])
+                            phase_err = float(np.sqrt(np.mean(np.abs(ref_c - test_c) ** 2))) / mag_peak
+                            phase_tol = 0.1  # fractional complex RF tolerance
                             if phase_err > phase_tol:
                                 pfx = f'TR {tr_idx}: ' if multi_tr else ''
                                 messages.append(
-                                    f'{pfx}RF phase mismatch: {phase_err:.3f} rad RMS (tol {phase_tol:.3f} rad)'
+                                    f'{pfx}RF phase mismatch: {phase_err:.3f} (tol {phase_tol:.3f})'
                                 )
 
-            # ADC phase validation
-            for adc in wf.adc_events:
-                if adc.num_samples > 0 and adc.duration_us > 0:
-                    dwell_time = adc.duration_us / adc.num_samples
-                    t_adc = np.real(adc.onset_us + np.arange(adc.num_samples) * dwell_time)
-                    t_adc_s = t_adc * 1e-6
-                    adc_phase = np.real(adc.phase_offset_rad + 2 * np.pi * adc.freq_offset_hz * t_adc_s)
-                    if 'adc_phase' in ref:
-                        ref_adc_t, ref_adc_a = ref['adc_phase']
-                        ref_adc_t = np.real(ref_adc_t)
-                        ref_adc_a = np.real(ref_adc_a)
-                        t_min_a = max(ref_adc_t[0], t_adc[0]) if len(ref_adc_t) and len(t_adc) else 0.0
-                        t_max_a = min(ref_adc_t[-1], t_adc[-1]) if len(ref_adc_t) and len(t_adc) else 0.0
-                        if t_max_a > t_min_a:
-                            t_common_a = np.arange(np.ceil(t_min_a), np.floor(t_max_a) + 1)
-                            t_common_a = t_common_a[1:-1] if len(t_common_a) > 2 else t_common_a
-                            if len(t_common_a) > 0:
-                                ref_interp_a = np.interp(t_common_a, ref_adc_t, ref_adc_a, left=0.0, right=0.0)
-                                test_interp_a = np.interp(t_common_a, t_adc, adc_phase, left=0.0, right=0.0)
-                                adc_phase_err = _rms_error(ref_interp_a, test_interp_a)
-                                adc_phase_tol = 0.1
-                                if adc_phase_err > adc_phase_tol:
-                                    pfx = f'TR {tr_idx}: ' if multi_tr else ''
-                                    messages.append(
-                                        f'{pfx}ADC phase mismatch: {adc_phase_err:.3f} RMS (tol {adc_phase_tol:.3f})'
-                                    )
+            # ADC phase validation — event-level comparison of freq/phase
+            # offsets rather than interpolated waveform comparison (avoids
+            # cross-gap interpolation artifacts for multi-event passes).
+            if 'adc_events' in ref and len(ref['adc_events']) > 0:
+                ref_adc_list = ref['adc_events']
+                for adc in wf.adc_events:
+                    if adc.num_samples <= 0 or adc.duration_us <= 0:
+                        continue
+                    # Find closest reference event by onset time
+                    best = min(ref_adc_list,
+                               key=lambda ev: abs(ev[0] - adc.onset_us))
+                    if abs(best[0] - adc.onset_us) > 100.0:
+                        continue  # no matching ref event within 100 µs
+                    freq_err = abs(adc.freq_offset_hz - best[1])
+                    phase_err = abs(np.angle(
+                        np.exp(1j * (adc.phase_offset_rad - best[2]))))
+                    adc_tol_freq = 1.0   # Hz
+                    adc_tol_phase = 0.01  # rad
+                    if freq_err > adc_tol_freq or phase_err > adc_tol_phase:
+                        pfx = f'TR {tr_idx}: ' if multi_tr else ''
+                        messages.append(
+                            f'{pfx}ADC offset mismatch: freq_err={freq_err:.2f} Hz, '
+                            f'phase_err={phase_err:.4f} rad'
+                        )
             if messages:
                 fail = True
                 fail_msg = messages

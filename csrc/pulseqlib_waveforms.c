@@ -1101,7 +1101,7 @@ static int count_rf_samples_for_flat_block(
     const pulseqlib_block_definition* bdef;
     const pulseqlib_rf_definition* rdef;
     const pulseqlib_shape_arbitrary* shape;
-    int shape_idx;
+    int shape_idx, nch;
 
     bte = &desc->block_table[block_idx];
     bdef = &desc->block_definitions[bte->id];
@@ -1111,8 +1111,9 @@ static int count_rf_samples_for_flat_block(
     shape_idx = rdef->mag_shape_id - 1;
     if (shape_idx < 0 || shape_idx >= desc->num_shapes) return 0;
     shape = &desc->shapes[shape_idx];
-    /* return total samples across all channels (nch * npts_per_channel) */
-    return shape->num_uncompressed_samples;
+    nch = (rdef->num_channels > 1) ? rdef->num_channels : 1;
+    /* samples + 2 zero-pad boundary samples per channel */
+    return shape->num_uncompressed_samples + 2 * nch;
 }
 
 /*
@@ -1179,9 +1180,32 @@ static int fill_rf_waveform_for_flat_block(
             has_time_shape = 1;
     }
 
-    /* fill all channels (channel-major order: ch0[0..npts-1], ch1[0..npts-1], ...) */
+    /* fill all channels (channel-major order: ch0[0..npts-1], ch1[0..npts-1], ...)
+     * Each channel is bracketed by zero-pad samples at ±0.5*rf_raster_us
+     * from the first/last RF sample to prevent interpolation artifacts
+     * across inter-block gaps (e.g. MPRAGE inversion → sinc). */
     idx = start_idx;
     for (c = 0; c < nch; ++c) {
+        float first_t_local, last_t_local;
+        /* Compute first and last t_local for boundary padding */
+        if (has_time_shape && decomp_time.num_uncompressed_samples > 0)
+            first_t_local = decomp_time.samples[0];
+        else
+            first_t_local = 0.5f * rf_raster_us;
+        if (has_time_shape && npts > 0 &&
+            (npts - 1) < decomp_time.num_uncompressed_samples)
+            last_t_local = decomp_time.samples[npts - 1];
+        else
+            last_t_local = 0.5f * rf_raster_us
+                         + (float)(npts - 1) * rf_raster_us;
+
+        /* Pre-pad zero */
+        time_mag[idx] = t0 + delay_us + first_t_local
+                      - 0.5f * rf_raster_us;
+        mag[idx]   = 0.0f;
+        phase[idx] = 0.0f;
+        idx++;
+
         for (i = 0; i < npts; ++i) {
             float t_local;  /* time from RF pulse start, µs – matches pypulseq rf.t */
             float freq_term;
@@ -1199,6 +1223,13 @@ static int fill_rf_waveform_for_flat_block(
                             : rtab->phase_offset + freq_term; /* rad */
             idx++;
         }
+
+        /* Post-pad zero */
+        time_mag[idx] = t0 + delay_us + last_t_local
+                      + 0.5f * rf_raster_us;
+        mag[idx]   = 0.0f;
+        phase[idx] = 0.0f;
+        idx++;
     }
     if (out_nch) *out_nch = nch;
 
@@ -1263,10 +1294,15 @@ int pulseqlib_get_tr_waveforms(
     int interp_result, n_uniform, blk_n, rot_id, s;
     float target_raster_us, blk_end, t_sample_rot, vec[3], rot_out[3];
     const float* R;
+    /* average-expansion variables */
+    int* block_order;
+    int pass_base;
 
     pos_max_gx = NULL;
     pos_max_gy = NULL;
     pos_max_gz = NULL;
+    block_order = NULL;
+    pass_base = 0;
 
     if (!diag) { pulseqlib_diagnostic_init(&local_diag); diag = &local_diag; }
     else       { pulseqlib_diagnostic_init(diag); }
@@ -1293,15 +1329,68 @@ int pulseqlib_get_tr_waveforms(
 
     /* ---- determine block range ---- */
     if (amplitude_mode == PULSEQLIB_AMP_ACTUAL) {
-        int total_actual_trs = tr->num_trs + tr->num_prep_trs
-                             + tr->num_cooldown_trs;
-        if (tr_index < 0 || tr_index >= total_actual_trs) {
-            diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT;
-            return diag->code;
+        if (has_nd_prep || has_nd_cool) {
+            /* Non-degenerate: tr_index selects a pass (0..num_passes-1).
+             * Return the full pass with average expansion. */
+            int num_avgs = desc->num_averages;
+            if (tr_index < 0 || tr_index >= desc->num_passes) {
+                diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT;
+                return diag->code;
+            }
+            pass_base = tr_index * desc->pass_len;
+            tr_block_start = pass_base + tr->num_prep_blocks
+                           + tr->imaging_tr_start;
+            if (num_avgs > 1) {
+                int prep_blk  = tr->num_prep_blocks;
+                int img_len   = tr->num_trs * tr->tr_size;
+                int cool_blk  = tr->num_cooldown_blocks;
+                int exp_count = prep_blk + num_avgs * img_len + cool_blk;
+                int avg_i;
+                block_order = (int*)PULSEQLIB_ALLOC(
+                    (size_t)exp_count * sizeof(int));
+                if (!block_order) goto alloc_fail;
+                n = 0;
+                for (k = 0; k < prep_blk; ++k)
+                    block_order[n++] = pass_base + k;
+                for (avg_i = 0; avg_i < num_avgs; ++avg_i)
+                    for (k = 0; k < img_len; ++k)
+                        block_order[n++] = pass_base + prep_blk + k;
+                for (k = 0; k < cool_blk; ++k)
+                    block_order[n++] = pass_base + prep_blk + img_len + k;
+                block_start = 0;
+                block_count = exp_count;
+            } else {
+                block_start = pass_base;
+                block_count = desc->pass_len;
+            }
+        } else {
+            /* Degenerate / no prep: flat TR index with average expansion.
+             * Imaging TRs wrap modulo num_trs so repeated averages map
+             * back to canonical block positions. */
+            int num_avgs = desc->num_averages;
+            int total_actual_trs = tr->num_prep_trs
+                                 + num_avgs * tr->num_trs
+                                 + tr->num_cooldown_trs;
+            int canonical_idx;
+            if (tr_index < 0 || tr_index >= total_actual_trs) {
+                diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT;
+                return diag->code;
+            }
+            if (tr_index < tr->num_prep_trs) {
+                canonical_idx = tr_index;
+            } else if (tr_index < tr->num_prep_trs
+                                 + num_avgs * tr->num_trs) {
+                canonical_idx = tr->num_prep_trs
+                    + (tr_index - tr->num_prep_trs) % tr->num_trs;
+            } else {
+                canonical_idx = tr->num_prep_trs + tr->num_trs
+                    + (tr_index - tr->num_prep_trs
+                       - num_avgs * tr->num_trs);
+            }
+            tr_block_start = canonical_idx * tr->tr_size;
+            block_start = tr_block_start;
+            block_count = tr->tr_size;
         }
-        tr_block_start = tr_index * tr->tr_size;
-        block_start = tr_block_start;
-        block_count = tr->tr_size;
     } else {
         /* Canonical main TR (first imaging instance) */
         tr_block_start = tr->num_prep_blocks + tr->imaging_tr_start;
@@ -1318,7 +1407,8 @@ int pulseqlib_get_tr_waveforms(
         }
     }
 
-    if (block_start < 0 || block_start + block_count > desc->num_blocks) {
+    if (!block_order &&
+        (block_start < 0 || block_start + block_count > desc->num_blocks)) {
         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT;
         return diag->code;
     }
@@ -1358,7 +1448,7 @@ int pulseqlib_get_tr_waveforms(
     /* ---- PASS 1: count samples ---- */
     total_gx = 0; total_gy = 0; total_gz = 0; total_rf = 0; total_adc = 0;
     for (n = 0; n < block_count; ++n) {
-        block_idx = block_start + n;
+        block_idx = block_order ? block_order[n] : block_start + n;
         bte  = &desc->block_table[block_idx];
         bdef = &desc->block_definitions[bte->id];
         block_dur_us = (bte->duration_us >= 0) ? (float)bte->duration_us
@@ -1428,12 +1518,12 @@ int pulseqlib_get_tr_waveforms(
     idx_gx = 0; idx_gy = 0; idx_gz = 0; idx_rf = 0; idx_adc = 0;
     rf_nch = 1;
 
-    main_region_start = tr->num_prep_blocks + tr->imaging_tr_start;
+    main_region_start = pass_base + tr->num_prep_blocks + tr->imaging_tr_start;
     main_region_end = main_region_start + tr->num_trs * tr->tr_size;
 
     for (n = 0; n < block_count; ++n) {
         int pos_in_tr;
-        block_idx = block_start + n;
+        block_idx = block_order ? block_order[n] : block_start + n;
         bte  = &desc->block_table[block_idx];
         bdef = &desc->block_definitions[bte->id];
         block_dur_us = (bte->duration_us >= 0) ? (float)bte->duration_us
@@ -1575,6 +1665,7 @@ int pulseqlib_get_tr_waveforms(
     if (pos_max_gx) PULSEQLIB_FREE(pos_max_gx);
     if (pos_max_gy) PULSEQLIB_FREE(pos_max_gy);
     if (pos_max_gz) PULSEQLIB_FREE(pos_max_gz);
+    pos_max_gx = NULL; pos_max_gy = NULL; pos_max_gz = NULL;
 
     /* ---- Interpolate gradients to uniform 0.5 grad raster ----
      * After this, all three axes share the same time base, which
@@ -1625,7 +1716,8 @@ int pulseqlib_get_tr_waveforms(
             blk_end = out->blocks[blk_n].start_us
                     + out->blocks[blk_n].duration_us;
         }
-        bte = &desc->block_table[block_start + blk_n];
+        bte = &desc->block_table[block_order ? block_order[blk_n]
+                                              : block_start + blk_n];
         rot_id = bte->rotation_id;
         if (rot_id < 0 || rot_id >= desc->num_rotations) continue;
         if (bte->norot_flag) continue;
@@ -1655,10 +1747,12 @@ int pulseqlib_get_tr_waveforms(
     out->num_blocks           = block_count;
     out->total_duration_us    = t0;
 
+    if (block_order) PULSEQLIB_FREE(block_order);
     diag->code = PULSEQLIB_SUCCESS;
     return PULSEQLIB_SUCCESS;
 
 alloc_fail:
+    if (block_order) PULSEQLIB_FREE(block_order);
     if (pos_max_gx) PULSEQLIB_FREE(pos_max_gx);
     if (pos_max_gy) PULSEQLIB_FREE(pos_max_gy);
     if (pos_max_gz) PULSEQLIB_FREE(pos_max_gz);

@@ -99,14 +99,6 @@ static int segments_structurally_equal(
 /*  TR detection helpers                                              */
 /* ================================================================== */
 
-static double sum_durations_us(const int* dur, int start, int count)
-{
-    double total = 0.0;
-    int i;
-    for (i = 0; i < count; ++i) total += (double)dur[start + i];
-    return total;
-}
-
 static int first_repeating_segment(const int* s, int len)
 {
     int l, i, match;
@@ -201,6 +193,7 @@ int pulseqlib__build_scan_table(
     if (!desc) { diag->code = PULSEQLIB_ERR_NULL_POINTER; return diag->code; }
     if (num_averages < 1) num_averages = 1;
     if (desc->ignore_averages) num_averages = 1;
+    desc->num_averages = num_averages;
     num_passes = (desc->num_passes > 1) ? desc->num_passes : 1;
 
     has_nd_prep = (desc->tr_descriptor.num_prep_blocks > 0 &&
@@ -1581,6 +1574,7 @@ int pulseqlib__get_scan_table_segments(
             cool_absorbed_trs = mult;
         }
     }
+    (void)cool_absorbed_trs;
 
     /* ---- 2d. If all sections produced nothing, run a single
      *          find_segments over [0, pass_size) WITHOUT boundary

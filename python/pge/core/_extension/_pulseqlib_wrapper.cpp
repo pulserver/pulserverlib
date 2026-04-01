@@ -86,6 +86,7 @@ static py::dict _find_tr(_PulseqCollection& pc, int subsequence_idx = 0) {
     out["num_cooldown_trs"]     = si.num_cooldown_trs;
     out["tr_duration_us"]       = si.tr_duration_us;
     out["num_passes"]           = si.num_passes;
+    out["num_averages"]         = si.num_averages;
     return out;
 }
 

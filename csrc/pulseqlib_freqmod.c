@@ -84,7 +84,7 @@ static int is_identity3(const float* M)
     static const float I[9] = {1,0,0, 0,1,0, 0,0,1};
     int i;
     for (i = 0; i < 9; ++i)
-        if (fabsf(M[i] - I[i]) > 1e-7f) return 0;
+        if ((float)fabs(M[i] - I[i]) > 1e-7f) return 0;
     return 1;
 }
 
@@ -96,7 +96,7 @@ static int rotmat_equal(const float* A, const float* B)
 {
     int i;
     for (i = 0; i < 9; ++i)
-        if (fabsf(A[i] - B[i]) > 1e-7f) return 0;
+        if ((float)fabs(A[i] - B[i]) > 1e-7f) return 0;
     return 1;
 }
 
@@ -108,165 +108,8 @@ static int axis_is_active(const float* waveform, int num_samples)
 {
     int i;
     for (i = 0; i < num_samples; ++i)
-        if (fabsf(waveform[i]) > 1e-8f) return 1;
+        if ((float)fabs(waveform[i]) > 1e-8f) return 1;
     return 0;
-}
-
-/* ================================================================== */
-/*  Helper: integrate one gradient axis over a block time interval    */
-/* ================================================================== */
-
-/*
- * Returns the area of gradient axis `axis` between [t0_us, t1_us]
- * (both relative to block start, in microseconds) in Hz/m * s.
- * Uses the per-instance amplitude from grad_table and the shape from
- * grad_definitions, mirroring the integration already in TruthBuilder.
- */
-static float integrate_grad_interval_us(
-    const pulseqlib_sequence_descriptor* desc,
-    const pulseqlib_block_table_element* bte,
-    int axis,
-    float t0_us, float t1_us)
-{
-    int gt_id, bd_id, gd_id;
-    float amplitude;
-    const pulseqlib_grad_definition* gdef;
-    float delay_us;
-    float area;
-
-    if (t1_us <= t0_us) return 0.0f;
-
-    if (axis == 0)      gt_id = bte->gx_id;
-    else if (axis == 1) gt_id = bte->gy_id;
-    else                gt_id = bte->gz_id;
-
-    if (gt_id < 0 || gt_id >= desc->grad_table_size) return 0.0f;
-
-    amplitude = desc->grad_table[gt_id].amplitude;
-    if (amplitude == 0.0f) return 0.0f;
-
-    bd_id = bte->id;
-    if (bd_id < 0 || bd_id >= desc->num_unique_blocks) return 0.0f;
-
-    if (axis == 0)      gd_id = desc->block_definitions[bd_id].gx_id;
-    else if (axis == 1) gd_id = desc->block_definitions[bd_id].gy_id;
-    else                gd_id = desc->block_definitions[bd_id].gz_id;
-
-    if (gd_id < 0 || gd_id >= desc->num_unique_grads) return 0.0f;
-
-    gdef     = &desc->grad_definitions[gd_id];
-    delay_us = (float)gdef->delay;
-    area     = 0.0f;
-
-    if (gdef->type == 0) {
-        /* Trapezoid: piecewise-linear knot integration */
-        float rise_us = (float)gdef->rise_time_or_unused;
-        float flat_us = (float)gdef->flat_time_or_unused;
-        float fall_us = (float)gdef->fall_time_or_num_uncompressed_samples;
-        float k0 = delay_us;
-        float k1 = k0 + rise_us;
-        float k2 = k1 + flat_us;
-        float k3 = k2 + fall_us;
-        float a, b_end, sa, sb, wa, wb;
-
-        a     = (t0_us > k0) ? t0_us : k0;
-        b_end = (t1_us < k3) ? t1_us : k3;
-        if (b_end <= a) return 0.0f;
-
-        /* Ramp-up segment [k0, k1] */
-        if (rise_us > 0.0f) {
-            sa = (a  < k0) ? k0 : ((a  > k1) ? k1 : a);
-            sb = (b_end < k0) ? k0 : ((b_end > k1) ? k1 : b_end);
-            if (sb > sa) {
-                wa = (sa - k0) / rise_us;
-                wb = (sb - k0) / rise_us;
-                area += 0.5f * (wa + wb) * (sb - sa);
-            }
-        }
-        /* Plateau segment [k1, k2] */
-        if (flat_us > 0.0f) {
-            sa = (a  < k1) ? k1 : ((a  > k2) ? k2 : a);
-            sb = (b_end < k1) ? k1 : ((b_end > k2) ? k2 : b_end);
-            if (sb > sa) area += sb - sa;
-        }
-        /* Ramp-down segment [k2, k3] */
-        if (fall_us > 0.0f) {
-            sa = (a  < k2) ? k2 : ((a  > k3) ? k3 : a);
-            sb = (b_end < k2) ? k2 : ((b_end > k3) ? k3 : b_end);
-            if (sb > sa) {
-                wa = 1.0f - (sa - k2) / fall_us;
-                wb = 1.0f - (sb - k2) / fall_us;
-                area += 0.5f * (wa + wb) * (sb - sa);
-            }
-        }
-        return amplitude * area * 1e-6f;  /* us -> s */
-
-    } else {
-        /* Arbitrary: decompress shape and integrate via linear interpolation */
-        int shot_idx, shape_id, time_shape_id, i, n;
-        int has_time_shape;
-        float grad_raster_us;
-        float t_prev, t_curr, w_prev, w_curr;
-        pulseqlib_shape_arbitrary decomp_wave, decomp_time;
-
-        shot_idx = (gt_id >= 0 && gt_id < desc->grad_table_size)
-                   ? desc->grad_table[gt_id].shot_index : 0;
-        if (shot_idx < 0 || shot_idx >= PULSEQLIB_MAX_GRAD_SHOTS)
-            shot_idx = 0;
-
-        shape_id      = gdef->shot_shape_ids[shot_idx];
-        time_shape_id = gdef->unused_or_time_shape_id;
-        grad_raster_us = desc->grad_raster_us;
-        has_time_shape = 0;
-
-        if (shape_id <= 0 || shape_id > desc->num_shapes) return 0.0f;
-
-        decomp_wave.samples = NULL;
-        decomp_time.samples = NULL;
-
-        if (!pulseqlib__decompress_shape(&decomp_wave,
-                &desc->shapes[shape_id - 1], 1.0f))
-            return 0.0f;
-
-        n = decomp_wave.num_uncompressed_samples;
-
-        if (time_shape_id > 0 && time_shape_id <= desc->num_shapes) {
-            if (pulseqlib__decompress_shape(&decomp_time,
-                    &desc->shapes[time_shape_id - 1], grad_raster_us))
-                has_time_shape = 1;
-        }
-
-        t_prev = delay_us;
-        w_prev = 0.0f;
-        for (i = 0; i < n; ++i) {
-            float ta, tb, fa, fb, wa, wb;
-            if (has_time_shape && decomp_time.samples)
-                t_curr = delay_us + decomp_time.samples[i];
-            else
-                t_curr = delay_us + 0.5f * grad_raster_us
-                         + (float)i * grad_raster_us;
-            w_curr = decomp_wave.samples[i];
-
-            if (t_curr > t0_us && t_prev < t1_us && t_curr > t_prev) {
-                ta = (t_prev > t0_us) ? t_prev : t0_us;
-                tb = (t_curr < t1_us) ? t_curr : t1_us;
-                if (tb > ta) {
-                    fa = (ta - t_prev) / (t_curr - t_prev);
-                    fb = (tb - t_prev) / (t_curr - t_prev);
-                    wa = w_prev + fa * (w_curr - w_prev);
-                    wb = w_prev + fb * (w_curr - w_prev);
-                    area += 0.5f * (wa + wb) * (tb - ta);
-                }
-            }
-            t_prev = t_curr;
-            w_prev = w_curr;
-        }
-
-        if (decomp_wave.samples) PULSEQLIB_FREE(decomp_wave.samples);
-        if (decomp_time.samples) PULSEQLIB_FREE(decomp_time.samples);
-
-        return amplitude * area * 1e-6f;  /* us -> s */
-    }
 }
 
 /*
@@ -1041,8 +884,10 @@ static int build_freq_mod_library(
                         da->raster_us  != db->raster_us) {
                         identical = 0;
                     } else {
-                        const float* wa[3] = {da->waveform_gx, da->waveform_gy, da->waveform_gz};
-                        const float* wb[3] = {db->waveform_gx, db->waveform_gy, db->waveform_gz};
+                        const float* wa[3];
+                        const float* wb[3];
+                        wa[0] = da->waveform_gx; wa[1] = da->waveform_gy; wa[2] = da->waveform_gz;
+                        wb[0] = db->waveform_gx; wb[1] = db->waveform_gy; wb[2] = db->waveform_gz;
                         for (ch2 = 0; ch2 < 3 && identical; ++ch2) {
                             if (!wa[ch2] && !wb[ch2]) continue;
                             if (!wa[ch2] || !wb[ch2]) { identical = 0; break; }
@@ -1082,7 +927,6 @@ static int build_freq_mod_library(
         const pulseqlib_block_table_element* bte = &desc->block_table[blk_idx];
         int bi = base_map[n];
         float amp[3];
-        int ch;
 
         amp[0] = (bte->gx_id >= 0 && bte->gx_id < desc->grad_table_size)
                  ? desc->grad_table[bte->gx_id].amplitude : 0.0f;
@@ -1519,7 +1363,7 @@ static int build_freq_mod_library(
                             + (size_t)ch * lib->max_samples;
                         int ens = lib->entry_num_samples[entry_idx_local];
                         for (s = 0; s < ens; ++s) {
-                            if (fabsf(ew[s]) > 1e-8f) { axis_active = 1; break; }
+                            if ((float)fabs(ew[s]) > 1e-8f) { axis_active = 1; break; }
                         }
                     }
 

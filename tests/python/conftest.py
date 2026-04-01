@@ -30,16 +30,6 @@ GENERATED_SEQUENCE_FILES = [
 ]
 
 KNOWN_VALIDATE_FAILURE_FILES = [
-    # Noncart: freq-offset waveform shape mismatch (by design)
-    "mprage_noncart_3d_1sl_1avg_userotext0.seq",
-    "mprage_noncart_3d_3sl_1avg_userotext0.seq",
-    # FSE/MPRAGE multislice: marginal RF phase mismatch exposed by full-TR
-    # validation (previously masked by tr_range=(0,1)); needs investigation.
-    "fse_2d_3sl_1avg.seq",
-    "mprage_2d_1sl_1avg.seq",
-    "mprage_2d_3sl_1avg.seq",
-    "mprage_nav_2d_1sl_1avg.seq",
-    "mprage_nav_2d_3sl_1avg.seq",
 ]
 
 VALIDATE_PASS_SEQUENCE_FILES = [
@@ -92,8 +82,10 @@ def num_averages(request) -> int:
     return request.param
 
 
-@pytest.fixture(params=KNOWN_VALIDATE_FAILURE_FILES, ids=_id_seq_name)
+@pytest.fixture(params=KNOWN_VALIDATE_FAILURE_FILES or [None], ids=_id_seq_name if KNOWN_VALIDATE_FAILURE_FILES else ["no_known_failures"])
 def known_validate_failure_seq_path(expected_data_dir: Path, request) -> Path:
+    if request.param is None:
+        pytest.skip("No known validation failures")
     return expected_data_dir / request.param
 
 

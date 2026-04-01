@@ -575,10 +575,11 @@ typedef struct pulseqlib_subseq_info {
     int   num_adc_occurrences;  /**< ADC entries in label table          */
     int   num_label_columns;    /**< label columns (vendor-dependent)    */
     int   num_passes;           /**< number of inner-loop passes (>=1)   */
+    int   num_averages;         /**< number of averages (>=1)            */
 } pulseqlib_subseq_info;
 
 #define PULSEQLIB_SUBSEQ_INFO_INIT { \
-    0.0f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 \
+    0.0f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1 \
 }
 
 /* ================================================================== */

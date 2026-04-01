@@ -131,10 +131,13 @@ def test_validate_handles_unsorted_reference_times(simple_gre_seq, monkeypatch):
     sc = SequenceCollection(simple_gre_seq)
     orig = _validate_mod._pypulseq_reference
 
-    def _unsorted_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1):
-        ref = orig(seq, sequence_idx, tr_idx, tr_info, num_averages)
+    def _unsorted_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1, **kwargs):
+        ref = orig(seq, sequence_idx, tr_idx, tr_info, num_averages, **kwargs)
         out = {}
         for key, value in ref.items():
+            if not isinstance(value, tuple) or len(value) != 2:
+                out[key] = value
+                continue
             t, a = value
             t_arr = np.asarray(t)
             a_arr = np.asarray(a)
@@ -193,10 +196,13 @@ def test_validate_raises_on_failure(simple_gre_seq, monkeypatch):
     sc = SequenceCollection(simple_gre_seq)
     orig = _validate_mod._pypulseq_reference
 
-    def _bad_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1):
-        ref = orig(seq, sequence_idx, tr_idx, tr_info, num_averages)
+    def _bad_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1, **kwargs):
+        ref = orig(seq, sequence_idx, tr_idx, tr_info, num_averages, **kwargs)
         out = {}
         for key, value in ref.items():
+            if not isinstance(value, tuple) or len(value) != 2:
+                out[key] = value
+                continue
             t, a = value
             t_arr = np.asarray(t)
             a_arr = np.asarray(a)
