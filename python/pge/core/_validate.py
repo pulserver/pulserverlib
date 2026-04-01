@@ -306,14 +306,26 @@ def _concat_refs(segments):
 
     for key in ('gx', 'gy', 'gz', 'rf_mag', 'rf_phase', 'adc_phase'):
         parts_t, parts_a = [], []
+        prev_t_end = None
         for off, ref in segments:
             if key in ref:
                 t, a = ref[key]
-                t = np.asarray(t)
-                a = np.asarray(a)
+                t = np.asarray(t, dtype=float)
+                a = np.asarray(a, dtype=float)
                 if len(t) > 0:
-                    parts_t.append(t + off)
+                    t_shift = t + off
+                    # For ADC phase specifically, represent gaps between
+                    # concatenated windows as zero phase to avoid spurious
+                    # linear ramps across regions without ADC activity.
+                    if key == 'adc_phase' and prev_t_end is not None:
+                        t_start = float(t_shift[0])
+                        if t_start > prev_t_end:
+                            parts_t.append(np.array([prev_t_end, t_start], dtype=float))
+                            parts_a.append(np.array([0.0, 0.0], dtype=float))
+
+                    parts_t.append(t_shift)
                     parts_a.append(a)
+                    prev_t_end = float(t_shift[-1])
         if parts_t:
             result[key] = (np.concatenate(parts_t), np.concatenate(parts_a))
         else:
