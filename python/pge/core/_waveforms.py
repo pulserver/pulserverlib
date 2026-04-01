@@ -202,9 +202,10 @@ def get_tr_waveforms(
     )
 
     # Unpack raw waveform arrays
-    gx = ChannelWaveform(np.array(raw['gx']['time_us']), np.array(raw['gx']['amplitude']))
-    gy = ChannelWaveform(np.array(raw['gy']['time_us']), np.array(raw['gy']['amplitude']))
-    gz = ChannelWaveform(np.array(raw['gz']['time_us']), np.array(raw['gz']['amplitude']))
+    hz_per_m_to_mT_per_m = 1e3 / gamma
+    gx = ChannelWaveform(np.array(raw['gx']['time_us']), np.array(raw['gx']['amplitude']) * hz_per_m_to_mT_per_m)
+    gy = ChannelWaveform(np.array(raw['gy']['time_us']), np.array(raw['gy']['amplitude']) * hz_per_m_to_mT_per_m)
+    gz = ChannelWaveform(np.array(raw['gz']['time_us']), np.array(raw['gz']['amplitude']) * hz_per_m_to_mT_per_m)
     # Convert RF magnitude from Hz to µT for validation (µT = 1e6 / gamma * Hz)
     rf_mag_hz = np.array(raw['rf_mag']['amplitude'])
     rf_mag_uT = rf_mag_hz * (1e6 / gamma)

@@ -266,7 +266,7 @@ def validate(
     if grad_atol is None:
         grad_atol = 3.0 * sys.max_slew * sys.grad_raster_time * 1e3
     if max_grad_mT_per_m is True:
-        _max_grad_plot = sys.max_grad * 1e3
+        _max_grad_plot = sys.max_grad / sys.gamma * 1e3
     elif isinstance(max_grad_mT_per_m, (int, float)) and max_grad_mT_per_m is not False:
         _max_grad_plot = float(max_grad_mT_per_m)
     else:
@@ -409,7 +409,7 @@ def validate(
     # Determine what to plot
     plot_ss = fail_subseq_idx if fail else (subsequence_idx if subsequence_idx is not None else 0)
     plot_tr = fail_tr_idx if fail else (tr_instance if tr_instance is not None else 0)
-
+    
     if do_plot:
         _validation_plot(
             seq,
@@ -480,4 +480,11 @@ def _validation_plot(
     )
     # Only show error messages in the plot if you want detailed debugging; suppress for user-facing plots
     # (per user request, do not print per-TR error messages on the plot)
+    for gname in ('gx', 'gy', 'gz'):
+        ax = handle.axes[gname]
+        ymax = max(
+            max((np.max(np.abs(line.get_ydata())) for line in ax.get_lines() if len(line.get_ydata()) > 0), default=0.0),
+            1.0,
+        )
+        ax.set_ylim(-ymax * 1.1, ymax * 1.1)
     handle.fig.tight_layout(rect=[0, 0, 1, 0.95])

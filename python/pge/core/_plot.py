@@ -367,9 +367,10 @@ def plot(
         ch = wf.rf_phase
         # Plot RF phase directly from C backend (already includes all offsets)
         if ch.time_us.size > 0:
+            rf_phase_wrapped = (ch.amplitude + np.pi) % (2 * np.pi) - np.pi
             ax.plot(
                 _t(ch.time_us),
-                ch.amplitude,
+                rf_phase_wrapped,
                 color='gray',
                 linewidth=_MAIN_LINEWIDTH,
                 linestyle='-',
@@ -390,7 +391,7 @@ def plot(
                 adc_phase = adc.phase_offset_rad + 2 * np.pi * adc.freq_offset_hz * t_adc_s
                 # Wrap phase to [-pi, pi]
                 adc_phase_wrapped = (adc_phase + np.pi) % (2 * np.pi) - np.pi
-                ax.plot(_t(t_adc), adc_phase_wrapped, color='purple', linewidth=_MAIN_LINEWIDTH, label='pulserver ADC phase')
+                ax.plot(_t(t_adc), adc_phase_wrapped, color='purple', linewidth=_MAIN_LINEWIDTH, label='pulserver')
                 # Shadowed region
                 ax.fill_between(_t(t_adc), 0, np.maximum(adc_phase_wrapped, 1.0), color='purple', alpha=0.15)
         ax.set_ylabel('ADC phase (rad)')
@@ -556,7 +557,7 @@ def plot(
                 alpha=alpha,
                 color='black',
                 linestyle='--',
-                label=f'{label or "pypulseq"} RF mag',
+                label=f'{label or "pypulseq"}',
             )
         # RF phase overlay if available
         if 'rf_phase' in ref:
@@ -569,7 +570,7 @@ def plot(
                     alpha=alpha,
                     color='black',
                     linestyle='--',
-                    label=f'{label or "pypulseq"} RF phase',
+                    label=f'{label or "pypulseq"}',
                 )
         # ADC phase overlay if available
         if 'adc_phase' in ref:
@@ -582,7 +583,7 @@ def plot(
                     alpha=alpha,
                     color='black',
                     linestyle='--',
-                    label=f'{label or "pypulseq"} ADC phase',
+                    label=f'{label or "pypulseq"}',
                 )
         # Add legends to all axes
         for ax_item in fig.axes.values():

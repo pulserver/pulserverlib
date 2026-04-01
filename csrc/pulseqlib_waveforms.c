@@ -1164,7 +1164,7 @@ static int fill_rf_waveform_for_flat_block(
     if (rdef->phase_shape_id > 0 &&
         rdef->phase_shape_id <= desc->num_shapes) {
         pulseqlib__decompress_shape(&decomp_phase,
-            &desc->shapes[rdef->phase_shape_id - 1], 1.0f);
+            &desc->shapes[rdef->phase_shape_id - 1], (float)PULSEQLIB__TWO_PI);
     }
 
     /* decompress time shape */
