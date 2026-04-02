@@ -1072,13 +1072,14 @@ def _validation_plot(
     to generate the base C-backend figure, then overlays reference
     waveforms for visual comparison.
     """
-    from ._plot import plot as _plot_impl
+    from ._plot import plot as _plot_impl, _overlay_xml, _OVERLAY_LINEWIDTH, _wrap_phase, _MATLAB_LINES
 
-    # Branch 1: C-backend base figure
+    # C-backend base figure
+    t_scale = 1e-3  # ms
     handle = _plot_impl(
         seq,
         subsequence_idx=sequence_idx,
-        tr_idx=tr_idx,
+        tr_instance=tr_idx,
         collapse_delays=False,
         show_segments=False,
         show_blocks=False,
@@ -1086,14 +1087,59 @@ def _validation_plot(
         show_rf_centers=False,
         show_echoes=False,
         max_grad_mT_per_m=max_grad_mT_per_m,
-        num_averages=num_averages,
         max_slew_T_per_m_per_s=None,
     )
 
-    # Branch 2 (pypulseq) or Branch 3 (XML) overlay
-    label = 'XML' if xml_path is not None else 'pypulseq'
-    overlay_source = str(xml_path) if xml_path is not None else seq._seqs[sequence_idx]
-    _plot_impl(overlay_source, fig=handle, label=label)
+    # Overlay reference waveforms
+    if xml_path is not None:
+        _overlay_xml(handle, xml_path, t_scale=t_scale, label='XML')
+    else:
+        # pypulseq overlay: extract reference and draw directly on handle.axes
+        from ._extension._pulseqlib_wrapper import _find_tr
+        tr_info = _find_tr(seq._cseq, subsequence_idx=sequence_idx)
+        ref = _pypulseq_reference(
+            seq, sequence_idx, handle._tr_index, tr_info,
+            num_averages if num_averages else 1,
+        )
+        alpha = 1.0
+        for ch_name in ('gx', 'gy', 'gz'):
+            t_us, amp = ref[ch_name]
+            if len(t_us) > 0:
+                handle.axes[ch_name].plot(
+                    t_us * t_scale, amp,
+                    linewidth=_OVERLAY_LINEWIDTH, alpha=alpha,
+                    color='black', linestyle='--', label='pypulseq',
+                )
+        t_us, amp = ref.get('rf_mag', ([], []))
+        if len(t_us) > 0:
+            handle.axes['rf_mag'].plot(
+                t_us * t_scale, amp,
+                linewidth=_OVERLAY_LINEWIDTH, alpha=alpha,
+                color='black', linestyle='--', label='pypulseq',
+            )
+        if 'rf_phase' in ref:
+            t_us, amp = ref['rf_phase']
+            if len(t_us) > 0:
+                handle.axes['rf_phase'].plot(
+                    t_us * t_scale, _wrap_phase(amp),
+                    linewidth=_OVERLAY_LINEWIDTH, alpha=alpha,
+                    color='black', linestyle='--', label='pypulseq',
+                )
+        for cidx, (t_c, amp_c) in enumerate(ref.get('rf_mag_channels', [])):
+            if len(t_c) > 0:
+                handle.axes['rf_mag'].plot(
+                    t_c * t_scale, amp_c,
+                    linewidth=_OVERLAY_LINEWIDTH, alpha=0.75,
+                    color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
+                    linestyle='--', label=f'ch{cidx}',
+                )
+        t_us, amp = ref.get('adc_phase', ([], []))
+        if len(t_us) > 0:
+            handle.axes['adc'].plot(
+                t_us * t_scale, _wrap_phase(amp),
+                linewidth=_OVERLAY_LINEWIDTH, alpha=alpha,
+                color='black', linestyle='--', label='pypulseq',
+            )
 
     # Annotate pass / fail
     status = 'PASS' if ok else 'FAIL'

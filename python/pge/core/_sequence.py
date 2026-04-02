@@ -852,75 +852,89 @@ class SequenceCollection(pp.Sequence):
     def plot(
         self,
         *,
-        subsequence_idx: int = 0,
-        tr_instance: int | str = 0,
+        subsequence_idx: int | None = None,
+        tr_instance: int | str = 'max_pos',
         collapse_delays: bool = True,
         show_segments: bool = True,
-        show_blocks: bool = False,
-        show_slew: bool = False,
-        show_rf_centers: bool = False,
-        show_echoes: bool = False,
-        max_grad_mT_per_m: float | None = None,
-        max_slew_T_per_m_per_s: float | None = None,
-        time_unit: str = 'ms',
+        show_blocks: bool = True,
+        show_centers: bool = False,
         figsize: tuple | None = None,
     ) -> None:
         """Plot TR waveforms with colour-coded segments and optional overlays.
 
         Displays a (3, 2) figure showing gradients (Gx, Gy, Gz), RF magnitude / phase,
-        and ADC events for a single TR instance of the requested subsequence.
-        Waveforms are obtained from the C-backed analysis library using native timing.
+        and ADC events for a single TR instance or set of canonical TRs of the requested
+        subsequence. Waveforms are obtained from the C-backed analysis library using native timing.
+
+        **Canonical TR display** (when ``tr_instance`` is a string): All canonical TRs
+        (one per unique shot-ID pattern) are overlaid on the same figure. The first canonical
+        TR (ID 0) is displayed with full opacity; subsequent TRs (ID > 0) use reduced opacity
+        or dashing to distinguish multi-shot patterns.
+
+        **Actual instance display** (when ``tr_instance`` is an integer): A specific TR
+        instance is plotted in actual amplitude mode.
 
         Parameters
         ----------
-        subsequence_idx : int, default 0
-            Subsequence index (0-based) to plot.
-        tr_instance : int or str, default 0
+        subsequence_idx : int or None, default None
+            Subsequence index (0-based). If ``None`` and there is exactly one subsequence,
+            defaults to 0. If ``None`` and there are multiple subsequences, raises ``ValueError``.
+        tr_instance : int or str, default 'max_pos'
             TR instance selector. Accepts:
 
-            - Non-negative integer: 0-based index into the sequence.
-            - Negative integer: -1 for last, -2 for second-to-last, etc.
-            - String label: e.g., ``'shot_001'`` to select by label identifier.
+            - ``'max_pos'`` (default) — structural canonical TR(s) showing position maximum
+              across all shots; multi-shot patterns overlaid with transparency.
+            - ``'zero_var'`` — canonical TR(s) with zero-variable gradients (k-space view);
+              multi-shot patterns overlaid with transparency.
+            - Non-negative integer: 0-based index into the sequence in actual amplitude mode.
+            - Negative integer: ``-1`` for last instance, ``-2`` for second-to-last, etc.
 
         collapse_delays : bool, default True
-            If ``True``, remove zero-duration delay blocks from the timeline,
-            reducing visual clutter. Timing information is preserved.
+            If ``True``, remove zero-duration delay blocks from the timeline.
         show_segments : bool, default True
-            If ``True``, colour-code waveforms by segment index and draw
-            segment boundary lines.
+            If ``True``, colour-code waveforms by segment index and draw segment boundaries.
         show_blocks : bool, default False
             If ``True``, draw vertical lines at block boundaries.
-        show_slew : bool, default False
-            If ``True``, overlay gradient slew-rate (dG/dt) as a thin line
-            on each gradient subplot.
-        show_rf_centers : bool, default False
-            If ``True``, mark RF pulse envelope peaks with vertical markers.
-        show_echoes : bool, default False
-            If ``True``, mark ADC sampling windows with shaded rectangles.
-        max_grad_mT_per_m : float, optional
-            Override gradient axis limit (mT/m). If ``None``, computed from
-            sequence data and system constraints.
-        max_slew_T_per_m_per_s : float, optional
-            Override slew-rate axis limit (T/m/s) when ``show_slew=True``.
-            If ``None``, computed from sequence data and system constraints.
-        time_unit : str, default 'ms'
-            Time axis unit: 'ms' (milliseconds, default) or 'us' (microseconds).
+        show_centers : bool, default False
+            If ``True``, mark RF pulse envelope peaks and readout echoes with vertical markers.
         figsize : tuple, optional
-            Figure size ``(width, height)`` in inches. If ``None``, uses
-            matplotlib's default sizing (typically 10 × 6 inches).
+            Figure size ``(width, height)`` in inches. If ``None``, uses matplotlib's
+            default sizing (typically 10 × 6 inches).
 
         Raises
         ------
         ValueError
-            If ``subsequence_idx`` is out of range or ``tr_instance`` does not
-            match any sequence element by index or label.
+            If ``subsequence_idx=None`` and there are multiple subsequences.
+            If ``tr_instance`` (integer) is out of range for the selected subsequence.
 
         Notes
         -----
-        Native timing means ADC samples are plotted at their actual microsecond
-        clock positions from the C library, not at uniform intervals. This
-        reveals aliasing artifacts and spectral properties that uniform
-        resampling would mask.
+        Native timing reveals ADC sampling patterns and spectral artifacts masked by
+        uniform resampling.
+
+        Multi-canonical-TR overlay (when ``tr_instance`` is a string and multiple shot
+        patterns exist): Canonical TR 0 is displayed solid/opaque; TRs with ID > 0 use
+        reduced opacity or dashing to indicate multi-shot behavior.
+
+        Examples
+        --------
+        Plot canonical TRs with default settings:
+
+        >>> sc = SequenceCollection('path/to/sequence.seq', num_averages=3)
+        >>> sc.plot(subsequence_idx=0)  # Shows all canonical TRs overlaid
+
+        Plot with annotations:
+
+        >>> sc.plot(
+        ...     subsequence_idx=0,
+        ...     tr_instance='max_pos',
+        ...     show_segments=True,
+        ...     show_slew=True
+        ... )
+
+        Plot a specific actual instance:
+
+        >>> sc.plot(subsequence_idx=0, tr_instance=5)  # 5th instance, actual amp
 
         See Also
         --------
@@ -931,18 +945,17 @@ class SequenceCollection(pp.Sequence):
         _plot_impl(
             self,
             subsequence_idx=subsequence_idx,
-            tr_idx=tr_instance,
+            tr_instance=tr_instance,
             collapse_delays=collapse_delays,
             show_segments=show_segments,
             show_blocks=show_blocks,
-            show_slew=show_slew,
-            show_rf_centers=show_rf_centers,
-            show_echoes=show_echoes,
-            max_grad_mT_per_m=max_grad_mT_per_m,
-            max_slew_T_per_m_per_s=max_slew_T_per_m_per_s,
-            time_unit=time_unit,
+            show_slew=False,
+            show_rf_centers=show_centers,
+            show_echoes=show_centers,
+            max_grad_mT_per_m=None,
+            max_slew_T_per_m_per_s=None,
+            time_unit='ms',
             figsize=figsize,
-            num_averages=self._num_averages,
         )
 
     # ── Validation ───────────────────────────────────────────
@@ -950,6 +963,7 @@ class SequenceCollection(pp.Sequence):
     def validate(
         self,
         *,
+        xml_path: str | Path | None = None,
         do_plot: bool = False,
         subsequence_idx: int | None = None,
         tr_instance: int | None = None,
@@ -973,6 +987,9 @@ class SequenceCollection(pp.Sequence):
 
         Parameters
         ----------
+        xml_path : str, Path, or None, optional
+            Path to an XML truth file with ``<gx>``, ``<gy>``, ``<gz>``, ``<rf>`` elements
+            containing reference waveforms. If ``None``, uses pypulseq as reference.
         do_plot : bool, default False
             If ``True``, visually compare waveforms; enforces explicit targeting
             semantics when ``do_plot=False`` allows traversal.
@@ -1045,6 +1062,7 @@ class SequenceCollection(pp.Sequence):
         from ._validate import validate as _validate_impl
         return _validate_impl(
             self,
+            xml_path=xml_path,
             do_plot=do_plot,
             subsequence_idx=subsequence_idx,
             tr_instance=tr_instance,

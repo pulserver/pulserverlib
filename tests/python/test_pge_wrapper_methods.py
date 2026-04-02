@@ -82,27 +82,29 @@ def test_pns_threshold_percent_variants(representative_generated_seq_path, thres
 
 
 def test_plot_accepts_pypulseq_without_fig(simple_gre_seq):
-    handle = _plot_impl(simple_gre_seq, tr_idx=0, time_unit="ms")
+    sc = SequenceCollection(simple_gre_seq)
+    _plot_impl(sc, subsequence_idx=0, tr_instance=0, time_unit="ms")
 
-    assert handle is not None
-    assert handle.fig is not None
-    assert "gx" in handle.axes
+    fig = plt.gcf()
+    assert fig is not None
+    assert len(fig.axes) == 6  # (3, 2) subplot grid
 
-    plt.close(handle.fig)
+    plt.close(fig)
 
 
 def test_plot_sequence_collection_without_fig(simple_gre_seq):
     sc = SequenceCollection(simple_gre_seq)
-    handle = _plot_impl(sc, tr_idx=0, time_unit='ms')
+    _plot_impl(sc, subsequence_idx=0, tr_instance=0, time_unit='ms')
 
-    assert handle is not None
-    assert handle.fig is not None
-    assert 'gx' in handle.axes
+    fig = plt.gcf()
+    assert fig is not None
+    assert len(fig.axes) == 6  # (3, 2) subplot grid
 
-    plt.close(handle.fig)
+    plt.close(fig)
 
 
 def test_plot_accepts_xml_without_fig(tmp_path):
+    """plot() only accepts SequenceCollection; XML overlays belong in validate()."""
     xml_path = tmp_path / "wf.xml"
     xml_path.write_text(
         "<root>"
@@ -114,13 +116,8 @@ def test_plot_accepts_xml_without_fig(tmp_path):
         encoding="utf-8",
     )
 
-    handle = _plot_impl(str(xml_path), time_unit="us", label="xml")
-
-    assert handle is not None
-    assert handle.fig is not None
-    assert "rf_mag" in handle.axes
-
-    plt.close(handle.fig)
+    with pytest.raises(TypeError, match='plot\\(\\) expects a SequenceCollection'):
+        _plot_impl(str(xml_path), time_unit="us")
 
 
 def test_validate_handles_unsorted_reference_times(simple_gre_seq, monkeypatch):

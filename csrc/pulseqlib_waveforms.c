@@ -204,14 +204,13 @@ static int compute_position_max_amplitudes_filtered(
         return PULSEQLIB_SUCCESS;
     }
 
-    for (tr_idx = tr->imaging_tr_start / tr_size;
-         tr_idx < tr->imaging_tr_start / tr_size + num_trs;
-         ++tr_idx) {
+    for (tr_idx = 0; tr_idx < num_trs; ++tr_idx) {
         /* skip TRs not in the target group */
         if (tr_group_labels && tr_group_labels[tr_idx] != target_group)
             continue;
 
-        tr_start = tr->num_prep_blocks + tr_idx * tr_size;
+        tr_start = tr->num_prep_blocks + tr->imaging_tr_start
+                 + tr_idx * tr_size;
         for (pos = 0; pos < tr_size; ++pos) {
             block_idx = tr_start + pos;
             bte = &desc->block_table[block_idx];
@@ -401,7 +400,8 @@ int pulseqlib__find_unique_shot_trs(
     for (tr_idx = 0; tr_idx < num_trs; ++tr_idx) {
         col = 0;
         for (pos = 0; pos < tr_size; ++pos) {
-            block_idx = tr->num_prep_blocks + tr_idx * tr_size + pos;
+            block_idx = tr->num_prep_blocks + tr->imaging_tr_start
+                      + tr_idx * tr_size + pos;
             bte = &desc->block_table[block_idx];
 
             /* Gx shot index */
@@ -1455,19 +1455,69 @@ int pulseqlib_get_tr_waveforms(
             block_count = tr->tr_size;
         }
     } else {
-        /* Canonical main TR (first imaging instance) */
-        tr_block_start = tr->num_prep_blocks + tr->imaging_tr_start;
+        int* can_unique_indices = NULL;
+        int* can_group_labels = NULL;
+        int  num_canonical = 0;
+        int  rep_idx = 0;
+
         /*
-         * Degenerate (or absent) prep/cooldown: return a single canonical TR.
-         * Non-degenerate: return the full pass (prep + imaging + cooldown).
+         * Canonical waveform extraction used by MAX_POS / ZERO_VAR:
+         * select the representative instance for the requested canonical
+         * group so geometry (RF/ADC placement, delays, etc.) matches the
+         * same canonical TR used for amplitude filtering.
          */
         if (has_nd_prep || has_nd_cool) {
+            num_canonical = pulseqlib__find_unique_shot_passes(
+                desc, &can_unique_indices, &can_group_labels);
+        } else {
+            num_canonical = pulseqlib__find_unique_shot_trs(
+                desc, &can_unique_indices, &can_group_labels);
+        }
+
+        if (num_canonical > 0 && tr_index >= 0 && tr_index < num_canonical &&
+            can_unique_indices) {
+            rep_idx = can_unique_indices[tr_index];
+        }
+
+        if (has_nd_prep || has_nd_cool) {
+            pass_base = rep_idx * desc->pass_len;
+            tr_block_start = pass_base + tr->num_prep_blocks
+                           + tr->imaging_tr_start;
+            block_order = (int*)PULSEQLIB_ALLOC(
+                (size_t)desc->pass_len * sizeof(int));
+            if (!block_order) {
+                if (can_group_labels)   PULSEQLIB_FREE(can_group_labels);
+                if (can_unique_indices) PULSEQLIB_FREE(can_unique_indices);
+                goto alloc_fail;
+            }
+            for (n = 0; n < desc->pass_len; ++n)
+                block_order[n] = pass_base + n;
+
+            /* Keep canonical block_start relative to pass layout so
+             * position-max filtering can align pass positions correctly. */
             block_start = 0;
             block_count = desc->pass_len;
         } else {
-            block_start = tr_block_start;
+            int base_start = tr->num_prep_blocks + tr->imaging_tr_start;
+            tr_block_start = base_start;
+            block_start = base_start;
             block_count = tr->tr_size;
+
+            if (rep_idx > 0) {
+                block_order = (int*)PULSEQLIB_ALLOC(
+                    (size_t)tr->tr_size * sizeof(int));
+                if (!block_order) {
+                    if (can_group_labels)   PULSEQLIB_FREE(can_group_labels);
+                    if (can_unique_indices) PULSEQLIB_FREE(can_unique_indices);
+                    goto alloc_fail;
+                }
+                for (n = 0; n < tr->tr_size; ++n)
+                    block_order[n] = base_start + rep_idx * tr->tr_size + n;
+            }
         }
+
+        if (can_group_labels)   PULSEQLIB_FREE(can_group_labels);
+        if (can_unique_indices) PULSEQLIB_FREE(can_unique_indices);
     }
 
     if (!block_order &&
@@ -1479,6 +1529,10 @@ int pulseqlib_get_tr_waveforms(
     /* ---- precompute position-max if needed ---- */
     if (amplitude_mode == PULSEQLIB_AMP_MAX_POS ||
         amplitude_mode == PULSEQLIB_AMP_ZERO_VAR) {
+        int* can_group_labels = NULL;
+        int* can_unique_indices = NULL;
+        int  num_canonical = 0;
+
         pos_max_gx = (float*)PULSEQLIB_ALLOC(
             (size_t)block_count * PULSEQLIB_MAX_GRAD_SHOTS * sizeof(float));
         pos_max_gy = (float*)PULSEQLIB_ALLOC(
@@ -1486,9 +1540,31 @@ int pulseqlib_get_tr_waveforms(
         pos_max_gz = (float*)PULSEQLIB_ALLOC(
             (size_t)block_count * PULSEQLIB_MAX_GRAD_SHOTS * sizeof(float));
         if (!pos_max_gx || !pos_max_gy || !pos_max_gz) goto alloc_fail;
-        compute_position_max_amplitudes_filtered(desc,
-            block_start, block_count,
-            pos_max_gx, pos_max_gy, pos_max_gz, NULL, 0);
+
+        /* If tr_index > 0, filter max-pos to that canonical TR group. */
+        if (tr_index >= 0) {
+            if (has_nd_prep || has_nd_cool) {
+                num_canonical = pulseqlib__find_unique_shot_passes(
+                    desc, &can_unique_indices, &can_group_labels);
+            } else {
+                num_canonical = pulseqlib__find_unique_shot_trs(
+                    desc, &can_unique_indices, &can_group_labels);
+            }
+        }
+
+        if (num_canonical > 1 && tr_index >= 0 && tr_index < num_canonical) {
+            compute_position_max_amplitudes_filtered(desc,
+                block_start, block_count,
+                pos_max_gx, pos_max_gy, pos_max_gz,
+                can_group_labels, tr_index);
+        } else {
+            compute_position_max_amplitudes_filtered(desc,
+                block_start, block_count,
+                pos_max_gx, pos_max_gy, pos_max_gz, NULL, 0);
+        }
+
+        if (can_group_labels)   PULSEQLIB_FREE(can_group_labels);
+        if (can_unique_indices) PULSEQLIB_FREE(can_unique_indices);
 
         /* ZERO_VAR: zero out positions whose gradients vary across TRs */
         if (amplitude_mode == PULSEQLIB_AMP_ZERO_VAR &&
@@ -1592,16 +1668,16 @@ int pulseqlib_get_tr_waveforms(
         block_dur_us = (bte->duration_us >= 0) ? (float)bte->duration_us
                                                : (float)bdef->duration_us;
 
-        /* Pure-delay shrinkage: if collapse_delays is set and this block
-         * has no RF, no gradients, and no ADC, clamp its display duration
-         * to a short dummy value (100 µs = 0.1 ms). */
+        /* Pure-delay clamping: if collapse_delays is set and this block
+         * has no RF, no gradients, and no ADC, force its display duration
+         * to exactly 5000 µs (5 ms) — both expand short delays and shrink
+         * long ones so every delay is visible at a uniform width. */
         if (collapse_delays &&
             bdef->rf_id < 0 &&
             bte->gx_id < 0 && bte->gy_id < 0 && bte->gz_id < 0 &&
-            bdef->adc_id < 0 &&
-            block_dur_us > 100.0f)
+            bdef->adc_id < 0)
         {
-            block_dur_us = 100.0f;  /* 0.1 ms dummy delay */
+            block_dur_us = 5000.0f;  /* 5 ms display duration */
         }
 
         /* block metadata */
@@ -1619,6 +1695,79 @@ int pulseqlib_get_tr_waveforms(
         } else {
             pos_in_tr = -1;
             out->blocks[n].segment_idx = -1;
+        }
+
+        /* ---- RF isocenter anchor ---- */
+        out->blocks[n].rf_isocenter_us = -1.0f;
+        if (bdef->rf_id >= 0 && bdef->rf_id < desc->num_unique_rfs) {
+            const pulseqlib_rf_definition* rdef =
+                &desc->rf_definitions[bdef->rf_id];
+            out->blocks[n].rf_isocenter_us =
+                t0 + (float)rdef->delay
+                   + (float)rdef->stats.isodelay_us;
+        }
+
+        /* ---- ADC k=0 anchor ---- */
+        out->blocks[n].adc_kzero_us = -1.0f;
+        {
+            int has_adc_here = 0;
+            const pulseqlib_adc_definition* adef_anchor = NULL;
+            if (amplitude_mode == PULSEQLIB_AMP_ACTUAL) {
+                if (bte->adc_id >= 0 && bte->adc_id < desc->adc_table_size) {
+                    int adc_def_id = desc->adc_table[bte->adc_id].id;
+                    if (adc_def_id >= 0 && adc_def_id < desc->num_unique_adcs) {
+                        adef_anchor = &desc->adc_definitions[adc_def_id];
+                        has_adc_here = 1;
+                    }
+                }
+            } else {
+                if (bdef->adc_id >= 0 && bdef->adc_id < desc->num_unique_adcs) {
+                    adef_anchor = &desc->adc_definitions[bdef->adc_id];
+                    has_adc_here = 1;
+                }
+            }
+            if (has_adc_here && adef_anchor) {
+                int seg_i = out->blocks[n].segment_idx;
+                int found_anchor = 0;
+                /* Try precomputed segment adc_anchors first. */
+                if (seg_i >= 0 &&
+                    seg_i < desc->segment_table.num_unique_segments) {
+                    const pulseqlib_tr_segment* seg =
+                        &desc->segment_definitions[seg_i];
+                    if (seg->timing.adc_anchors &&
+                        seg->timing.num_adc_anchors > 0) {
+                        int blk_in_seg = pos_in_tr - seg->start_block;
+                        int ai;
+                        /* Compute segment start in TR-relative time. */
+                        float seg_start_tr = t0;
+                        {
+                            int bi;
+                            for (bi = 0; bi < blk_in_seg; ++bi) {
+                                seg_start_tr -= (float)desc->block_definitions[
+                                    seg->unique_block_indices[bi]
+                                ].duration_us;
+                            }
+                        }
+                        for (ai = 0; ai < seg->timing.num_adc_anchors; ++ai) {
+                            if (seg->timing.adc_anchors[ai].block_offset
+                                    == blk_in_seg) {
+                                out->blocks[n].adc_kzero_us =
+                                    seg_start_tr
+                                    + seg->timing.adc_anchors[ai].kzero_us;
+                                found_anchor = 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+                /* Fallback: midpoint (Cartesian convention). */
+                if (!found_anchor) {
+                    out->blocks[n].adc_kzero_us =
+                        t0 + (float)adef_anchor->delay
+                        + (float)(adef_anchor->num_samples / 2)
+                          * (float)adef_anchor->dwell_time * 1e-3f;
+                }
+            }
         }
 
         /* ---- gradients ---- */

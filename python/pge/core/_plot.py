@@ -78,7 +78,7 @@ _GAMMA_DEFAULT = 42.576e6  # Hz/T
 def _seg_color(idx: int) -> str:
     """Return a colour for segment index *idx* (cycling)."""
     if idx < 0:
-        return '#aaaaaa'  # prep/cooldown
+        return '#aaaaaa'  # unmapped
     return _MATLAB_LINES[idx % len(_MATLAB_LINES)]
 
 
@@ -89,6 +89,83 @@ def _segment_idx_for_time(blocks, t_us: float) -> int:
         blk_end = blk_start + blk.duration_us
         if (t_us >= blk_start - 0.5) and (t_us <= blk_end + 0.5):
             return blk.segment_idx
+    return -1
+
+
+def _fix_block_segment_indices(wf, source, subsequence_idx):
+    """Re-derive segment_idx for every block using segment-order tables.
+
+    The C backend's ``find_segment_for_block_pos`` only matches the first
+    occurrence of each segment archetype.  When a TR contains *repeated*
+    segments (e.g. MPRAGE: [seg0, seg1, seg2, seg2, seg1]), blocks beyond
+    the first occurrence incorrectly get ``segment_idx == -1``.
+
+    This function rebuilds the mapping from the segment ORDER tables and
+    per-segment block counts reported by the collection, then patches
+    ``wf.blocks[i].segment_idx`` in place.
+    """
+    rpt = source._subseq_report(subsequence_idx)
+    segs = rpt['segments']
+
+    # Valid segment sizes (skip placeholder entries with start_block == -1)
+    seg_sizes = {}
+    for i, seg in enumerate(segs):
+        sb = seg.get('start_block', -1)
+        nb = seg.get('num_blocks', 0)
+        if sb >= 0 and nb > 0:
+            seg_sizes[i] = nb
+
+    # Build one-TR block-position → segment_idx from main_segment_table
+    main_table = rpt.get('main_segment_table', [])
+    tr_map = []
+    for seg_id in main_table:
+        tr_map.extend([seg_id] * seg_sizes.get(seg_id, 0))
+
+    if not tr_map:
+        return
+
+    # Prep / cooldown segment maps
+    prep_map = []
+    for seg_id in rpt.get('prep_segment_table', []):
+        prep_map.extend([seg_id] * seg_sizes.get(seg_id, 0))
+    cool_map = []
+    for seg_id in rpt.get('cooldown_segment_table', []):
+        cool_map.extend([seg_id] * seg_sizes.get(seg_id, 0))
+
+    num_prep = rpt.get('num_prep_blocks', 0)
+    num_cool = rpt.get('num_cooldown_blocks', 0)
+    nblk = len(wf.blocks)
+    main_blocks = nblk - num_prep - num_cool
+    tr_len = len(tr_map)
+
+    for i, blk in enumerate(wf.blocks):
+        if i < num_prep:
+            # Prep region
+            if i < len(prep_map):
+                blk.segment_idx = prep_map[i]
+            else:
+                # Fallback: check segment definitions by range
+                blk.segment_idx = _find_seg_by_def(segs, i)
+        elif i < num_prep + main_blocks:
+            # Main imaging region — cycle through tr_map
+            pos = (i - num_prep) % tr_len if tr_len > 0 else -1
+            blk.segment_idx = tr_map[pos] if 0 <= pos < tr_len else -1
+        else:
+            # Cooldown region
+            cool_pos = i - (num_prep + main_blocks)
+            if cool_pos < len(cool_map):
+                blk.segment_idx = cool_map[cool_pos]
+            else:
+                blk.segment_idx = _find_seg_by_def(segs, i)
+
+
+def _find_seg_by_def(segs, block_pos):
+    """Fallback: check whether *block_pos* falls within any segment definition."""
+    for i, seg in enumerate(segs):
+        sb = seg.get('start_block', -1)
+        nb = seg.get('num_blocks', 0)
+        if sb >= 0 and nb > 0 and sb <= block_pos < sb + nb:
+            return i
     return -1
 
 
@@ -153,147 +230,119 @@ class PlotHandle:
 
 
 def plot(
-    source,
+    seq: SequenceCollection,
     *,
-    subsequence_idx: int = 0,
-    tr_idx=0,
+    subsequence_idx: int | None = None,
+    tr_instance: int | str = 'max_pos',
     collapse_delays: bool = True,
     show_segments: bool = True,
     show_blocks: bool = False,
     show_slew: bool = False,
     show_rf_centers: bool = False,
     show_echoes: bool = False,
-    max_grad_mT_per_m=None,
-    max_slew_T_per_m_per_s=None,
+    max_grad_mT_per_m: float | None = None,
+    max_slew_T_per_m_per_s: float | None = None,
     time_unit: str = 'ms',
-    figsize=None,
-    fig=None,
-    label=None,
-    num_averages: int = 0,
-):
-    """Plot native-timing TR waveforms with optional overlays and annotations.
+    figsize: tuple | None = None,
+) -> PlotHandle:
+    """Plot native-timing TR waveforms with optional annotations.
 
     Creates a (3, 2) figure showing RF (magnitude/phase), ADC readout, and
     gradient (Gx/Gy/Gz) waveforms using native microsecond timing from the
-    C library. Supports overlaying pypulseq reference or XML truth files
-    for validation, and adding optional annotations (segment colors, block
-    boundaries, slew rate, etc.).
+    C library with optional annotations (segment colors, block boundaries,
+    slew rate, etc.).
+
+    **Canonical TR display**: When ``tr_instance`` is a string (``'max_pos'``
+    or ``'zero_var'``), all canonical TRs (one per unique shot-ID pattern) are
+    overlaid. The first canonical TR (ID 0) is displayed with full opacity;
+    subsequent canonical TRs (ID > 0) are displayed with reduced opacity to
+    distinguish multi-shot behavior.
+
+    **Actual instance display**: When ``tr_instance`` is an integer, the specific
+    TR instance is plotted in actual amplitude mode.
 
     Parameters
     ----------
-    source : SequenceCollection, pp.Sequence, str, or Path
-        Primary waveform source:
-
-        - **SequenceCollection** — creates a new figure from C-backend
-          waveforms (no pre-existing figure allowed).
-        - **pypulseq Sequence** — extracted to SequenceCollection and plotted;
-          or overlaid on ``fig`` if provided.
-        - **str or Path** — path to ``.seq`` or ``.xml`` file; same behavior
-          as pypulseq Sequence. Auto-wrapped as SequenceCollection if no
-          ``fig`` is provided.
-        - **XML file** — loads reference waveforms from truth file (for overlay
-          when ``fig`` is provided).
-
-    subsequence_idx : int, default 0
-        Subsequence index (0-based) to plot.
-    tr_idx : int or str, default 0
+    seq : SequenceCollection
+        The sequence to plot.
+    subsequence_idx : int or None, default None
+        Subsequence index (0-based). If ``None`` and the collection has exactly one
+        subsequence, defaults to 0. Otherwise raises ``ValueError``.
+    tr_instance : int or str, default 'max_pos'
         TR selector:
 
-        - **int (≥ 0)** — 0-based TR instance index (degenerate sequences).
-        - **int (< 0)** — reverse indexing; ``-1`` selects the last TR.
-        - **str** — amplitude-mode selector:
-          ``'max_pos'`` (structural canonical, safety view) or
-          ``'zero_var'`` (zero-variable-grad, k-space view).
+        - ``'max_pos'`` (default) — display all canonical TRs (structural
+          position maximum across shots); multi-shot patterns overlaid with
+          transparency.
+        - ``'zero_var'`` — display all canonical TRs (zero-variable gradient view,
+          k-space interpretation); multi-shot patterns overlaid with transparency.
+        - **int (≥ 0)** — 0-based TR instance index in actual amplitude mode.
+        - **int (< 0)** — reverse indexing; ``-1`` selects the last instance.
 
     collapse_delays : bool, default True
         If ``True``, collapse pure-delay blocks (no RF, grad, ADC) to 0.1 ms
         for visual clarity. Timing information is preserved.
     show_segments : bool, default True
         If ``True``, colour-code gradient waveforms by segment index.
-        Segment boundaries are marked with subtle separators.
+        Segment boundaries are marked.
     show_blocks : bool, default False
         If ``True``, draw vertical dotted lines at block boundaries.
     show_slew : bool, default False
         If ``True``, overlay numerical slew-rate (dG/dt in T/m/s) on
-        each gradient panel as a thin line.
+        each gradient panel.
     show_rf_centers : bool, default False
-        If ``True``, mark RF pulse envelope peaks (iso-centres) with
-        vertical markers on the RF magnitude subplot.
+        If ``True``, mark RF pulse envelope peaks with vertical markers.
     show_echoes : bool, default False
-        If ``True``, shade ADC sampling windows on the ADC subplot.
+        If ``True``, shade ADC sampling windows.
     max_grad_mT_per_m : float, optional
-        Gradient axis upper limit (mT/m). If ``None``, auto-scaled from
-        sequence data and system constraints.
+        Gradient axis upper limit (mT/m). If ``None``, auto-scaled.
     max_slew_T_per_m_per_s : float, optional
         Slew-rate axis upper limit (T/m/s, only if ``show_slew=True``).
         If ``None``, auto-scaled.
     time_unit : str, default 'ms'
-        Time axis unit: ``'ms'`` (milliseconds, default) or ``'us'`` (microseconds).
+        Time axis unit: ``'ms'`` (milliseconds) or ``'us'`` (microseconds).
     figsize : tuple, optional
-        Figure size ``(width, height)`` in inches. Default attempts sensible
-        scaling; typically 14 × 8 inches for multi-trace layouts.
-    fig : PlotHandle, optional
-        Existing plot handle for overlay. If provided, waveforms from *source*
-        are overlaid onto the figure (e.g., reference overlaid on C-backend).
-        **Forbidden when source is a SequenceCollection.** Optional for
-        pypulseq Sequence or XML; when omitted, a new figure is created.
-    label : str, optional
-        Legend label for overlay traces (used only when ``fig`` is provided).
-    num_averages : int, default 0
-        Override average count for waveform extraction. 0 uses the default
-        from the SequenceCollection (set at construction). Used internally
-        for consistency with validation and analysis functions.
-
-    Returns
-    -------
-    PlotHandle
-        A namespace containing:
-
-        - ``fig`` — matplotlib Figure object.
-        - ``axes`` — tuple of Axes (typically 6 subplots in 3×2 layout).
-        - ``tr_duration_us`` — TR duration in microseconds (context).
-        - ``prep_duration_us`` — prep region duration (context).
+        Figure size ``(width, height)`` in inches. Defaults to sensible layout
+        (typically 14 × 8 inches).
 
     Raises
     ------
     ValueError
-        If ``fig`` is provided when ``source`` is a SequenceCollection.
-        If ``tr_idx`` is out of range for the selected subsequence.
+        If ``subsequence_idx=None`` and the collection has multiple subsequences.
+        If ``tr_instance`` (integer) is out of range for the selected subsequence.
 
     Notes
     -----
-    Native timing means ADC samples are plotted at their actual microsecond
-    clock positions, revealing aliasing patterns and spectral properties that
-    uniform resampling would obscure.
+    Native timing preserves ADC sampling patterns and reveals aliasing artifacts
+    that uniform resampling would mask.
 
     Colour palette for segments uses MATLAB line colors (7-color cycle);
-    prep/cooldown regions are shown in gray. Amplitude-mode selector
-    (``'max_pos'`` vs ``'zero_var'`` vs ``'actual'``) controls how multi-shot
-    gradient amplitudes are resolved (structural max, zero-variable, or a
-    specific instance).
+    prep/cooldown regions are shown in gray.
+
+    Multi-canonical-TR display (when multiple shot-ID patterns exist):
+    - Canonical TR 0: solid, full opacity
+    - Canonical TR > 0: reduced opacity (alpha ≈ 0.5) or dashed line style
+      to visually distinguish shots
 
     Examples
     --------
-    Plot C-backend waveforms for a single TR:
+    Plot canonical TR waveforms (default, showing all shot patterns):
 
     >>> from python.pge.core import SequenceCollection
     >>> sc = SequenceCollection('path/to/sequence.seq')
-    >>> sc.plot(subsequence_idx=0, tr_idx=5)
+    >>> sc.plot(subsequence_idx=0)  # 'max_pos' by default
 
     Plot with segment coloring and slew-rate overlay:
 
     >>> sc.plot(subsequence_idx=0, show_segments=True, show_slew=True)
 
-    Overlay pypulseq reference for validation:
+    Plot a specific TR instance in actual amplitude mode:
 
-    >>> handle = sc.plot(subsequence_idx=0, tr_idx=0)  # C-backend base
-    >>> seq_ref = SeqCollection('path/to/ref.seq')
-    >>> plot(seq_ref, subsequence_idx=0, tr_idx=0, fig=handle, label='Reference')
+    >>> sc.plot(subsequence_idx=0, tr_instance=5)  # 5th actual instance
 
-    Use amplitude-mode selector:
+    Use zero-variable gradient view:
 
-    >>> sc.plot(tr_idx='max_pos')  # Structural canonical TR
-    >>> sc.plot(tr_idx='zero_var')  # Zero-variable-grad view
+    >>> sc.plot(subsequence_idx=0, tr_instance='zero_var')
 
     See Also
     --------
@@ -301,203 +350,157 @@ def plot(
     get_tr_waveforms : Extract native-timing waveforms programmatically.
     """
     import matplotlib.pyplot as plt
-    from matplotlib.patches import Rectangle
-    
-    is_collection = isinstance(source, SequenceCollection)
 
-    # Lazy check for pypulseq
-    try:
-        import pypulseq as pp
+    source = seq
 
-        # SequenceCollection inherits from pp.Sequence; keep it in Branch 1.
-        is_pulseq = (not is_collection) and isinstance(source, pp.Sequence)
-    except ImportError:
-        is_pulseq = False
-
-    is_xml = isinstance(source, (str, Path))
-
-    # ── Validate fig argument ──
-    if is_collection and fig is not None:
-        raise ValueError(
-            "Cannot pass 'fig' handle when source is a SequenceCollection. "
-            "Overlay is only supported for pypulseq Sequence or XML sources."
+    # plot() only accepts SequenceCollection.  XML overlays belong in validate().
+    if not isinstance(source, SequenceCollection):
+        raise TypeError(
+            f'plot() expects a SequenceCollection; got {type(source).__name__}. '
+            'For XML overlays use validate(do_plot=True, xml_path=...).'
         )
-    if (is_pulseq or is_xml) and fig is None:
-        if is_pulseq:
-            source = SequenceCollection(source)
-            is_collection = True
-            is_pulseq = False
-            is_xml = False
-        else:
-            # If a .seq path is provided, use the same base path as collections.
-            try:
-                source = SequenceCollection(str(source))
-                is_collection = True
-                is_pulseq = False
-                is_xml = False
-            except Exception:
-                fig = _new_empty_plot_handle(figsize=figsize)
 
-    # ── Determine amplitude mode and tr_index ──
-    if isinstance(tr_idx, str):
-        amplitude_mode = tr_idx  # 'max_pos' or 'zero_var'
-        tr_index = 0
-    else:
-        # Support negative indexing for tr_index
-        tr_info = None
-        if 'tr_info' not in locals():
-            from ._extension._pulseqlib_wrapper import _find_tr
-            if is_collection:
-                tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
-            else:
-                tr_info = None
-        if tr_info is not None:
-            from ._validate import _total_addressable_trs
-            num_trs = _total_addressable_trs(tr_info)
+    # Auto-resolve subsequence_idx: None -> 0 if only one subsequence
+    if subsequence_idx is None:
+        if len(source._seqs) == 1:
+            subsequence_idx = 0
         else:
-            num_trs = None
-        idx = int(tr_idx)
+            raise ValueError(
+                f'subsequence_idx=None is only valid for single subsequence; '
+                f'got {len(source._seqs)} subsequences. '
+                f'Please specify subsequence_idx explicitly (0..{len(source._seqs) - 1}).'
+            )
+
+    # Validate subsequence_idx range
+    if not 0 <= subsequence_idx < len(source._seqs):
+        raise ValueError(
+            f'subsequence_idx={subsequence_idx} out of range for {len(source._seqs)} subsequences '
+            f'(valid: 0..{len(source._seqs) - 1})'
+        )
+
+    # Parse tr_instance: can be string ('max_pos', 'zero_var') or integer (actual instance)
+    amplitude_mode = None
+    tr_index = 0
+    if isinstance(tr_instance, str):
+        valid_modes = ('max_pos', 'zero_var')
+        if tr_instance not in valid_modes:
+            raise ValueError(
+                f'tr_instance={tr_instance!r} invalid. '
+                f'Valid modes: {valid_modes}. '
+                f'Use integer >= 0 for specific TR instance.'
+            )
+        amplitude_mode = tr_instance
+    else:
+        # Integer mode: specific TR instance
+        if not isinstance(tr_instance, int):
+            raise TypeError(f'tr_instance must be int or str, got {type(tr_instance).__name__}')
+        # Will determine num_trs below; store for now
+        from ._extension._pulseqlib_wrapper import _find_tr
+        tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
+        from ._validate import _total_addressable_trs
+        num_trs = _total_addressable_trs(tr_info)
+        idx = int(tr_instance)
         if num_trs is not None:
             if idx < 0:
                 idx = num_trs + idx
             if idx < 0 or idx >= num_trs:
                 raise ValueError(
-                    f'tr_idx={tr_idx} out of range for {num_trs} TRs '
+                    f'tr_instance={tr_instance} out of range for {num_trs} TRs '
                     f'(valid: 0..{num_trs - 1} or -{num_trs}..-1)'
                 )
         amplitude_mode = 'actual'
         tr_index = idx
 
-    # Always plot the canonical TR window(s) as defined by the C backend
-    from ._extension._pulseqlib_wrapper import _find_tr
-    tr_info = None
-    if is_collection:
-        tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
-        # For 'max_pos' or 'zero_var', plot all canonical TRs (one per unique shot pattern)
-        # For 'actual', plot only the requested TR
-        if amplitude_mode in ('max_pos', 'zero_var'):
-            wf = get_tr_waveforms(
-                source,
-                subsequence_idx=subsequence_idx,
-                amplitude_mode=amplitude_mode,
-                tr_index=0,
-                collapse_delays=collapse_delays,
-                num_averages=num_averages,
-            )
-            # Diagnostic: print block info for debugging canonical TR window
-            print(f"[DEBUG] Number of waveform blocks: {len(wf.blocks)}")
-            if wf.blocks:
-                print(f"[DEBUG] Block start_us: {[b.start_us for b in wf.blocks]}")
-                print(f"[DEBUG] Block duration_us: {[b.duration_us for b in wf.blocks]}")
-            tr_dur = tr_info['tr_duration_us']
-            from ._validate import _total_addressable_trs
-            num_trs = _total_addressable_trs(tr_info)
-            first_tr_start_us = wf.blocks[0].start_us if wf.blocks else 0.0
-            from ._validate import _abs_block_start_s
-            has_nd = (
-                (tr_info['num_prep_blocks'] > 0 and not tr_info['degenerate_prep'])
-                or (tr_info['num_cooldown_blocks'] > 0 and not tr_info['degenerate_cooldown'])
-            )
-            _abs_s = 0.0 if has_nd else _abs_block_start_s(
-                source._seqs[subsequence_idx], tr_info['num_prep_blocks'])
-        else:
-            wf = get_tr_waveforms(
-                source,
-                subsequence_idx=subsequence_idx,
-                amplitude_mode=amplitude_mode,
-                tr_index=tr_index,
-                collapse_delays=collapse_delays,
-                num_averages=num_averages,
-            )
-            # Mask to the TR window for the requested TR
-            tr_dur = tr_info['tr_duration_us']
-            t0 = wf.blocks[0].start_us if wf.blocks else 0.0
-            t1 = t0 + tr_dur
-            def _mask_tr(t, a):
-                t = np.asarray(t)
-                a = np.asarray(a)
-                mask = (t >= t0 - 1e-3) & (t <= t1 + 1e-3)
-                return t[mask], a[mask]
-            wf.rf_mag.time_us, wf.rf_mag.amplitude = _mask_tr(wf.rf_mag.time_us, wf.rf_mag.amplitude)
-            wf.rf_phase.time_us, wf.rf_phase.amplitude = _mask_tr(wf.rf_phase.time_us, wf.rf_phase.amplitude)
-            wf.rf_mag_channels = [
-                ChannelWaveform(*_mask_tr(ch.time_us, ch.amplitude)) for ch in wf.rf_mag_channels
-            ]
-            wf.rf_phase_channels = [
-                ChannelWaveform(*_mask_tr(ch.time_us, ch.amplitude)) for ch in wf.rf_phase_channels
-            ]
-            wf.gx.time_us, wf.gx.amplitude = _mask_tr(wf.gx.time_us, wf.gx.amplitude)
-            wf.gy.time_us, wf.gy.amplitude = _mask_tr(wf.gy.time_us, wf.gy.amplitude)
-            wf.gz.time_us, wf.gz.amplitude = _mask_tr(wf.gz.time_us, wf.gz.amplitude)
-            wf.adc_events = [adc for adc in wf.adc_events if t0 <= adc.onset_us <= t1]
-            wf.blocks = [blk for blk in wf.blocks if t0 <= blk.start_us < t1]
-            num_trs = 1
-            first_tr_start_us = t0
-            from ._validate import _abs_block_start_s
-            _abs_s = _abs_block_start_s(
-                source._seqs[subsequence_idx],
-                tr_index * tr_info['tr_size'])
-
     # ── Time helpers ──
     t_scale = 1e-3 if time_unit == 'ms' else 1.0
     t_label = 'Time (ms)' if time_unit == 'ms' else 'Time (us)'
 
-    # ================================================================
-    #  Branch 1: SequenceCollection -> fresh figure
-    # ================================================================
-    if is_collection:
-        # Always include non-degenerate prep/cooldown
-        from ._extension._pulseqlib_wrapper import _find_tr
+    # ── Translate public amplitude_mode names to internal ones ──
+    _mode_map = {'max_pos': 'max_pos', 'zero_var': 'zero_var', 'actual': 'actual'}
+    internal_amplitude_mode = _mode_map[amplitude_mode]
 
-        tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
+    # ── Fetch waveforms ──
+    from ._extension._pulseqlib_wrapper import _find_tr
+    tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
+    num_canonical = tr_info.get('num_canonical_trs', 1)
 
-        wf = get_tr_waveforms(
-            source,
-            subsequence_idx=subsequence_idx,
-            amplitude_mode=amplitude_mode,
-            tr_index=tr_index,
-            collapse_delays=collapse_delays,
-            num_averages=num_averages,
-        )
-        tr_dur = tr_info['tr_duration_us']
-        from ._validate import _total_addressable_trs
-        num_trs = _total_addressable_trs(tr_info)
-        # Compute actual start time of first TR from waveform blocks
-        first_tr_start_us = 0.0
+    wf = get_tr_waveforms(
+        source,
+        subsequence_idx=subsequence_idx,
+        amplitude_mode=internal_amplitude_mode,
+        tr_index=tr_index,
+        collapse_delays=collapse_delays,
+    )
+
+    # Fetch additional canonical TRs for overlay (max_pos / zero_var only)
+    extra_wfs = []
+    if amplitude_mode in ('max_pos', 'zero_var') and num_canonical > 1:
+        for ci in range(num_canonical):
+            if ci == tr_index:
+                continue
+            extra = get_tr_waveforms(
+                source,
+                subsequence_idx=subsequence_idx,
+                amplitude_mode=internal_amplitude_mode,
+                tr_index=ci,
+                collapse_delays=collapse_delays,
+            )
+            extra_wfs.append(extra)
+
+    # Fix segment_idx: C's find_segment_for_block_pos misses repeated segments.
+    _fix_block_segment_indices(wf, source, subsequence_idx)
+
+    tr_dur = tr_info['tr_duration_us']
+    from ._validate import _total_addressable_trs
+    num_trs = _total_addressable_trs(tr_info)
+    # Compute actual start time of first TR from waveform blocks
+    first_tr_start_us = 0.0
+    for blk in wf.blocks:
+        if blk.segment_idx >= 0:
+            first_tr_start_us = blk.start_us
+            break
+
+    # Absolute start time of displayed TR within the pypulseq seq
+    from ._validate import _abs_block_start_s
+    _abs_s = _abs_block_start_s(
+        source._seqs[subsequence_idx],
+        tr_index * tr_info['tr_size'])
+
+    if figsize is None:
+        figsize = (14, 8)
+
+    fig_obj, axes_grid = plt.subplots(3, 2, figsize=figsize, sharex=True)
+    fig_obj.patch.set_facecolor('white')
+    axes = {
+        'rf_mag': axes_grid[0, 0],
+        'rf_phase': axes_grid[1, 0],
+        'adc': axes_grid[2, 0],
+        'gx': axes_grid[0, 1],
+        'gy': axes_grid[1, 1],
+        'gz': axes_grid[2, 1],
+    }
+
+    def _t(t_us):
+        return np.asarray(t_us) * t_scale
+
+    # ── Segment background shading (all axes) ──
+    if show_segments and len(wf.blocks) > 0:
         for blk in wf.blocks:
-            if blk.segment_idx >= 0:
-                first_tr_start_us = blk.start_us
-                break
+            t0_blk = _t(np.array([blk.start_us]))[0]
+            t1_blk = _t(np.array([blk.start_us + blk.duration_us]))[0]
+            color = _seg_color(blk.segment_idx)
+            for ax_item in axes.values():
+                ax_item.axvspan(t0_blk, t1_blk, color=color, alpha=0.07, linewidth=0)
 
-        # Absolute start time of displayed TR within the pypulseq seq
-        # (needed for Branch 2 overlay alignment).
-        from ._validate import _abs_block_start_s
-
-        _abs_s = _abs_block_start_s(
-            source._seqs[subsequence_idx],
-            tr_index * tr_info['tr_size'])
-
-        if figsize is None:
-            figsize = (14, 8)
-
-        fig_obj, axes_grid = plt.subplots(3, 2, figsize=figsize, sharex=True)
-        fig_obj.patch.set_facecolor('white')
-        axes = {
-            'rf_mag': axes_grid[0, 0],
-            'rf_phase': axes_grid[1, 0],
-            'adc': axes_grid[2, 0],
-            'gx': axes_grid[0, 1],
-            'gy': axes_grid[1, 1],
-            'gz': axes_grid[2, 1],
-        }
-
-        def _t(t_us):
-            return np.asarray(t_us) * t_scale
-
-        # ── RF magnitude ──
-        ax = axes['rf_mag']
-        ch = wf.rf_mag
-        if ch.time_us.size > 0:
+    # ── RF magnitude ──
+    ax = axes['rf_mag']
+    ch = wf.rf_mag
+    if ch.time_us.size > 0:
+        if show_segments and len(wf.blocks) > 0:
+            _plot_segmented(
+                ax, _t, ch, wf.blocks, linewidth=_MAIN_LINEWIDTH, alpha=1.0
+            )
+        else:
             t_rf, a_rf = _insert_nan_gaps(ch.time_us, ch.amplitude)
             ax.plot(
                 _t(t_rf),
@@ -507,25 +510,34 @@ def plot(
                 linestyle='-',
                 label='pulserver',
             )
-        ax.set_ylabel('|RF| (uT)')
-        # Per-channel RF magnitude overlay (pTx)
-        if wf.rf_mag_channels:
-            for cidx, ch_c in enumerate(wf.rf_mag_channels):
-                if ch_c.time_us.size > 0:
-                    ax.plot(
-                        _t(ch_c.time_us), ch_c.amplitude,
-                        color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
-                        linewidth=_MAIN_LINEWIDTH, linestyle='-',
-                        alpha=0.75, label=f'ch{cidx}',
-                    )
+    ax.set_ylabel('|RF| (uT)')
+    # Per-channel RF magnitude overlay (pTx)
+    if wf.rf_mag_channels:
+        for cidx, ch_c in enumerate(wf.rf_mag_channels):
+            if ch_c.time_us.size > 0:
+                ax.plot(
+                    _t(ch_c.time_us), ch_c.amplitude,
+                    color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
+                    linewidth=_MAIN_LINEWIDTH, linestyle='-',
+                    alpha=0.75, label=f'ch{cidx}',
+                )
 
-        # ── RF phase ──
-        ax = axes['rf_phase']
-        ch = wf.rf_phase
-        # Plot RF phase directly from C backend (already includes all offsets)
-        if ch.time_us.size > 0:
-            rf_phase_wrapped = _wrap_phase(ch.amplitude)
-            t_rf_ph, a_rf_ph = _insert_nan_gaps(ch.time_us, rf_phase_wrapped)
+    # ── RF phase ──
+    ax = axes['rf_phase']
+    ch = wf.rf_phase
+    # Plot RF phase directly from C backend (already includes all offsets)
+    if ch.time_us.size > 0:
+        # Wrap phase for display, but keep original timing for segment lookup
+        phase_ch = ChannelWaveform(
+            time_us=ch.time_us,
+            amplitude=_wrap_phase(ch.amplitude).astype(np.float32),
+        )
+        if show_segments and len(wf.blocks) > 0:
+            _plot_segmented(
+                ax, _t, phase_ch, wf.blocks, linewidth=_MAIN_LINEWIDTH, alpha=1.0
+            )
+        else:
+            t_rf_ph, a_rf_ph = _insert_nan_gaps(phase_ch.time_us, phase_ch.amplitude)
             ax.plot(
                 _t(t_rf_ph),
                 a_rf_ph,
@@ -534,268 +546,201 @@ def plot(
                 linestyle='-',
                 label='pulserver',
             )
-        ax.set_ylabel('RF phase (rad)')
-        ax.set_yticks([-np.pi, 0, np.pi])
-        ax.set_yticklabels(['-pi', '0', 'pi'])
-        # Per-channel RF phase overlay (pTx)
-        if wf.rf_phase_channels:
-            for cidx, ch_c in enumerate(wf.rf_phase_channels):
-                if ch_c.time_us.size > 0:
-                    ax.plot(
-                        _t(ch_c.time_us), _wrap_phase(ch_c.amplitude),
-                        color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
-                        linewidth=_MAIN_LINEWIDTH, linestyle='-',
-                        alpha=0.75, label=f'ch{cidx}',
-                    )
+    ax.set_ylabel('RF phase (rad)')
+    ax.set_yticks([-np.pi, 0, np.pi])
+    ax.set_yticklabels(['-pi', '0', 'pi'])
+    # Per-channel RF phase overlay (pTx)
+    if wf.rf_phase_channels:
+        for cidx, ch_c in enumerate(wf.rf_phase_channels):
+            if ch_c.time_us.size > 0:
+                ax.plot(
+                    _t(ch_c.time_us), _wrap_phase(ch_c.amplitude),
+                    color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
+                    linewidth=_MAIN_LINEWIDTH, linestyle='-',
+                    alpha=0.75, label=f'ch{cidx}',
+                )
 
-        # ── ADC phase envelope ──
-        ax = axes['adc']
-        # Only plot for real ADC events (not dummy TRs)
-        adc_labeled = False
-        for adc in wf.adc_events:
-            if adc.num_samples > 0 and adc.duration_us > 0:
-                dwell_time = adc.duration_us / adc.num_samples  # us
-                t_adc = adc.onset_us + np.arange(adc.num_samples) * dwell_time
-                t_adc_s = t_adc * 1e-6
-                adc_phase = adc.phase_offset_rad + 2 * np.pi * adc.freq_offset_hz * t_adc_s
-                # Wrap phase to [-pi, pi]
-                adc_phase_wrapped = (adc_phase + np.pi) % (2 * np.pi) - np.pi
-                lbl = 'pulserver' if not adc_labeled else None
-                ax.plot(_t(t_adc), adc_phase_wrapped, color='purple', linewidth=_MAIN_LINEWIDTH, label=lbl)
-                # Shadowed region
-                ax.fill_between(_t(t_adc), 0, np.maximum(adc_phase_wrapped, 1.0), color='purple', alpha=0.15)
-                adc_labeled = True
-        ax.set_ylabel('ADC phase (rad)')
-        ax.set_yticks([-np.pi, 0, np.pi])
-        ax.set_yticklabels(['-pi', '0', 'pi'])
+    # ── ADC phase envelope ──
+    ax = axes['adc']
+    # Only plot for real ADC events (not dummy TRs)
+    adc_labeled = False
+    for adc in wf.adc_events:
+        if adc.num_samples > 0 and adc.duration_us > 0:
+            dwell_time = adc.duration_us / adc.num_samples  # us
+            t_adc = adc.onset_us + np.arange(adc.num_samples) * dwell_time
+            t_adc_s = t_adc * 1e-6
+            adc_phase = adc.phase_offset_rad + 2 * np.pi * adc.freq_offset_hz * t_adc_s
+            # Wrap phase to [-pi, pi]
+            adc_phase_wrapped = (adc_phase + np.pi) % (2 * np.pi) - np.pi
+            # Determine segment color for this ADC event
+            if show_segments and len(wf.blocks) > 0:
+                adc_seg = _segment_idx_for_time(wf.blocks, adc.onset_us)
+                adc_color = _seg_color(adc_seg)
+            else:
+                adc_color = 'purple'
+            lbl = 'pulserver' if not adc_labeled else None
+            ax.plot(_t(t_adc), adc_phase_wrapped, color=adc_color, linewidth=_MAIN_LINEWIDTH, label=lbl)
+            # Shadowed region
+            ax.fill_between(_t(t_adc), 0, np.maximum(adc_phase_wrapped, 1.0), color=adc_color, alpha=0.15)
+            adc_labeled = True
+    ax.set_ylabel('ADC phase (rad)')
+    ax.set_yticks([-np.pi, 0, np.pi])
+    ax.set_yticklabels(['-pi', '0', 'pi'])
 
+    # ── Gradients (Gx, Gy, Gz) ──
+    for gname in ('gx', 'gy', 'gz'):
+        ax = axes[gname]
+        ch = getattr(wf, gname)
+        if ch.time_us.size > 0:
+            if show_segments and len(wf.blocks) > 0:
+                _plot_segmented(
+                    ax, _t, ch, wf.blocks, linewidth=_MAIN_LINEWIDTH, alpha=1.0
+                )
+            else:
+                ax.plot(
+                    _t(ch.time_us),
+                    ch.amplitude,
+                    color='gray',
+                    linewidth=_MAIN_LINEWIDTH,
+                    linestyle='-',
+                    label='pulserver',
+                )
 
-        # ── Gradients (Gx, Gy, Gz) ──
-        axis_color = {
-            'gx': _MATLAB_LINES[0],
-            'gy': _MATLAB_LINES[1],
-            'gz': _MATLAB_LINES[2],
-        }
-        for gname in ('gx', 'gy', 'gz'):
-            ax = axes[gname]
-            ch = getattr(wf, gname)
-            if ch.time_us.size > 0:
-                if show_segments and len(wf.blocks) > 0:
-                    _plot_segmented(
-                        ax, _t, ch, wf.blocks, linewidth=_MAIN_LINEWIDTH, alpha=1.0
-                    )
-                else:
-                    ax.plot(
-                        _t(ch.time_us),
-                        ch.amplitude,
-                        color='gray',
-                        linewidth=_MAIN_LINEWIDTH,
-                        linestyle='-',
-                        label='pulserver',
-                    )
+        ax.set_ylabel(f'{gname.upper()} (mT/m)')
 
-            ax.set_ylabel(f'{gname.upper()} (mT/m)')
+        if max_grad_mT_per_m is not None:
+            ax.axhline(max_grad_mT_per_m, color='gray', ls='--', lw=0.6, alpha=0.6)
+            ax.axhline(-max_grad_mT_per_m, color='gray', ls='--', lw=0.6, alpha=0.6)
 
-            if max_grad_mT_per_m is not None:
-                ax.axhline(max_grad_mT_per_m, color='gray', ls='--', lw=0.6, alpha=0.6)
-                ax.axhline(-max_grad_mT_per_m, color='gray', ls='--', lw=0.6, alpha=0.6)
-
-            # Slew rate overlay
-            if show_slew and ch.time_us.size > 1:
-                slew = _slew_rate(ch)
-                ax2 = ax.twinx()
-                ax2.plot(
-                    _t(slew.time_us),
-                    slew.amplitude,
+        # Slew rate overlay
+        if show_slew and ch.time_us.size > 1:
+            slew = _slew_rate(ch)
+            ax2 = ax.twinx()
+            ax2.plot(
+                _t(slew.time_us),
+                slew.amplitude,
+                color='orange',
+                linewidth=0.5,
+                alpha=0.5,
+            )
+            ax2.set_ylabel('Slew (T/m/s)', color='orange', fontsize=8)
+            ax2.tick_params(axis='y', labelcolor='orange', labelsize=7)
+            if max_slew_T_per_m_per_s is not None:
+                ax2.axhline(
+                    max_slew_T_per_m_per_s,
                     color='orange',
-                    linewidth=0.5,
+                    ls=':',
+                    lw=0.5,
                     alpha=0.5,
                 )
-                ax2.set_ylabel('Slew (T/m/s)', color='orange', fontsize=8)
-                ax2.tick_params(axis='y', labelcolor='orange', labelsize=7)
-                if max_slew_T_per_m_per_s is not None:
-                    ax2.axhline(
-                        max_slew_T_per_m_per_s,
-                        color='orange',
-                        ls=':',
-                        lw=0.5,
-                        alpha=0.5,
-                    )
-                    ax2.axhline(
-                        -max_slew_T_per_m_per_s,
-                        color='orange',
-                        ls=':',
-                        lw=0.5,
-                        alpha=0.5,
-                    )
+                ax2.axhline(
+                    -max_slew_T_per_m_per_s,
+                    color='orange',
+                    ls=':',
+                    lw=0.5,
+                    alpha=0.5,
+                )
 
-        # ── Block boundaries ──
-        if show_blocks and len(wf.blocks) > 0:
-            for blk in wf.blocks:
-                t_start = _t(np.array([blk.start_us]))[0]
-                for ax_item in axes.values():
-                    ax_item.axvline(t_start, color='k', ls=':', lw=0.3, alpha=0.3)
+    # ── Overlay additional canonical TRs (dashed, reduced alpha) ──
+    _OVERLAY_ALPHA = 0.45
+    _OVERLAY_LW = _MAIN_LINEWIDTH * 0.8
+    for extra in extra_wfs:
+        # RF magnitude
+        ch = extra.rf_mag
+        if ch.time_us.size > 0:
+            t_rf, a_rf = _insert_nan_gaps(ch.time_us, ch.amplitude)
+            axes['rf_mag'].plot(
+                _t(t_rf), a_rf, color='gray', linewidth=_OVERLAY_LW,
+                linestyle='--', alpha=_OVERLAY_ALPHA,
+            )
+        # RF phase
+        ch = extra.rf_phase
+        if ch.time_us.size > 0:
+            t_rf_ph, a_rf_ph = _insert_nan_gaps(ch.time_us, _wrap_phase(ch.amplitude))
+            axes['rf_phase'].plot(
+                _t(t_rf_ph), a_rf_ph, color='gray', linewidth=_OVERLAY_LW,
+                linestyle='--', alpha=_OVERLAY_ALPHA,
+            )
+        # ADC
+        for adc in extra.adc_events:
+            if adc.num_samples > 0 and adc.duration_us > 0:
+                dwell = adc.duration_us / adc.num_samples
+                t_adc = adc.onset_us + np.arange(adc.num_samples) * dwell
+                t_adc_s = t_adc * 1e-6
+                adc_phase = adc.phase_offset_rad + 2 * np.pi * adc.freq_offset_hz * t_adc_s
+                adc_phase_wrapped = (adc_phase + np.pi) % (2 * np.pi) - np.pi
+                axes['adc'].plot(
+                    _t(t_adc), adc_phase_wrapped, color='gray',
+                    linewidth=_OVERLAY_LW, linestyle='--', alpha=_OVERLAY_ALPHA,
+                )
+        # Gradients
+        for gname in ('gx', 'gy', 'gz'):
+            ch = getattr(extra, gname)
+            if ch.time_us.size > 0:
+                axes[gname].plot(
+                    _t(ch.time_us), ch.amplitude, color='gray',
+                    linewidth=_OVERLAY_LW, linestyle='--', alpha=_OVERLAY_ALPHA,
+                )
 
-        # ── RF centres ──
-        if show_rf_centers and wf.rf_mag.time_us.size > 0:
-            _plot_rf_centers(axes['rf_mag'], wf, _t)
-
-        # ── Echo markers ──
-        if show_echoes:
-            _plot_echo_markers(axes['adc'], wf, _t)
-
-        # ── Finalise ──
-        axes['adc'].set_xlabel(t_label)
-        axes['gz'].set_xlabel(t_label)
+    # ── Block boundaries ──
+    if show_blocks and len(wf.blocks) > 0:
+        for blk in wf.blocks:
+            t_start = _t(np.array([blk.start_us]))[0]
+            for ax_item in axes.values():
+                ax_item.axvline(t_start, color='k', ls=':', lw=1.5)
+        # Also mark end of the last block
+        last = wf.blocks[-1]
+        t_end = _t(np.array([last.start_us + last.duration_us]))[0]
         for ax_item in axes.values():
-            ax_item.grid(True)
+            ax_item.axvline(t_end, color='k', ls=':', lw=1.5)
 
-        # Add legend to all axes for clarity
-        for ax_item in axes.values():
-            handles, labels = ax_item.get_legend_handles_labels()
-            if handles:
-                ax_item.legend(fontsize=8, loc='upper right')
+    # ── RF centres ──
+    if show_rf_centers and wf.rf_mag.time_us.size > 0:
+        _plot_rf_centers(axes['rf_mag'], wf, _t)
 
-        # --- Overlay for pypulseq (Branch 2) ---
-        if not is_collection and is_pulseq and fig is not None:
-            # Use the same windowing as validation for the overlay
-            from ._validate import _pypulseq_reference_window
-            if not hasattr(source, '_seqs'):
-                seq_coll = SequenceCollection(source)
-            else:
-                seq_coll = source
-            abs_t0 = fig._tr_start_abs_s
-            window_duration_us = fig.tr_duration_us
-            ref = _pypulseq_reference_window(seq_coll, subsequence_idx, abs_t0, window_duration_us)
-            # Overlay ADC phase for pypulseq
-            ax_adc = fig.axes['adc']
-            # For pypulseq, try to extract ADC events from the sequence if possible
-            # (Assume only one ADC event per TR for now)
-            # If not available, skip overlay
-            # This is a placeholder: user may need to adapt for their pypulseq structure
-            # Here, we just plot zeros for demonstration
-            # TODO: Replace with real pypulseq ADC phase extraction if available
-            # ax_adc.plot([], [], color='black', linestyle='--', label='pypulseq ADC phase')
+    # ── Echo markers ──
+    if show_echoes:
+        _plot_echo_markers(axes['adc'], wf, _t)
 
+    # ── Finalise ──
+    axes['adc'].set_xlabel(t_label)
+    axes['gz'].set_xlabel(t_label)
+    for ax_item in axes.values():
+        ax_item.grid(True)
+
+    # ── Segment legend (single figure-level, below all axes) ──
+    if show_segments and len(wf.blocks) > 0:
+        from matplotlib.patches import Patch
+        seen_segs = sorted({blk.segment_idx for blk in wf.blocks if blk.segment_idx >= 0})
+        legend_handles = []
+        for si in seen_segs:
+            legend_handles.append(Patch(facecolor=_seg_color(si), label=f'Segment {si}'))
+        if legend_handles:
+            fig_obj.legend(
+                handles=legend_handles,
+                loc='lower center',
+                ncol=len(legend_handles),
+                fontsize=8,
+                framealpha=0.8,
+                bbox_to_anchor=(0.5, 0.0),
+            )
+            fig_obj.tight_layout(rect=[0, 0.04, 1, 1])
+        else:
+            fig_obj.tight_layout()
+    else:
         fig_obj.tight_layout()
 
-        return PlotHandle(
-            fig=fig_obj,
-            axes=axes,
-            tr_duration_us=tr_dur,
-            num_trs=num_trs,
-            first_tr_start_us=first_tr_start_us,
-            _tr_start_abs_s=_abs_s,
-            _tr_index=tr_index,
-            _num_averages=num_averages,
-            _subsequence_idx=subsequence_idx,
-        )
+    return PlotHandle(
+        fig=fig_obj,
+        axes=axes,
+        tr_duration_us=tr_dur,
+        num_trs=num_trs if num_trs is not None else 1,
+        first_tr_start_us=first_tr_start_us,
+        _tr_start_abs_s=_abs_s,
+        _tr_index=tr_index,
+        _subsequence_idx=subsequence_idx,
+    )
 
-    # ================================================================
-    #  Branch 2: pypulseq Sequence overlay
-    # ================================================================
-    if is_pulseq:
-        assert fig is not None
-        # Use the same tiled reference extraction as validation so that
-        # non-degenerate sequences (bSSFP) show prep + N*imaging + cooldown.
-        from ._validate import _pypulseq_reference
-        from ._extension._pulseqlib_wrapper import _find_tr
-        if not hasattr(source, '_seqs'):
-            seq_coll = SequenceCollection(source)
-        else:
-            seq_coll = source
-        tr_info = _find_tr(seq_coll._cseq, subsequence_idx=fig._subsequence_idx)
-        ref = _pypulseq_reference(
-            seq_coll, fig._subsequence_idx, fig._tr_index, tr_info,
-            fig._num_averages,
-        )
-
-        alpha = 1.0
-        for ch_name in ('gx', 'gy', 'gz'):
-            t_us, amp = ref[ch_name]
-            if len(t_us) > 0:
-                fig.axes[ch_name].plot(
-                    t_us * t_scale,
-                    amp,
-                    linewidth=_OVERLAY_LINEWIDTH,
-                    alpha=alpha,
-                    color='black',
-                    linestyle='--',
-                    label=f'{label or "pypulseq"}',
-                )
-        # RF magnitude
-        t_us, amp = ref['rf_mag']
-        if len(t_us) > 0:
-            fig.axes['rf_mag'].plot(
-                t_us * t_scale,
-                amp,
-                linewidth=_OVERLAY_LINEWIDTH,
-                alpha=alpha,
-                color='black',
-                linestyle='--',
-                label=f'{label or "pypulseq"}',
-            )
-        # RF phase overlay if available
-        if 'rf_phase' in ref:
-            t_us, amp = ref['rf_phase']
-            if len(t_us) > 0:
-                fig.axes['rf_phase'].plot(
-                    t_us * t_scale,
-                    _wrap_phase(amp),
-                    linewidth=_OVERLAY_LINEWIDTH,
-                    alpha=alpha,
-                    color='black',
-                    linestyle='--',
-                    label=f'{label or "pypulseq"}',
-                )
-        # Per-channel RF overlay (pTx)
-        if 'rf_mag_channels' in ref:
-            for cidx, (t_c, amp_c) in enumerate(ref['rf_mag_channels']):
-                if len(t_c) > 0:
-                    fig.axes['rf_mag'].plot(
-                        t_c * t_scale, amp_c,
-                        linewidth=_OVERLAY_LINEWIDTH, alpha=0.75,
-                        color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
-                        linestyle='--', label=f'ch{cidx}',
-                    )
-        if 'rf_phase_channels' in ref:
-            for cidx, (t_c, amp_c) in enumerate(ref['rf_phase_channels']):
-                if len(t_c) > 0:
-                    fig.axes['rf_phase'].plot(
-                        t_c * t_scale, _wrap_phase(amp_c),
-                        linewidth=_OVERLAY_LINEWIDTH, alpha=0.75,
-                        color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
-                        linestyle='--', label=f'ch{cidx}',
-                    )
-        # ADC phase overlay if available
-        if 'adc_phase' in ref:
-            t_us, amp = ref['adc_phase']
-            if len(t_us) > 0:
-                fig.axes['adc'].plot(
-                    t_us * t_scale,
-                    _wrap_phase(amp),
-                    linewidth=_OVERLAY_LINEWIDTH,
-                    alpha=alpha,
-                    color='black',
-                    linestyle='--',
-                    label=f'{label or "pypulseq"}',
-                )
-        # Add legends to all axes
-        for ax_item in fig.axes.values():
-            handles, labels = ax_item.get_legend_handles_labels()
-            if handles:
-                ax_item.legend(fontsize=8, loc='upper right')
-        return fig
-
-    # ================================================================
-    #  Branch 3: XML file overlay
-    # ================================================================
-    if is_xml:
-        assert fig is not None
-        _overlay_xml(fig, source, t_scale=t_scale, label=label)
-        return fig
-
-    raise TypeError(f'Unsupported source type: {type(source)}')
 
 
 def _overlay_xml(handle, xml_path, *, t_scale, label):
@@ -892,41 +837,44 @@ def _new_empty_plot_handle(*, figsize=None):
 
 
 def _plot_rf_centers(ax, wf, t_fn):
-    """Plot RF iso-centre markers on the RF magnitude panel.
-
-    Approximates RF centre as the amplitude-weighted mean time for each
-    contiguous RF burst.
-    """
+    """Plot RF iso-centre markers from C library block descriptors."""
     if wf.rf_mag.time_us.size == 0:
         return
-    t = wf.rf_mag.time_us
+    from matplotlib.lines import Line2D
     a = np.abs(wf.rf_mag.amplitude)
-
-    # Split into contiguous bursts (gaps > 10 us)
-    if len(t) < 2:
-        return
-    gaps = np.where(np.diff(t) > 10.0)[0]
-    starts = np.concatenate([[0], gaps + 1])
-    ends = np.concatenate([gaps + 1, [len(t)]])
-
-    for s, e in zip(starts, ends, strict=False):
-        seg_t = t[s:e]
-        seg_a = a[s:e]
-        total = np.sum(seg_a)
-        if total > 0:
-            center_us = np.sum(seg_t * seg_a) / total
-            center_display = t_fn(np.array([center_us]))[0]
-            ax.axvline(center_display, color='r', ls='--', lw=1.0, alpha=0.7)
-            ax.plot(center_display, np.max(seg_a) * 1.05, 'rv', markersize=6, alpha=0.7)
+    plotted = False
+    for blk in wf.blocks:
+        if blk.rf_isocenter_us < 0:
+            continue
+        center_display = t_fn(np.array([blk.rf_isocenter_us]))[0]
+        # Find RF peak amplitude within this block for marker placement
+        mask = ((wf.rf_mag.time_us >= blk.start_us - 0.5)
+                & (wf.rf_mag.time_us <= blk.start_us + blk.duration_us + 0.5))
+        peak = np.max(a[mask]) if np.any(mask) else 0.0
+        ax.axvline(center_display, color='r', ls='--', lw=1.0, alpha=0.7)
+        ax.plot(center_display, peak * 1.05, 'rv', markersize=6, alpha=0.7)
+        plotted = True
+    if plotted:
+        proxy = Line2D([0], [0], color='r', ls='--', lw=1.0, marker='v',
+                       markersize=6, alpha=0.7, label='RF isocenter')
+        ax.legend(handles=[proxy], loc='upper right', fontsize=7, framealpha=0.7)
 
 
 def _plot_echo_markers(ax, wf, t_fn):
-    """Plot echo (ADC midpoint) markers on the ADC panel."""
-    for adc in wf.adc_events:
-        mid_us = adc.onset_us + adc.duration_us / 2.0
-        mid_display = t_fn(np.array([mid_us]))[0]
-        ax.axvline(mid_display, color='b', ls='--', lw=1.0, alpha=0.7)
-        ax.plot(mid_display, 0.5, 'b^', markersize=6, alpha=0.7)
+    """Plot echo (ADC k=0) markers from C library block descriptors."""
+    from matplotlib.lines import Line2D
+    plotted = False
+    for blk in wf.blocks:
+        if blk.adc_kzero_us < 0:
+            continue
+        kzero_display = t_fn(np.array([blk.adc_kzero_us]))[0]
+        ax.axvline(kzero_display, color='b', ls='--', lw=1.0, alpha=0.7)
+        ax.plot(kzero_display, 0.5, 'b^', markersize=6, alpha=0.7)
+        plotted = True
+    if plotted:
+        proxy = Line2D([0], [0], color='b', ls='--', lw=1.0, marker='^',
+                       markersize=6, alpha=0.7, label='k=0 (echo)')
+        ax.legend(handles=[proxy], loc='upper right', fontsize=7, framealpha=0.7)
 
 
 def _plot_segmented(ax, t_fn, ch, blocks, **kwargs):
@@ -948,13 +896,15 @@ def _plot_segmented(ax, t_fn, ch, blocks, **kwargs):
     run_start = 0
     for i in range(1, len(t)):
         if seg_idx[i] != seg_idx[run_start]:
+            # Extend run by one sample so the boundary is visually connected
+            end = min(i + 1, len(t))
             kw = dict(**kwargs)
             if first:
                 kw['label'] = 'pulserver'
                 first = False
             ax.plot(
-                t_fn(t[run_start:i]),
-                a[run_start:i],
+                t_fn(t[run_start:end]),
+                a[run_start:end],
                 color=_seg_color(seg_idx[run_start]),
                 **kw,
             )

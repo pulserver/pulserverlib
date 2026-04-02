@@ -2690,6 +2690,25 @@ int pulseqlib_get_subseq_info(
     info->num_passes           = coll->descriptors[subseq_idx].num_passes;
     info->num_averages         = coll->descriptors[subseq_idx].num_averages;
 
+    /* Compute num_canonical_trs (unique shot-ID combinations). */
+    {
+        const pulseqlib_sequence_descriptor* d = &coll->descriptors[subseq_idx];
+        const pulseqlib_tr_descriptor* trd = &d->tr_descriptor;
+        int has_nd_p = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
+        int has_nd_c = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
+        int* can_idx = NULL;
+        int* can_lbl = NULL;
+        int nc;
+        if (has_nd_p || has_nd_c) {
+            nc = pulseqlib__find_unique_shot_passes(d, &can_idx, &can_lbl);
+        } else {
+            nc = pulseqlib__find_unique_shot_trs(d, &can_idx, &can_lbl);
+        }
+        info->num_canonical_trs = (nc > 0) ? nc : 1;
+        if (can_idx) PULSEQLIB_FREE(can_idx);
+        if (can_lbl) PULSEQLIB_FREE(can_lbl);
+    }
+
     return PULSEQLIB_SUCCESS;
 }
 

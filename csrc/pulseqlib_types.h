@@ -246,9 +246,11 @@ typedef struct pulseqlib_tr_block_descriptor {
     float start_us;           /**< block start time within TR (us)   */
     float duration_us;        /**< block duration (us)               */
     int   segment_idx;        /**< segment index, or -1 (prep/cooldown) */
+    float rf_isocenter_us;    /**< RF isocenter time within TR (us), or -1.0 */
+    float adc_kzero_us;       /**< ADC k=0 time within TR (us), or -1.0 */
 } pulseqlib_tr_block_descriptor;
 
-#define PULSEQLIB_TR_BLOCK_DESCRIPTOR_INIT {0.0f, 0.0f, -1}
+#define PULSEQLIB_TR_BLOCK_DESCRIPTOR_INIT {0.0f, 0.0f, -1, -1.0f, -1.0f}
 
 /**
  * @brief Complete native-timing TR waveforms for plotting.
@@ -576,10 +578,11 @@ typedef struct pulseqlib_subseq_info {
     int   num_label_columns;    /**< label columns (vendor-dependent)    */
     int   num_passes;           /**< number of inner-loop passes (>=1)   */
     int   num_averages;         /**< number of averages (>=1)            */
+    int   num_canonical_trs;    /**< unique shot-ID combinations (>=1)   */
 } pulseqlib_subseq_info;
 
 #define PULSEQLIB_SUBSEQ_INFO_INIT { \
-    0.0f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1 \
+    0.0f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1 \
 }
 
 /* ================================================================== */

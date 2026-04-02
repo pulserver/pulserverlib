@@ -87,6 +87,7 @@ static py::dict _find_tr(_PulseqCollection& pc, int subsequence_idx = 0) {
     out["tr_duration_us"]       = si.tr_duration_us;
     out["num_passes"]           = si.num_passes;
     out["num_averages"]         = si.num_averages;
+    out["num_canonical_trs"]    = si.num_canonical_trs;
     return out;
 }
 
@@ -133,9 +134,11 @@ static py::dict _get_tr_waveforms(
     py::list blk_list;
     for (const auto& b : wf.blocks) {
         py::dict bd;
-        bd["start_us"]    = b.start_us;
-        bd["duration_us"] = b.duration_us;
-        bd["segment_idx"] = b.segment_idx;
+        bd["start_us"]          = b.start_us;
+        bd["duration_us"]       = b.duration_us;
+        bd["segment_idx"]       = b.segment_idx;
+        bd["rf_isocenter_us"]   = b.rf_isocenter_us;
+        bd["adc_kzero_us"]      = b.adc_kzero_us;
         blk_list.append(bd);
     }
     out["blocks"]             = blk_list;

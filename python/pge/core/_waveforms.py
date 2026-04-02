@@ -176,6 +176,10 @@ class BlockDescriptor:
         Block duration (microseconds).
     segment_idx : int
         Segment index (-1 for prep/cooldown, 0+ for imaging segments).
+    rf_isocenter_us : float
+        RF isocenter time relative to TR start (µs), or -1.0 if no RF.
+    adc_kzero_us : float
+        ADC k=0 time relative to TR start (µs), or -1.0 if no ADC.
     rf_freq_offset_hz : float
         RF transmit frequency offset for this block (Hz).
     rf_phase_offset_rad : float
@@ -191,6 +195,8 @@ class BlockDescriptor:
     start_us: float = 0.0
     duration_us: float = 0.0
     segment_idx: int = -1
+    rf_isocenter_us: float = -1.0
+    adc_kzero_us: float = -1.0
     rf_freq_offset_hz: float = 0.0
     rf_phase_offset_rad: float = 0.0
     adc_freq_offset_hz: float = 0.0
@@ -360,6 +366,8 @@ def get_tr_waveforms(
             start_us=blk.get('start_us', 0.0),
             duration_us=blk.get('duration_us', 0.0),
             segment_idx=blk.get('segment_idx', -1),
+            rf_isocenter_us=blk.get('rf_isocenter_us', -1.0),
+            adc_kzero_us=blk.get('adc_kzero_us', -1.0),
             rf_freq_offset_hz=blk.get('rf_freq_offset_hz', 0.0),
             rf_phase_offset_rad=blk.get('rf_phase_offset_rad', 0.0),
             adc_freq_offset_hz=blk.get('adc_freq_offset_hz', 0.0),
