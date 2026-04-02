@@ -477,7 +477,6 @@ def _xml_reference(xml_path):
 def validate(
     seq: SequenceCollection,
     *,
-    num_averages: int = 1,
     subsequence_idx: int | None = None,
     tr_instance: int | None = None,
     xml_path: str | Path | None = None,
@@ -490,38 +489,49 @@ def validate(
 
     Behaviour
     ---------
-    - No subseq/TR specified: loop over everything, stop at first failure.
-      ``do_plot=True`` plots the failing (subseq, TR) only; no plot on pass.
-    - subseq/TR specified: validate only the requested pair and always plot
-      when ``do_plot=True`` (even on pass).
-      Providing only one of *subsequence_idx* / *tr_instance* is valid when
-      there is a single subsequence (``subsequence_idx`` defaults to 0).
+    - ``do_plot=False``:
+      - ``subsequence_idx=None`` validates all subsequences.
+      - ``tr_instance=None`` validates all TRs for each selected subsequence.
+    - ``do_plot=True``:
+      - A concrete (subsequence, TR) target is required.
+      - ``subsequence_idx=None`` auto-resolves to 0 only if there is exactly
+        one subsequence; otherwise raises ``ValueError``.
+      - ``tr_instance=None`` auto-resolves to 0 only if the selected
+        subsequence has exactly one addressable TR; otherwise raises
+        ``ValueError``.
     """
     from ._extension._pulseqlib_wrapper import _find_tr
 
     num_subseq = seq.num_sequences
+    num_averages = seq.num_averages
 
-    # ── resolve the targeted (subseq, tr) scope ──────────────────────
-    targeted = (subsequence_idx is not None) or (tr_instance is not None)
-
-    if targeted:
+    # ── resolve validation scope ──────────────────────────────────────
+    if do_plot:
+        targeted = True
         if subsequence_idx is None:
             if num_subseq == 1:
                 subsequence_idx = 0
             else:
                 raise ValueError(
-                    'subsequence_idx must be specified when the sequence '
-                    f'has {num_subseq} subsequences and tr_instance is given.'
+                    'subsequence_idx must be specified when do_plot=True and '
+                    f'the sequence has {num_subseq} subsequences.'
                 )
         if subsequence_idx < 0 or subsequence_idx >= num_subseq:
             raise ValueError(
                 f'subsequence_idx={subsequence_idx} out of range '
                 f'(valid: 0..{num_subseq - 1})'
             )
+
         tr_info_target = _find_tr(seq._cseq, subsequence_idx=subsequence_idx)
         num_total = _total_addressable_trs(tr_info_target, num_averages)
         if tr_instance is None:
-            tr_instance = 0
+            if num_total == 1:
+                tr_instance = 0
+            else:
+                raise ValueError(
+                    'tr_instance must be specified when do_plot=True and '
+                    f'subsequence {subsequence_idx} has {num_total} TRs.'
+                )
         elif tr_instance < 0:
             tr_instance = num_total + tr_instance
         if tr_instance < 0 or tr_instance >= num_total:
@@ -529,14 +539,38 @@ def validate(
                 f'tr_instance={tr_instance} out of range for {num_total} TRs '
                 f'(valid: 0..{num_total - 1} or -{num_total}..-1)'
             )
+
         ss_range = [subsequence_idx]
         tr_range = {subsequence_idx: [tr_instance]}
     else:
-        ss_range = list(range(num_subseq))
+        targeted = False
+        if subsequence_idx is None:
+            ss_range = list(range(num_subseq))
+        else:
+            if subsequence_idx < 0 or subsequence_idx >= num_subseq:
+                raise ValueError(
+                    f'subsequence_idx={subsequence_idx} out of range '
+                    f'(valid: 0..{num_subseq - 1})'
+                )
+            ss_range = [subsequence_idx]
+
         tr_range = {}
         for ss in ss_range:
             tr_info = _find_tr(seq._cseq, subsequence_idx=ss)
-            tr_range[ss] = list(range(_total_addressable_trs(tr_info, num_averages)))
+            num_total = _total_addressable_trs(tr_info, num_averages)
+            if tr_instance is None:
+                tr_range[ss] = list(range(num_total))
+            else:
+                tr_idx = tr_instance
+                if tr_idx < 0:
+                    tr_idx = num_total + tr_idx
+                if tr_idx < 0 or tr_idx >= num_total:
+                    raise ValueError(
+                        f'tr_instance={tr_instance} out of range for subsequence {ss} '
+                        f'with {num_total} TRs (valid: 0..{num_total - 1} or '
+                        f'-{num_total}..-1)'
+                    )
+                tr_range[ss] = [tr_idx]
 
     # ── common derived settings ───────────────────────────────────────
     sys = seq.system

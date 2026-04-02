@@ -85,7 +85,8 @@ class SequenceCollection(pp.Sequence):
     parse_labels : bool
         If ``True`` (default), parse label extensions during loading.
     num_averages : int
-        Number of averages; influences scan-time calculations.
+        Number of averages; influences scan-time calculations and is used
+        by analysis methods such as plotting and validation.
     """
 
     def __init__(
@@ -133,6 +134,7 @@ class SequenceCollection(pp.Sequence):
             num_averages,
         )
         object.__setattr__(self, '_cseq', cseq)
+        object.__setattr__(self, '_num_averages', int(num_averages))
 
     def __getattribute__(self, name):
         try:
@@ -141,10 +143,15 @@ class SequenceCollection(pp.Sequence):
             return getattr(self._seq, name)
 
     def __setattr__(self, name, value):
-        if name in ('_seq', '_cseq', '_seqs'):
+        if name in ('_seq', '_cseq', '_seqs', '_num_averages'):
             object.__setattr__(self, name, value)
         else:
             setattr(self._seq, name, value)
+
+    @property
+    def num_averages(self) -> int:
+        """Configured number of averages for this collection."""
+        return int(self._num_averages)
 
     # ── Sequence-list accessors ──────────────────────────────
 
@@ -554,6 +561,7 @@ class SequenceCollection(pp.Sequence):
             max_slew_T_per_m_per_s=max_slew_T_per_m_per_s,
             time_unit=time_unit,
             figsize=figsize,
+            num_averages=self._num_averages,
         )
 
     # ── Validation ───────────────────────────────────────────
@@ -561,20 +569,23 @@ class SequenceCollection(pp.Sequence):
     def validate(
         self,
         *,
-        num_averages: int = 1,
         do_plot: bool = False,
-        subsequence_idx: int = 0,
+        subsequence_idx: int | None = None,
         tr_instance: int | None = None,
         grad_atol: float | None = None,
         rf_rms_percent: float = 10.0,
     ) -> bool:
-        """Validate all scan table parameters for all subsequences and TRs.
-        Stops at the first failure. If do_plot is True, always plots the requested or failing TR/subsequence.
+        """Validate scan-table waveforms against a reference.
+
+        Scope defaults are ``None``-driven:
+        - ``do_plot=False``: ``subsequence_idx=None`` iterates all subsequences,
+          and ``tr_instance=None`` iterates all TRs in each selected subsequence.
+        - ``do_plot=True``: a specific (subsequence, TR) target is required,
+          with auto-selection to 0 allowed only when exactly one candidate exists.
         """
         from ._validate import validate as _validate_impl
         return _validate_impl(
             self,
-            num_averages=num_averages,
             do_plot=do_plot,
             subsequence_idx=subsequence_idx,
             tr_instance=tr_instance,

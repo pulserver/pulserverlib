@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
@@ -156,38 +154,82 @@ def test_validate_handles_unsorted_reference_times(simple_gre_seq, monkeypatch):
 
 
 def test_validate_passes_for_supported_generated_sequences(validate_pass_seq_path, num_averages, capsys):
-    sc = SequenceCollection(str(validate_pass_seq_path))
+    sc = SequenceCollection(str(validate_pass_seq_path), num_averages=num_averages)
 
-    result = sc.validate(num_averages=num_averages)
-
-    captured = capsys.readouterr()
-    assert result is None
-    assert 'Validation passed.' in captured.out
-
-
-def test_validate_bssfp_full_range_includes_prep_and_cooldown(num_averages, capsys):
-    sc = SequenceCollection(
-        str(
-            Path('/home/mcencini/pulserverlib/tests/utils/expected')
-            / 'bssfp_2d_1sl_1avg.seq'
-        )
-    )
-
-    result = sc.validate(num_averages=num_averages)
+    result = sc.validate()
 
     captured = capsys.readouterr()
     assert result is None
     assert 'Validation passed.' in captured.out
 
 
-def test_validate_known_generated_failures_raise(known_validate_failure_seq_path, capsys):
-    sc = SequenceCollection(str(known_validate_failure_seq_path))
+def test_validate_defaults_iterate_full_scope_for_multisubsequence(simple_gre_seq, capsys):
+    sc = SequenceCollection([simple_gre_seq, simple_gre_seq])
+    assert sc.num_sequences == 2
 
-    with pytest.raises(RuntimeError, match='Validation failed'):
-        sc.validate()
+    result = sc.validate(do_plot=False)
 
     captured = capsys.readouterr()
-    assert 'Validation failed:' in captured.out
+    assert result is None
+    assert 'Validation passed.' in captured.out
+
+
+def test_validate_plot_requires_subsequence_for_multisubsequence(simple_gre_seq):
+    sc = SequenceCollection([simple_gre_seq, simple_gre_seq])
+    assert sc.num_sequences == 2
+
+    with pytest.raises(ValueError, match='subsequence_idx must be specified'):
+        sc.validate(do_plot=True)
+
+
+def test_validate_plot_requires_tr_for_multi_tr_subsequence(simple_gre_seq):
+    sc = SequenceCollection(simple_gre_seq)
+
+    with pytest.raises(ValueError, match='tr_instance must be specified'):
+        sc.validate(do_plot=True, subsequence_idx=0)
+
+
+def test_validate_plot_autoselects_single_subsequence(simple_gre_seq, capsys):
+    sc = SequenceCollection(simple_gre_seq)
+
+    result = sc.validate(do_plot=True, tr_instance=0)
+
+    captured = capsys.readouterr()
+    assert result is None
+    assert 'Validation passed.' in captured.out
+    fig = plt.gcf()
+    assert fig is not None
+    plt.close(fig)
+
+
+def test_validate_plot_autoselects_single_tr_for_selected_subsequence(simple_gre_seq, monkeypatch, capsys):
+    from pge.core._extension import _pulseqlib_wrapper as _wrapper_mod
+
+    sc = SequenceCollection(simple_gre_seq)
+
+    tr_info = {
+        'num_prep_trs': 0,
+        'num_trs': 1,
+        'num_cooldown_trs': 0,
+        'num_prep_blocks': 0,
+        'num_cooldown_blocks': 0,
+        'tr_size': 1,
+        'num_passes': 1,
+        'degenerate_prep': True,
+        'degenerate_cooldown': True,
+        'tr_duration_us': 1000.0,
+    }
+
+    monkeypatch.setattr(_wrapper_mod, '_find_tr', lambda *args, **kwargs: tr_info)
+
+    result = sc.validate(do_plot=True, subsequence_idx=0)
+
+    captured = capsys.readouterr()
+    assert result is None
+    assert 'Validation passed.' in captured.out
+    fig = plt.gcf()
+    assert fig is not None
+    plt.close(fig)
 
 
 def test_validate_raises_on_failure(simple_gre_seq, monkeypatch):

@@ -29,12 +29,7 @@ GENERATED_SEQUENCE_FILES = [
     "mprage_noncart_3d_3sl_1avg_userotext0.seq",
 ]
 
-KNOWN_VALIDATE_FAILURE_FILES = [
-]
-
-VALIDATE_PASS_SEQUENCE_FILES = [
-    name for name in GENERATED_SEQUENCE_FILES if name not in KNOWN_VALIDATE_FAILURE_FILES
-]
+VALIDATE_PASS_SEQUENCE_FILES = GENERATED_SEQUENCE_FILES.copy()
 
 REPRESENTATIVE_SEQUENCE_FILES = [
     "gre_2d_1sl_1avg.seq",
@@ -80,13 +75,6 @@ def validate_pass_seq_path(expected_data_dir: Path, request) -> Path:
 @pytest.fixture(params=[1, 3], ids=lambda n: f"navg_{n}")
 def num_averages(request) -> int:
     return request.param
-
-
-@pytest.fixture(params=KNOWN_VALIDATE_FAILURE_FILES or [None], ids=_id_seq_name if KNOWN_VALIDATE_FAILURE_FILES else ["no_known_failures"])
-def known_validate_failure_seq_path(expected_data_dir: Path, request) -> Path:
-    if request.param is None:
-        pytest.skip("No known validation failures")
-    return expected_data_dir / request.param
 
 
 @pytest.fixture(params=REPRESENTATIVE_SEQUENCE_FILES, ids=_id_seq_name)
