@@ -2,7 +2,6 @@
 
 __all__ = ['plot']
 
-from pathlib import Path
 
 import numpy as np
 
@@ -40,9 +39,9 @@ def _insert_nan_gaps(t, *arrs, gap_factor=5.0):
     dst = 0
     for gi in gap_idx:
         length = gi + 1 - src
-        t_out[dst:dst + length] = t[src:src + length]
-        for ao, a in zip(arr_outs, arrs):
-            ao[dst:dst + length] = np.asarray(a, dtype=float)[src:src + length]
+        t_out[dst : dst + length] = t[src : src + length]
+        for ao, a in zip(arr_outs, arrs, strict=False):
+            ao[dst : dst + length] = np.asarray(a, dtype=float)[src : src + length]
         dst += length
         t_out[dst] = np.nan
         for ao in arr_outs:
@@ -51,9 +50,9 @@ def _insert_nan_gaps(t, *arrs, gap_factor=5.0):
         src = gi + 1
     # Copy remainder
     length = len(t) - src
-    t_out[dst:dst + length] = t[src:src + length]
-    for ao, a in zip(arr_outs, arrs):
-        ao[dst:dst + length] = np.asarray(a, dtype=float)[src:src + length]
+    t_out[dst : dst + length] = t[src : src + length]
+    for ao, a in zip(arr_outs, arrs, strict=False):
+        ao[dst : dst + length] = np.asarray(a, dtype=float)[src : src + length]
     return (t_out, *arr_outs)
 
 
@@ -303,7 +302,7 @@ def plot(
         Time axis unit: ``'ms'`` (milliseconds) or ``'us'`` (microseconds).
     figsize : tuple, optional
         Figure size ``(width, height)`` in inches. Defaults to sensible layout
-        (typically 14 × 8 inches).
+        (typically 14 x 8 inches).
 
     Raises
     ------
@@ -393,11 +392,15 @@ def plot(
     else:
         # Integer mode: specific TR instance
         if not isinstance(tr_instance, int):
-            raise TypeError(f'tr_instance must be int or str, got {type(tr_instance).__name__}')
+            raise TypeError(
+                f'tr_instance must be int or str, got {type(tr_instance).__name__}'
+            )
         # Will determine num_trs below; store for now
         from ._extension._pulseqlib_wrapper import _find_tr
+
         tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
         from ._validate import _total_addressable_trs
+
         num_trs = _total_addressable_trs(tr_info)
         idx = int(tr_instance)
         if num_trs is not None:
@@ -421,6 +424,7 @@ def plot(
 
     # ── Fetch waveforms ──
     from ._extension._pulseqlib_wrapper import _find_tr
+
     tr_info = _find_tr(source._cseq, subsequence_idx=subsequence_idx)
     num_canonical = tr_info.get('num_canonical_trs', 1)
 
@@ -452,6 +456,7 @@ def plot(
 
     tr_dur = tr_info['tr_duration_us']
     from ._validate import _total_addressable_trs
+
     num_trs = _total_addressable_trs(tr_info)
     # Compute actual start time of first TR from waveform blocks
     first_tr_start_us = 0.0
@@ -462,9 +467,10 @@ def plot(
 
     # Absolute start time of displayed TR within the pypulseq seq
     from ._validate import _abs_block_start_s
+
     _abs_s = _abs_block_start_s(
-        source._seqs[subsequence_idx],
-        tr_index * tr_info['tr_size'])
+        source._seqs[subsequence_idx], tr_index * tr_info['tr_size']
+    )
 
     if figsize is None:
         figsize = (14, 8)
@@ -497,9 +503,7 @@ def plot(
     ch = wf.rf_mag
     if ch.time_us.size > 0:
         if show_segments and len(wf.blocks) > 0:
-            _plot_segmented(
-                ax, _t, ch, wf.blocks, linewidth=_MAIN_LINEWIDTH, alpha=1.0
-            )
+            _plot_segmented(ax, _t, ch, wf.blocks, linewidth=_MAIN_LINEWIDTH, alpha=1.0)
         else:
             t_rf, a_rf = _insert_nan_gaps(ch.time_us, ch.amplitude)
             ax.plot(
@@ -516,10 +520,13 @@ def plot(
         for cidx, ch_c in enumerate(wf.rf_mag_channels):
             if ch_c.time_us.size > 0:
                 ax.plot(
-                    _t(ch_c.time_us), ch_c.amplitude,
+                    _t(ch_c.time_us),
+                    ch_c.amplitude,
                     color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
-                    linewidth=_MAIN_LINEWIDTH, linestyle='-',
-                    alpha=0.75, label=f'ch{cidx}',
+                    linewidth=_MAIN_LINEWIDTH,
+                    linestyle='-',
+                    alpha=0.75,
+                    label=f'ch{cidx}',
                 )
 
     # ── RF phase ──
@@ -554,10 +561,13 @@ def plot(
         for cidx, ch_c in enumerate(wf.rf_phase_channels):
             if ch_c.time_us.size > 0:
                 ax.plot(
-                    _t(ch_c.time_us), _wrap_phase(ch_c.amplitude),
+                    _t(ch_c.time_us),
+                    _wrap_phase(ch_c.amplitude),
                     color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
-                    linewidth=_MAIN_LINEWIDTH, linestyle='-',
-                    alpha=0.75, label=f'ch{cidx}',
+                    linewidth=_MAIN_LINEWIDTH,
+                    linestyle='-',
+                    alpha=0.75,
+                    label=f'ch{cidx}',
                 )
 
     # ── ADC phase envelope ──
@@ -579,9 +589,21 @@ def plot(
             else:
                 adc_color = 'purple'
             lbl = 'pulserver' if not adc_labeled else None
-            ax.plot(_t(t_adc), adc_phase_wrapped, color=adc_color, linewidth=_MAIN_LINEWIDTH, label=lbl)
+            ax.plot(
+                _t(t_adc),
+                adc_phase_wrapped,
+                color=adc_color,
+                linewidth=_MAIN_LINEWIDTH,
+                label=lbl,
+            )
             # Shadowed region
-            ax.fill_between(_t(t_adc), 0, np.maximum(adc_phase_wrapped, 1.0), color=adc_color, alpha=0.15)
+            ax.fill_between(
+                _t(t_adc),
+                0,
+                np.maximum(adc_phase_wrapped, 1.0),
+                color=adc_color,
+                alpha=0.15,
+            )
             adc_labeled = True
     ax.set_ylabel('ADC phase (rad)')
     ax.set_yticks([-np.pi, 0, np.pi])
@@ -650,16 +672,24 @@ def plot(
         if ch.time_us.size > 0:
             t_rf, a_rf = _insert_nan_gaps(ch.time_us, ch.amplitude)
             axes['rf_mag'].plot(
-                _t(t_rf), a_rf, color='gray', linewidth=_OVERLAY_LW,
-                linestyle='--', alpha=_OVERLAY_ALPHA,
+                _t(t_rf),
+                a_rf,
+                color='gray',
+                linewidth=_OVERLAY_LW,
+                linestyle='--',
+                alpha=_OVERLAY_ALPHA,
             )
         # RF phase
         ch = extra.rf_phase
         if ch.time_us.size > 0:
             t_rf_ph, a_rf_ph = _insert_nan_gaps(ch.time_us, _wrap_phase(ch.amplitude))
             axes['rf_phase'].plot(
-                _t(t_rf_ph), a_rf_ph, color='gray', linewidth=_OVERLAY_LW,
-                linestyle='--', alpha=_OVERLAY_ALPHA,
+                _t(t_rf_ph),
+                a_rf_ph,
+                color='gray',
+                linewidth=_OVERLAY_LW,
+                linestyle='--',
+                alpha=_OVERLAY_ALPHA,
             )
         # ADC
         for adc in extra.adc_events:
@@ -667,19 +697,29 @@ def plot(
                 dwell = adc.duration_us / adc.num_samples
                 t_adc = adc.onset_us + np.arange(adc.num_samples) * dwell
                 t_adc_s = t_adc * 1e-6
-                adc_phase = adc.phase_offset_rad + 2 * np.pi * adc.freq_offset_hz * t_adc_s
+                adc_phase = (
+                    adc.phase_offset_rad + 2 * np.pi * adc.freq_offset_hz * t_adc_s
+                )
                 adc_phase_wrapped = (adc_phase + np.pi) % (2 * np.pi) - np.pi
                 axes['adc'].plot(
-                    _t(t_adc), adc_phase_wrapped, color='gray',
-                    linewidth=_OVERLAY_LW, linestyle='--', alpha=_OVERLAY_ALPHA,
+                    _t(t_adc),
+                    adc_phase_wrapped,
+                    color='gray',
+                    linewidth=_OVERLAY_LW,
+                    linestyle='--',
+                    alpha=_OVERLAY_ALPHA,
                 )
         # Gradients
         for gname in ('gx', 'gy', 'gz'):
             ch = getattr(extra, gname)
             if ch.time_us.size > 0:
                 axes[gname].plot(
-                    _t(ch.time_us), ch.amplitude, color='gray',
-                    linewidth=_OVERLAY_LW, linestyle='--', alpha=_OVERLAY_ALPHA,
+                    _t(ch.time_us),
+                    ch.amplitude,
+                    color='gray',
+                    linewidth=_OVERLAY_LW,
+                    linestyle='--',
+                    alpha=_OVERLAY_ALPHA,
                 )
 
     # ── Block boundaries ──
@@ -711,10 +751,15 @@ def plot(
     # ── Segment legend (single figure-level, below all axes) ──
     if show_segments and len(wf.blocks) > 0:
         from matplotlib.patches import Patch
-        seen_segs = sorted({blk.segment_idx for blk in wf.blocks if blk.segment_idx >= 0})
+
+        seen_segs = sorted(
+            {blk.segment_idx for blk in wf.blocks if blk.segment_idx >= 0}
+        )
         legend_handles = []
         for si in seen_segs:
-            legend_handles.append(Patch(facecolor=_seg_color(si), label=f'Segment {si}'))
+            legend_handles.append(
+                Patch(facecolor=_seg_color(si), label=f'Segment {si}')
+            )
         if legend_handles:
             fig_obj.legend(
                 handles=legend_handles,
@@ -742,12 +787,13 @@ def plot(
     )
 
 
-
 def _overlay_xml(handle, xml_path, *, t_scale, label):
     """Overlay waveforms from an XML file onto an existing plot."""
     import xml.etree.ElementTree as ET
 
-    tree = ET.parse(str(xml_path))
+    tree = ET.parse(
+        str(xml_path)
+    )
     root = tree.getroot()
 
     # G/cm -> mT/m: 1 G/cm = 10 mT/m
@@ -841,6 +887,7 @@ def _plot_rf_centers(ax, wf, t_fn):
     if wf.rf_mag.time_us.size == 0:
         return
     from matplotlib.lines import Line2D
+
     a = np.abs(wf.rf_mag.amplitude)
     plotted = False
     for blk in wf.blocks:
@@ -848,21 +895,32 @@ def _plot_rf_centers(ax, wf, t_fn):
             continue
         center_display = t_fn(np.array([blk.rf_isocenter_us]))[0]
         # Find RF peak amplitude within this block for marker placement
-        mask = ((wf.rf_mag.time_us >= blk.start_us - 0.5)
-                & (wf.rf_mag.time_us <= blk.start_us + blk.duration_us + 0.5))
+        mask = (wf.rf_mag.time_us >= blk.start_us - 0.5) & (
+            wf.rf_mag.time_us <= blk.start_us + blk.duration_us + 0.5
+        )
         peak = np.max(a[mask]) if np.any(mask) else 0.0
         ax.axvline(center_display, color='r', ls='--', lw=1.0, alpha=0.7)
         ax.plot(center_display, peak * 1.05, 'rv', markersize=6, alpha=0.7)
         plotted = True
     if plotted:
-        proxy = Line2D([0], [0], color='r', ls='--', lw=1.0, marker='v',
-                       markersize=6, alpha=0.7, label='RF isocenter')
+        proxy = Line2D(
+            [0],
+            [0],
+            color='r',
+            ls='--',
+            lw=1.0,
+            marker='v',
+            markersize=6,
+            alpha=0.7,
+            label='RF isocenter',
+        )
         ax.legend(handles=[proxy], loc='upper right', fontsize=7, framealpha=0.7)
 
 
 def _plot_echo_markers(ax, wf, t_fn):
     """Plot echo (ADC k=0) markers from C library block descriptors."""
     from matplotlib.lines import Line2D
+
     plotted = False
     for blk in wf.blocks:
         if blk.adc_kzero_us < 0:
@@ -872,8 +930,17 @@ def _plot_echo_markers(ax, wf, t_fn):
         ax.plot(kzero_display, 0.5, 'b^', markersize=6, alpha=0.7)
         plotted = True
     if plotted:
-        proxy = Line2D([0], [0], color='b', ls='--', lw=1.0, marker='^',
-                       markersize=6, alpha=0.7, label='k=0 (echo)')
+        proxy = Line2D(
+            [0],
+            [0],
+            color='b',
+            ls='--',
+            lw=1.0,
+            marker='^',
+            markersize=6,
+            alpha=0.7,
+            label='k=0 (echo)',
+        )
         ax.legend(handles=[proxy], loc='upper right', fontsize=7, framealpha=0.7)
 
 

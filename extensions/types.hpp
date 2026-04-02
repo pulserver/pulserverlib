@@ -23,14 +23,18 @@ struct Opts {
     float grad_raster_us         = 0.0f;
     float adc_raster_us          = 0.0f;
     float block_raster_us        = 0.0f;
+    float peak_log10_threshold    = PULSEQLIB_PEAK_LOG10_THRESHOLD_DEFAULT;
+    float peak_norm_scale         = PULSEQLIB_PEAK_NORM_SCALE_DEFAULT;
+    float peak_eps                = PULSEQLIB_PEAK_EPS_DEFAULT;
 
     /** Convert to the C struct, calling pulseqlib_opts_init. */
     pulseqlib_opts to_c() const {
         pulseqlib_opts o;
-        pulseqlib_opts_init(&o,
+        pulseqlib_opts_init_full(&o,
             gamma_hz_per_t, b0_t,
             max_grad_hz_per_m, max_slew_hz_per_m_per_s,
-            rf_raster_us, grad_raster_us, adc_raster_us, block_raster_us);
+            rf_raster_us, grad_raster_us, adc_raster_us, block_raster_us,
+            peak_log10_threshold, peak_norm_scale, peak_eps);
         return o;
     }
 };

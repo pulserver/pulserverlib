@@ -1086,11 +1086,14 @@ int pulseqlib__decompress_shape(pulseqlib_shape_arbitrary* result,
 /*  Opts init (public)                                                */
 /* ================================================================== */
 
-void pulseqlib_opts_init(pulseqlib_opts* opts,
-                         float gamma, float b0,
-                         float max_grad, float max_slew,
-                         float rf_raster_time, float grad_raster_time,
-                         float adc_raster_time, float block_duration_raster)
+void pulseqlib_opts_init_full(pulseqlib_opts* opts,
+                              float gamma, float b0,
+                              float max_grad, float max_slew,
+                              float rf_raster_time, float grad_raster_time,
+                              float adc_raster_time, float block_duration_raster,
+                              float peak_log10_threshold,
+                              float peak_norm_scale,
+                              float peak_eps)
 {
     if (!opts) return;
     opts->vendor = PULSEQLIB_VENDOR;
@@ -1102,6 +1105,30 @@ void pulseqlib_opts_init(pulseqlib_opts* opts,
     opts->grad_raster_us = grad_raster_time;
     opts->adc_raster_us = adc_raster_time;
     opts->block_raster_us = block_duration_raster;
+    opts->peak_log10_threshold = peak_log10_threshold;
+    opts->peak_norm_scale = peak_norm_scale;
+    opts->peak_eps = peak_eps;
+}
+
+void pulseqlib_opts_init(pulseqlib_opts* opts,
+                         float gamma, float b0,
+                         float max_grad, float max_slew,
+                         float rf_raster_time, float grad_raster_time,
+                         float adc_raster_time, float block_duration_raster)
+{
+    pulseqlib_opts_init_full(
+        opts,
+        gamma,
+        b0,
+        max_grad,
+        max_slew,
+        rf_raster_time,
+        grad_raster_time,
+        adc_raster_time,
+        block_duration_raster,
+        PULSEQLIB_PEAK_LOG10_THRESHOLD_DEFAULT,
+        PULSEQLIB_PEAK_NORM_SCALE_DEFAULT,
+        PULSEQLIB_PEAK_EPS_DEFAULT);
 }
 
 /* ================================================================== */

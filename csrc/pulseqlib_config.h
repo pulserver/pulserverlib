@@ -29,6 +29,22 @@
 #endif
 
 /* ------------------------------------------------------------------ */
+/*  Acoustic peak-detection defaults                                  */
+/* ------------------------------------------------------------------ */
+
+#ifndef PULSEQLIB_PEAK_LOG10_THRESHOLD_DEFAULT
+#define PULSEQLIB_PEAK_LOG10_THRESHOLD_DEFAULT 2.25f
+#endif
+
+#ifndef PULSEQLIB_PEAK_NORM_SCALE_DEFAULT
+#define PULSEQLIB_PEAK_NORM_SCALE_DEFAULT 10.0f
+#endif
+
+#ifndef PULSEQLIB_PEAK_EPS_DEFAULT
+#define PULSEQLIB_PEAK_EPS_DEFAULT 1e-30f
+#endif
+
+/* ------------------------------------------------------------------ */
 /*  Allocator overrides                                               */
 /* ------------------------------------------------------------------ */
 

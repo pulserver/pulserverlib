@@ -139,10 +139,6 @@ static int pulseqlib__build_pass_expanded_block_order(
 /* ================================================================== */
 /*  File-scope constants                                               */
 /* ================================================================== */
-#define PEAK_LOG10_THRESHOLD    2.25f
-#define PEAK_NORM_SCALE         10.0f
-#define PEAK_EPS                1e-30f
-
 #define PNS_KERNEL_DURATION_FACTOR 20.0f
 
 
@@ -1002,7 +998,13 @@ static int compute_window_spectrum(
 /* ================================================================== */
 
 /* FIX: output first */
-static void detect_resonances(int* peaks, const float* mag, int n)
+static void detect_resonances(
+    int* peaks,
+    const float* mag,
+    int n,
+    float peak_log10_threshold,
+    float peak_norm_scale,
+    float peak_eps)
 {
     int i;
     float max_val, sum_log, mean_log, norm, log_val;
@@ -1017,16 +1019,16 @@ static void detect_resonances(int* peaks, const float* mag, int n)
 
     sum_log = 0.0f;
     for (i = 0; i < n; ++i) {
-        norm = (mag[i] / max_val + PEAK_EPS) * PEAK_NORM_SCALE;
+        norm = (mag[i] / max_val + peak_eps) * peak_norm_scale;
         sum_log += (float)log10((double)norm);
     }
     mean_log = sum_log / (float)n;
 
     for (i = 1; i < n - 1; ++i) {
         if (mag[i] > mag[i-1] && mag[i] > mag[i+1]) {
-            norm    = (mag[i] / max_val + PEAK_EPS) * PEAK_NORM_SCALE;
+            norm    = (mag[i] / max_val + peak_eps) * peak_norm_scale;
             log_val = (float)log10((double)norm);
-            if (log_val - mean_log > PEAK_LOG10_THRESHOLD)
+            if (log_val - mean_log > peak_log10_threshold)
                 peaks[i] = 1;
         }
     }
@@ -1040,7 +1042,10 @@ static int check_acoustic_violations(
     int** out_peaks,
     const float* spectrum, const float* frequencies, int num_freq_bins,
     float max_envelope,
-    const pulseqlib_forbidden_band* bands, int num_bands)
+    const pulseqlib_forbidden_band* bands, int num_bands,
+    float peak_log10_threshold,
+    float peak_norm_scale,
+    float peak_eps)
 {
     int* peaks;
     int i, b;
@@ -1056,7 +1061,13 @@ static int check_acoustic_violations(
     peaks = (int*)PULSEQLIB_ALLOC((size_t)num_freq_bins * sizeof(int));
     if (!peaks) return PULSEQLIB_ERR_ALLOC_FAILED;
 
-    detect_resonances(peaks, spectrum, num_freq_bins);
+    detect_resonances(
+        peaks,
+        spectrum,
+        num_freq_bins,
+        peak_log10_threshold,
+        peak_norm_scale,
+        peak_eps);
 
     /* Check peaks against forbidden bands (informational) */
     for (i = 0; i < num_freq_bins; ++i) {
@@ -1087,7 +1098,10 @@ static int compute_sliding_window_spectra(
     int* out_peaks,
     const float* waveform, const float* frequencies,
     int num_samples, int padded_len, int combined,
-    const pulseqlib_forbidden_band* bands, int num_bands)
+    const pulseqlib_forbidden_band* bands, int num_bands,
+    float peak_log10_threshold,
+    float peak_norm_scale,
+    float peak_eps)
 {
     acoustic_waveform aw;
     int w, i, result, start_idx, window_len;
@@ -1144,7 +1158,8 @@ static int compute_sliding_window_spectra(
                 win_peaks = NULL;
                 result = check_acoustic_violations(out_peaks ? &win_peaks : NULL,
                     &spectra_out[w * sup->output_freq_bins], frequencies,
-                    sup->output_freq_bins, max_env_win, bands, num_bands);
+                    sup->output_freq_bins, max_env_win, bands, num_bands,
+                    peak_log10_threshold, peak_norm_scale, peak_eps);
                 if (PULSEQLIB_FAILED(result)) {
                     if (win_spectrum) PULSEQLIB_FREE(win_spectrum);
                     acoustic_waveform_free(&aw); return result;
@@ -1158,7 +1173,10 @@ static int compute_sliding_window_spectra(
                 detect_resonances(
                     &out_peaks[w * sup->output_freq_bins],
                     &spectra_out[w * sup->output_freq_bins],
-                    sup->output_freq_bins);
+                    sup->output_freq_bins,
+                    peak_log10_threshold,
+                    peak_norm_scale,
+                    peak_eps);
             }
         }
     }
@@ -1184,7 +1202,10 @@ static int compute_sequence_spectrum(
     const float* waveform, int num_samples,
     float grad_raster_us, float target_spectral_res_hz,
     float max_frequency, float fundamental_freq, int num_trs,
-    const pulseqlib_forbidden_band* bands, int num_bands)
+    const pulseqlib_forbidden_band* bands, int num_bands,
+    float peak_log10_threshold,
+    float peak_norm_scale,
+    float peak_eps)
 {
     int nfft, nfreq, output_bins_full, num_picked;
     int min_nfft, max_idx;
@@ -1307,13 +1328,20 @@ static int compute_sequence_spectrum(
         num_picked = out_num_picked ? *out_num_picked : 0;
         result = check_acoustic_violations(out_seq_peaks,
             *seq_spectrum, (seq_frequencies && *seq_frequencies) ? *seq_frequencies : NULL,
-            num_picked, max_env, bands, num_bands);
+            num_picked, max_env, bands, num_bands,
+            peak_log10_threshold, peak_norm_scale, peak_eps);
         if (PULSEQLIB_FAILED(result)) goto fail;
     } else if (out_seq_peaks && seq_spectrum && *seq_spectrum) {
         num_picked = out_num_picked ? *out_num_picked : 0;
         seq_peaks = (int*)PULSEQLIB_ALLOC((size_t)num_picked * sizeof(int));
         if (!seq_peaks) { result = PULSEQLIB_ERR_ALLOC_FAILED; goto fail; }
-        detect_resonances(seq_peaks, *seq_spectrum, num_picked);
+        detect_resonances(
+            seq_peaks,
+            *seq_spectrum,
+            num_picked,
+            peak_log10_threshold,
+            peak_norm_scale,
+            peak_eps);
         *out_seq_peaks = seq_peaks;
     }
 
@@ -1341,7 +1369,10 @@ static int calc_acoustic_spectra_from_uniform(
     int num_trs,
     float tr_duration_us,
     int num_forbidden_bands,
-    const pulseqlib_forbidden_band* forbidden_bands)
+    const pulseqlib_forbidden_band* forbidden_bands,
+    float peak_log10_threshold,
+    float peak_norm_scale,
+    float peak_eps)
 {
     acoustic_support sup;
     pulseqlib_diagnostic local_diag;
@@ -1415,7 +1446,8 @@ static int calc_acoustic_spectra_from_uniform(
             spectra->spectrogram_gx, NULL, spectra->peaks_gx,
             waveforms->gx, NULL,
             waveforms->num_samples, padded_len, 0,
-            forbidden_bands, num_forbidden_bands);
+            forbidden_bands, num_forbidden_bands,
+            peak_log10_threshold, peak_norm_scale, peak_eps);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             acoustic_support_free(&sup);
@@ -1428,7 +1460,8 @@ static int calc_acoustic_spectra_from_uniform(
             spectra->spectrogram_gy, NULL, spectra->peaks_gy,
             waveforms->gy, NULL,
             waveforms->num_samples, padded_len, 0,
-            forbidden_bands, num_forbidden_bands);
+            forbidden_bands, num_forbidden_bands,
+            peak_log10_threshold, peak_norm_scale, peak_eps);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             acoustic_support_free(&sup);
@@ -1441,7 +1474,8 @@ static int calc_acoustic_spectra_from_uniform(
             spectra->spectrogram_gz, NULL, spectra->peaks_gz,
             waveforms->gz, NULL,
             waveforms->num_samples, padded_len, 0,
-            forbidden_bands, num_forbidden_bands);
+            forbidden_bands, num_forbidden_bands,
+            peak_log10_threshold, peak_norm_scale, peak_eps);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             acoustic_support_free(&sup);
@@ -1468,7 +1502,8 @@ static int calc_acoustic_spectra_from_uniform(
             waveforms->gx, waveforms->num_samples,
             waveforms->raster_us, target_spectral_resolution_hz,
             max_frequency_hz, fundamental_freq, num_trs,
-            forbidden_bands, num_forbidden_bands);
+            forbidden_bands, num_forbidden_bands,
+            peak_log10_threshold, peak_norm_scale, peak_eps);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             diag->code = result; return result;
@@ -1479,7 +1514,8 @@ static int calc_acoustic_spectra_from_uniform(
             waveforms->gy ? waveforms->gy : waveforms->gz,
             max_samples, waveforms->raster_us, target_spectral_resolution_hz,
             max_frequency_hz, 0.0f, num_trs,
-            forbidden_bands, num_forbidden_bands);
+            forbidden_bands, num_forbidden_bands,
+            peak_log10_threshold, peak_norm_scale, peak_eps);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             diag->code = result; return result;
@@ -1527,7 +1563,8 @@ static int calc_acoustic_spectra_from_uniform(
             waveforms->gx, waveforms->num_samples,
             waveforms->raster_us, target_spectral_resolution_hz,
             max_frequency_hz, 0.0f, num_trs,
-            forbidden_bands, num_forbidden_bands);
+            forbidden_bands, num_forbidden_bands,
+            peak_log10_threshold, peak_norm_scale, peak_eps);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             diag->code = result; return result;
@@ -1546,7 +1583,8 @@ static int calc_acoustic_spectra_from_uniform(
             waveforms->gy, waveforms->num_samples,
             waveforms->raster_us, target_spectral_resolution_hz,
             max_frequency_hz, fundamental_freq, num_trs,
-            forbidden_bands, num_forbidden_bands);
+            forbidden_bands, num_forbidden_bands,
+            peak_log10_threshold, peak_norm_scale, peak_eps);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             diag->code = result; return result;
@@ -1573,7 +1611,8 @@ static int calc_acoustic_spectra_from_uniform(
             waveforms->gz, waveforms->num_samples,
             waveforms->raster_us, target_spectral_resolution_hz,
             max_frequency_hz, fundamental_freq, num_trs,
-            forbidden_bands, num_forbidden_bands);
+            forbidden_bands, num_forbidden_bands,
+            peak_log10_threshold, peak_norm_scale, peak_eps);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             diag->code = result; return result;
@@ -1595,9 +1634,9 @@ static int calc_acoustic_spectra_from_uniform(
         spectra->peaks_full_gx = (int*)PULSEQLIB_ALLOC((size_t)num_freq_bins_full * sizeof(int));
         spectra->peaks_full_gy = (int*)PULSEQLIB_ALLOC((size_t)num_freq_bins_full * sizeof(int));
         spectra->peaks_full_gz = (int*)PULSEQLIB_ALLOC((size_t)num_freq_bins_full * sizeof(int));
-        if (spectra->peaks_full_gx) detect_resonances(spectra->peaks_full_gx, spectra->spectrum_full_gx, num_freq_bins_full);
-        if (spectra->peaks_full_gy) detect_resonances(spectra->peaks_full_gy, spectra->spectrum_full_gy, num_freq_bins_full);
-        if (spectra->peaks_full_gz) detect_resonances(spectra->peaks_full_gz, spectra->spectrum_full_gz, num_freq_bins_full);
+        if (spectra->peaks_full_gx) detect_resonances(spectra->peaks_full_gx, spectra->spectrum_full_gx, num_freq_bins_full, peak_log10_threshold, peak_norm_scale, peak_eps);
+        if (spectra->peaks_full_gy) detect_resonances(spectra->peaks_full_gy, spectra->spectrum_full_gy, num_freq_bins_full, peak_log10_threshold, peak_norm_scale, peak_eps);
+        if (spectra->peaks_full_gz) detect_resonances(spectra->peaks_full_gz, spectra->spectrum_full_gz, num_freq_bins_full, peak_log10_threshold, peak_norm_scale, peak_eps);
     }
 
     diag->code = PULSEQLIB_SUCCESS;
@@ -1795,8 +1834,10 @@ int pulseqlib_calc_acoustic_spectra(
     int* block_order;
     int has_nd_prep, has_nd_cool;
     float tr_duration_us;
+    float peak_log10_threshold;
+    float peak_norm_scale;
+    float peak_eps;
 
-    (void)opts;
     memset(&uw, 0, sizeof(uw));
     block_order = NULL;
     if (!diag) { pulseqlib_diagnostic_init(&local_diag); diag = &local_diag; }
@@ -1805,6 +1846,16 @@ int pulseqlib_calc_acoustic_spectra(
     if (subseq_idx < 0 || subseq_idx >= coll->num_subsequences) {
         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT; return diag->code;
     }
+
+    peak_log10_threshold = PULSEQLIB_PEAK_LOG10_THRESHOLD_DEFAULT;
+    peak_norm_scale = PULSEQLIB_PEAK_NORM_SCALE_DEFAULT;
+    peak_eps = PULSEQLIB_PEAK_EPS_DEFAULT;
+    if (opts) {
+        peak_log10_threshold = opts->peak_log10_threshold;
+        peak_norm_scale = opts->peak_norm_scale;
+        peak_eps = opts->peak_eps;
+    }
+
     desc = &coll->descriptors[subseq_idx];
     trd = &desc->tr_descriptor;
     /* Select the canonical TR window for the given canonical_tr_idx */
@@ -1852,7 +1903,8 @@ int pulseqlib_calc_acoustic_spectra(
         target_window_size, target_resolution_hz, max_freq_hz,
         num_instances,
         tr_duration_us,
-        num_forbidden_bands, forbidden_bands);
+        num_forbidden_bands, forbidden_bands,
+        peak_log10_threshold, peak_norm_scale, peak_eps);
     pulseqlib__uniform_grad_waveforms_free(&uw);
     if (block_order) PULSEQLIB_FREE(block_order);
     return rc;
@@ -2582,7 +2634,10 @@ int pulseqlib_check_safety(
                     0, 0.0f, 0.0f,
                     num_instances,
                     tr_duration_us,
-                    num_forbidden_bands, forbidden_bands);
+                    num_forbidden_bands, forbidden_bands,
+                    opts->peak_log10_threshold,
+                    opts->peak_norm_scale,
+                    opts->peak_eps);
                 pulseqlib_acoustic_spectra_free(&spectra);
                 if (PULSEQLIB_FAILED(rc)) {
                     pulseqlib__uniform_grad_waveforms_free(&uw);

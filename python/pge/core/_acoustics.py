@@ -7,20 +7,191 @@ import warnings
 import numpy as np
 from matplotlib.colors import Normalize
 
-from ._extension._pulseqlib_wrapper import _calc_acoustic_spectra
+from ._extension._pulseqlib_wrapper import _calc_acoustic_spectra, _find_tr
 from ._helpers import _add_echo_spacing_axis
 from ._sequence import SequenceCollection
+
+
+def _plot_grad_spectrum_single(
+    seq: SequenceCollection,
+    *,
+    subsequence_idx: int,
+    canonical_tr_idx: int,
+    forbidden_bands: list[tuple[float, float, float]],
+    target_window_size: int,
+    spectral_resolution: float,
+    max_frequency: float,
+    thresholds: list[float],
+    peak_log10_threshold: float | None,
+    peak_norm_scale: float | None,
+    peak_eps: float | None,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    rd = _calc_acoustic_spectra(
+        seq._cseq,
+        subsequence_idx=subsequence_idx,
+        canonical_tr_idx=canonical_tr_idx,
+        target_window_size=target_window_size,
+        target_resolution_hz=spectral_resolution,
+        max_freq_hz=max_frequency,
+        forbidden_bands=forbidden_bands,
+        peak_log10_threshold=peak_log10_threshold,
+        peak_norm_scale=peak_norm_scale,
+        peak_eps=peak_eps,
+    )
+
+    num_windows = rd['num_windows']
+    num_freq_bins = rd['num_freq_bins']
+    frequencies = rd['freq_min_hz'] + np.arange(num_freq_bins) * rd['freq_spacing_hz']
+
+    spectrograms = {}
+    peaks = {}
+    for ax_name in ('gx', 'gy', 'gz'):
+        spectrograms[ax_name] = np.asarray(
+            rd[f'spectrogram_{ax_name}'],
+            dtype=np.float32,
+        ).reshape(num_windows, num_freq_bins)
+        peaks[ax_name] = np.asarray(
+            rd[f'peaks_{ax_name}'],
+            dtype=np.int32,
+        ).reshape(num_windows, num_freq_bins)
+
+    spectrum_full = {}
+    peaks_full = {}
+    for ax_name in ('gx', 'gy', 'gz'):
+        spectrum_full[ax_name] = np.asarray(
+            rd[f'spectrum_full_{ax_name}'],
+            dtype=np.float32,
+        )
+        peaks_full[ax_name] = np.asarray(
+            rd[f'peaks_full_{ax_name}'],
+            dtype=np.int32,
+        )
+
+    freq_min = 0.0
+    freq_max = float(frequencies[-1])
+
+    axis_labels = {'gx': 'Gx', 'gy': 'Gy', 'gz': 'Gz'}
+    colors = {'gx': 'C0', 'gy': 'C1', 'gz': 'C2'}
+    title_prefix = f'[SS{subsequence_idx}, CTR{canonical_tr_idx}] '
+
+    use_sliding_windows = num_windows > 1
+    if use_sliding_windows:
+        fig, axes = plt.subplots(
+            2,
+            3,
+            figsize=(16, 8),
+            gridspec_kw={'height_ratios': [1, 1]},
+        )
+
+        for col, ax_name in enumerate(('gx', 'gy', 'gz')):
+            ax = axes[0, col]
+            sg = spectrograms[ax_name]
+            pk = peaks[ax_name]
+
+            ax.pcolormesh(
+                frequencies,
+                np.arange(num_windows),
+                sg,
+                cmap='viridis',
+                shading='auto',
+                norm=Normalize(vmin=sg.min(), vmax=sg.max()),
+            )
+
+            peak_coords = np.where(pk > 0)
+            if len(peak_coords[0]) > 0:
+                ax.plot(
+                    frequencies[peak_coords[1]],
+                    peak_coords[0],
+                    marker='*',
+                    color='red',
+                    linestyle='none',
+                    markersize=10,
+                    markeredgewidth=0,
+                )
+
+            for band in forbidden_bands:
+                ax.axvline(band[0], color='white', ls='--', lw=1.2, alpha=0.8)
+                ax.axvline(band[1], color='white', ls='--', lw=1.2, alpha=0.8)
+
+            ax.set_xlim(freq_min, freq_max)
+            ax.set_ylim(-0.5, num_windows - 0.5)
+            ax.set_xlabel('Frequency (Hz)')
+            ax.set_ylabel('Window Index')
+            ax.set_title(f'{title_prefix}{axis_labels[ax_name]} Spectrogram')
+            _add_echo_spacing_axis(ax, freq_min, freq_max)
+    else:
+        fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
+
+    for col, ax_name in enumerate(('gx', 'gy', 'gz')):
+        ax = axes[1, col] if use_sliding_windows else axes[col]
+        color = colors[ax_name]
+
+        ax.plot(
+            frequencies,
+            spectrum_full[ax_name],
+            color=color,
+            lw=0.8,
+            alpha=0.5,
+            label='Canonical TR',
+        )
+
+        peak_mask = peaks_full[ax_name] > 0
+        if np.any(peak_mask):
+            ax.plot(
+                frequencies[peak_mask],
+                spectrum_full[ax_name][peak_mask],
+                'o',
+                color=color,
+                markersize=5,
+                markeredgewidth=0,
+            )
+
+        for band in forbidden_bands:
+            ax.axvspan(
+                band[0],
+                band[1],
+                alpha=0.15,
+                color='red',
+                zorder=0,
+            )
+
+        for thr in thresholds:
+            ax.axhline(
+                thr,
+                color='orange',
+                linestyle='--',
+                linewidth=1.0,
+                alpha=0.8,
+                label=f'threshold {thr:g}%',
+            )
+
+        ax.set_xlim(freq_min, freq_max)
+        ax.set_xlabel('Frequency (Hz)')
+        ax.set_ylabel('Magnitude (a.u.)')
+        ax.set_title(f'{title_prefix}{axis_labels[ax_name]} Harmonic Spectrum')
+        ax.legend(fontsize=8, loc='upper right')
+        ax.grid(True, alpha=0.3)
+        _add_echo_spacing_axis(ax, freq_min, freq_max)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        fig.tight_layout()
 
 
 def grad_spectrum(
     seq: SequenceCollection,
     *,
-    sequence_idx: int = 0,
+    sequence_idx: int | None = None,
     forbidden_bands: list[tuple[float, float, float]] | None = None,
     window_duration: float = 25.0e-3,
     spectral_resolution: float = 5.0,
     max_frequency: float = 3000.0,
     threshold_percent: float | list[float] | tuple[float, ...] | None = None,
+    peak_log10_threshold: float | None = None,
+    peak_norm_scale: float | None = None,
+    peak_eps: float | None = None,
 ) -> None:
     """Plot acoustic spectra for gradient waveforms in the canonical TR.
 
@@ -56,9 +227,15 @@ def grad_spectrum(
         Extra horizontal threshold guide(s) drawn on the harmonic plots.
         Accepts a single value or a list/tuple, e.g. ``80.0`` or
         ``[80.0, 100.0]``.
+    peak_log10_threshold : float, optional
+        Resonance detector threshold in log10 space. Higher values detect
+        fewer peaks.
+    peak_norm_scale : float, optional
+        Normalization scale used before the log transform in resonance
+        detection.
+    peak_eps : float, optional
+        Positive epsilon added before log transform for numerical stability.
     """
-    import matplotlib.pyplot as plt
-
     if forbidden_bands is None:
         forbidden_bands = []
 
@@ -72,168 +249,29 @@ def grad_spectrum(
     grad_raster_time = seq.system.grad_raster_time
     target_window_size = int(2.0 * window_duration / grad_raster_time)
 
-    # Call C extension
-    rd = _calc_acoustic_spectra(
-        seq._cseq,
-        subsequence_idx=sequence_idx,
-        target_window_size=target_window_size,
-        target_resolution_hz=spectral_resolution,
-        max_freq_hz=max_frequency,
-        forbidden_bands=forbidden_bands,
-    )
-
-    num_windows = rd['num_windows']
-    num_freq_bins = rd['num_freq_bins']
-    frequencies = rd['freq_min_hz'] + np.arange(num_freq_bins) * rd['freq_spacing_hz']
-
-    # Reshape spectrograms (flat -> 2-D)
-    spectrograms = {}
-    peaks = {}
-    for ax_name in ('gx', 'gy', 'gz'):
-        spectrograms[ax_name] = np.asarray(
-            rd[f'spectrogram_{ax_name}'],
-            dtype=np.float32,
-        ).reshape(num_windows, num_freq_bins)
-        peaks[ax_name] = np.asarray(
-            rd[f'peaks_{ax_name}'],
-            dtype=np.int32,
-        ).reshape(num_windows, num_freq_bins)
-
-    # Canonical-TR spectra
-    spectrum_full = {}
-    peaks_full = {}
-    for ax_name in ('gx', 'gy', 'gz'):
-        spectrum_full[ax_name] = np.asarray(
-            rd[f'spectrum_full_{ax_name}'],
-            dtype=np.float32,
-        )
-        peaks_full[ax_name] = np.asarray(
-            rd[f'peaks_full_{ax_name}'],
-            dtype=np.int32,
-        )
-
-    freq_min = 0.0
-    freq_max = float(frequencies[-1])
-
-    axis_labels = {'gx': 'Gx', 'gy': 'Gy', 'gz': 'Gz'}
-    colors = {'gx': 'C0', 'gy': 'C1', 'gz': 'C2'}
-
-    use_sliding_windows = num_windows > 1
-
-    if use_sliding_windows:
-        # ── Two-row figure: spectrograms (top), harmonics (bottom) ──
-        fig, axes = plt.subplots(
-            2,
-            3,
-            figsize=(16, 8),
-            gridspec_kw={'height_ratios': [1, 1]},
-        )
-
-        # ── Top row: sliding-window spectrograms ──────────────────
-        for col, ax_name in enumerate(('gx', 'gy', 'gz')):
-            ax = axes[0, col]
-            sg = spectrograms[ax_name]
-            pk = peaks[ax_name]
-
-            ax.pcolormesh(
-                frequencies,
-                np.arange(num_windows),
-                sg,
-                cmap='viridis',
-                shading='auto',
-                norm=Normalize(vmin=sg.min(), vmax=sg.max()),
-            )
-
-            # Mark peaks
-            peak_coords = np.where(pk > 0)
-            if len(peak_coords[0]) > 0:
-                ax.plot(
-                    frequencies[peak_coords[1]],
-                    peak_coords[0],
-                    marker='*',
-                    color='red',
-                    linestyle='none',
-                    markersize=10,
-                    markeredgewidth=0,
-                )
-
-            # Forbidden bands as vertical lines
-            for band in forbidden_bands:
-                ax.axvline(band[0], color='white', ls='--', lw=1.2, alpha=0.8)
-                ax.axvline(band[1], color='white', ls='--', lw=1.2, alpha=0.8)
-
-            ax.set_xlim(freq_min, freq_max)
-            ax.set_ylim(-0.5, num_windows - 0.5)
-            ax.set_xlabel('Frequency (Hz)')
-            ax.set_ylabel('Window Index')
-            ax.set_title(f'{axis_labels[ax_name]} Spectrogram')
-            _add_echo_spacing_axis(ax, freq_min, freq_max)
+    if sequence_idx is None:
+        subsequence_indices = list(range(seq.num_sequences))
     else:
-        # Window shorter than requested analysis interval: skip spectrogram row.
-        fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
-
-    # ── Harmonic spectra + forbidden bands ──
-    for col, ax_name in enumerate(('gx', 'gy', 'gz')):
-        ax = axes[1, col] if use_sliding_windows else axes[col]
-        color = colors[ax_name]
-
-        # Max envelope across windows
-        if num_windows > 0:
-            max_env = spectrograms[ax_name].max(axis=0)
-        else:
-            max_env = np.zeros_like(frequencies, dtype=np.float32)
-        ax.plot(frequencies, max_env, color=color, lw=1.5, label='Max envelope')
-
-        # Canonical-TR spectrum
-        ax.plot(
-            frequencies,
-            spectrum_full[ax_name],
-            color=color,
-            lw=0.8,
-            alpha=0.5,
-            label='Canonical TR',
-        )
-
-        # Mark canonical-TR peaks
-        peak_mask = peaks_full[ax_name] > 0
-        if np.any(peak_mask):
-            ax.plot(
-                frequencies[peak_mask],
-                spectrum_full[ax_name][peak_mask],
-                'o',
-                color=color,
-                markersize=5,
-                markeredgewidth=0,
+        if sequence_idx < 0 or sequence_idx >= seq.num_sequences:
+            raise ValueError(
+                f'sequence_idx={sequence_idx} out of range for {seq.num_sequences} subsequences'
             )
+        subsequence_indices = [int(sequence_idx)]
 
-        # Forbidden bands as shaded regions
-        for band in forbidden_bands:
-            ax.axvspan(
-                band[0],
-                band[1],
-                alpha=0.15,
-                color='red',
-                zorder=0,
+    for ss_idx in subsequence_indices:
+        tr_info = _find_tr(seq._cseq, subsequence_idx=ss_idx)
+        num_canonical = int(tr_info.get('num_canonical_trs', 1))
+        for canonical_tr_idx in range(num_canonical):
+            _plot_grad_spectrum_single(
+                seq,
+                subsequence_idx=ss_idx,
+                canonical_tr_idx=canonical_tr_idx,
+                forbidden_bands=forbidden_bands,
+                target_window_size=target_window_size,
+                spectral_resolution=spectral_resolution,
+                max_frequency=max_frequency,
+                thresholds=thresholds,
+                peak_log10_threshold=peak_log10_threshold,
+                peak_norm_scale=peak_norm_scale,
+                peak_eps=peak_eps,
             )
-
-        for thr in thresholds:
-            ax.axhline(
-                thr,
-                color='orange',
-                linestyle='--',
-                linewidth=1.0,
-                alpha=0.8,
-                label=f'threshold {thr:g}%',
-            )
-
-        ax.set_xlim(freq_min, freq_max)
-        ax.set_xlabel('Frequency (Hz)')
-        ax.set_ylabel('Magnitude (a.u.)')
-        ax.set_title(f'{axis_labels[ax_name]} Harmonic Spectrum')
-        ax.legend(fontsize=8, loc='upper right')
-        ax.grid(True, alpha=0.3)
-        _add_echo_spacing_axis(ax, freq_min, freq_max)
-
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        fig.tight_layout()

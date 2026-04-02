@@ -94,6 +94,23 @@ int pulseqlib_read_from_buffers(
  * The @c vendor field is set to @c PULSEQLIB_VENDOR (compile-time
  * default).  Override it after calling this function if needed.
  */
+void pulseqlib_opts_init_full(
+    pulseqlib_opts* opts,
+    float gamma_hz_per_t,
+    float b0_t,
+    float max_grad_hz_per_m,
+    float max_slew_hz_per_m_per_s,
+    float rf_raster_us,
+    float grad_raster_us,
+    float adc_raster_us,
+    float block_raster_us,
+    float peak_log10_threshold,
+    float peak_norm_scale,
+    float peak_eps);
+
+/**
+ * @brief Legacy initializer using default peak-detection parameters.
+ */
 void pulseqlib_opts_init(
     pulseqlib_opts* opts,
     float gamma_hz_per_t,

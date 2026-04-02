@@ -3,14 +3,12 @@
 __all__ = ['SequenceCollection']
 
 import copy
-
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pypulseq as pp
 
-from ._opts import Opts as PGEOpts
 from ._extension._pulseqlib_wrapper import (
     _check_consistency,
     _check_safety,
@@ -20,6 +18,7 @@ from ._extension._pulseqlib_wrapper import (
     _PulseqCollection,
 )
 from ._iostream import write_to_stream
+from ._opts import Opts as PGEOpts
 
 
 def _normalize_block(block):
@@ -676,8 +675,8 @@ class SequenceCollection(pp.Sequence):
         Check with forbidden acoustic bands:
 
         >>> bands = [
-        ...     (100, 500, 1.0),    # Band 1: 100–500 Hz, max 1.0 Hz/m
-        ...     (2000, 3000, 0.5),  # Band 2: 2–3 kHz, max 0.5 Hz/m
+        ...     (100, 500, 1.0),    # Band 1: 100-500 Hz, max 1.0 Hz/m
+        ...     (2000, 3000, 0.5),  # Band 2: 2-3 kHz, max 0.5 Hz/m
         ... ]
         >>> sc.check(forbidden_bands=bands)
 
@@ -709,10 +708,10 @@ class SequenceCollection(pp.Sequence):
     def pns(
         self,
         *,
-        sequence_idx: int = 0,
+        sequence_idx: int | None = None,
         stim_threshold: float | None = None,
         decay_constant_us: float | None = None,
-        threshold_percent: float | list[float] | tuple[float, ...] = [80.0, 100.0],
+        threshold_percent: float | list[float] | tuple[float, ...] | None = None,
     ) -> None:
         """Plot peripheral nerve stimulation (PNS) waveforms for a TR.
 
@@ -720,21 +719,21 @@ class SequenceCollection(pp.Sequence):
         together with horizontal threshold guide line(s). No pass/fail check
         is performed — use :meth:`check` for safety validation.
 
-        Canonical-TR selection follows the C-backend logic: the first canonical
-        TR instance (determined by shot-ID grouping and amplitude filtering)
-        is plotted.
+        Canonical-TR selection follows the C-backend logic per subsequence.
+        One figure is produced for each canonical TR.
 
         Parameters
         ----------
-        sequence_idx : int, default 0
-            Subsequence index (0-based) to analyze.
+        sequence_idx : int, optional
+            Subsequence index (0-based) to analyze. If ``None`` (default),
+            all subsequences are analyzed.
         stim_threshold : float, optional
             PNS stimulation threshold in Hz/m/s. This equals
             ``rheobase / alpha`` in the SAFE nerve model (Siebold et al. 2015).
             If ``None``, attempts to use ``self.system.default_stim_threshold()``.
         decay_constant_us : float, optional
             PNS decay constant / chronaxie in microseconds. Typical values
-            are 330–360 µs for standard stimulation models. If ``None``,
+            are 330-360 us for standard stimulation models. If ``None``,
             attempts to use ``self.system.chronaxie_us``.
         threshold_percent : float or sequence of float, default [80.0, 100.0]
             Threshold line(s) to draw on the plot, as percentage of maximum
@@ -780,6 +779,8 @@ class SequenceCollection(pp.Sequence):
         """
         from ._pns import pns as _pns_impl
 
+        if threshold_percent is None:
+            threshold_percent = [80.0, 100.0]
         if stim_threshold is None and hasattr(self.system, 'default_stim_threshold'):
             stim_threshold = self.system.default_stim_threshold()
         if decay_constant_us is None and hasattr(self.system, 'chronaxie_us'):
@@ -798,15 +799,22 @@ class SequenceCollection(pp.Sequence):
             threshold_percent=threshold_percent,
         )
 
+    def calculate_pns(self, **kwargs) -> None:
+        """Alias for :meth:`pns`."""
+        self.pns(**kwargs)
+
     def grad_spectrum(
         self,
         *,
-        sequence_idx: int = 0,
+        sequence_idx: int | None = None,
         forbidden_bands: list[tuple[float, float, float]] | None = None,
         window_duration: float = 25.0e-3,
         spectral_resolution: float = 5.0,
         max_frequency: float = 3000.0,
         threshold_percent: float | list[float] | tuple[float, ...] | None = None,
+        peak_log10_threshold: float | None = None,
+        peak_norm_scale: float | None = None,
+        peak_eps: float | None = None,
     ) -> None:
         """Plot acoustic spectra for gradient waveforms in a TR.
 
@@ -815,13 +823,14 @@ class SequenceCollection(pp.Sequence):
         resonance issues and validating against site-specific constraints.
         No pass/fail check is performed — use :meth:`check` for that.
 
-        Canonical-TR selection follows the C-backend logic (first canonical TR
-        determined by shot-ID grouping and amplitude filtering).
+        Canonical-TR selection follows the C-backend logic per subsequence.
+        One figure is produced for each canonical TR.
 
         Parameters
         ----------
-        sequence_idx : int, default 0
-            Subsequence index (0-based) to analyze.
+        sequence_idx : int, optional
+            Subsequence index (0-based) to analyze. If ``None`` (default),
+            all subsequences are analyzed.
         forbidden_bands : list of (freq_min, freq_max, max_amplitude), optional
             Acoustic forbidden-band specifications for gradient spectrum analysis.
             Each tuple gives ``(freq_min_Hz, freq_max_Hz, max_allowed_amplitude_Hz_per_m)``.
@@ -841,6 +850,15 @@ class SequenceCollection(pp.Sequence):
             Extra horizontal threshold guide line(s) drawn on harmonic plots,
             as percentage of peak amplitude. Accepts a single float or
             a list/tuple. If ``None``, no extra lines are drawn.
+        peak_log10_threshold : float, optional
+            Resonance detector threshold in log10 space. Higher values detect
+            fewer peaks.
+        peak_norm_scale : float, optional
+            Normalization scale used before log transform in resonance
+            detection.
+        peak_eps : float, optional
+            Positive epsilon added before log transform for numerical
+            stability.
 
         Raises
         ------
@@ -861,8 +879,8 @@ class SequenceCollection(pp.Sequence):
 
         >>> sc = SequenceCollection('path/to/sequence.seq')
         >>> bands = [
-        ...     (100, 500, 1.0),    # 100–500 Hz: max 1.0 Hz/m
-        ...     (2000, 3000, 0.5),  # 2–3 kHz: max 0.5 Hz/m
+        ...     (100, 500, 1.0),    # 100-500 Hz: max 1.0 Hz/m
+        ...     (2000, 3000, 0.5),  # 2-3 kHz: max 0.5 Hz/m
         ... ]
         >>> sc.grad_spectrum(forbidden_bands=bands)
 
@@ -891,7 +909,14 @@ class SequenceCollection(pp.Sequence):
             spectral_resolution=spectral_resolution,
             max_frequency=max_frequency,
             threshold_percent=threshold_percent,
+            peak_log10_threshold=peak_log10_threshold,
+            peak_norm_scale=peak_norm_scale,
+            peak_eps=peak_eps,
         )
+
+    def calculate_gradient_spectrum(self, **kwargs) -> None:
+        """Alias for :meth:`grad_spectrum`."""
+        self.grad_spectrum(**kwargs)
 
     def plot(
         self,
@@ -943,7 +968,7 @@ class SequenceCollection(pp.Sequence):
             If ``True``, mark RF pulse envelope peaks and readout echoes with vertical markers.
         figsize : tuple, optional
             Figure size ``(width, height)`` in inches. If ``None``, uses matplotlib's
-            default sizing (typically 10 × 6 inches).
+            default sizing (typically 10 x 6 inches).
 
         Raises
         ------
@@ -986,6 +1011,7 @@ class SequenceCollection(pp.Sequence):
         check : Run consistency and safety checks.
         """
         from ._plot import plot as _plot_impl
+
         _plot_impl(
             self,
             subsequence_idx=subsequence_idx,
@@ -1104,6 +1130,7 @@ class SequenceCollection(pp.Sequence):
         plot : Plot waveforms for a single TR.
         """
         from ._validate import validate as _validate_impl
+
         return _validate_impl(
             self,
             xml_path=xml_path,

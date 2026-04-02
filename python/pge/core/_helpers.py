@@ -47,7 +47,7 @@ def _add_echo_spacing_axis(ax, freq_min, freq_max):
     """
     ax_top = ax.twiny()
 
-    ax_top.set_xlim(ax.get_xlim())
+    ax_top.set_xlim((freq_min, freq_max))
 
     def freq_to_es(freq_hz):
         if freq_hz <= 0:
@@ -61,7 +61,7 @@ def _add_echo_spacing_axis(ax, freq_min, freq_max):
     ax_top.set_xticklabels(
         [f'{freq_to_es(f):.1f}' if f > 0 else '\u221e' for f in primary_ticks]
     )
-    ax_top.set_xlim(ax.get_xlim())
+    ax_top.set_xlim((freq_min, freq_max))
     ax_top.set_xlabel('Echo Spacing (\u00b5s)', fontsize=12)
 
     return ax_top

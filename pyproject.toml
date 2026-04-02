@@ -131,6 +131,10 @@ ignore = [
   "SIM115", #  use of context manager
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"python/pge/core/_plot.py" = ["S314"]
+"python/pge/core/_validate.py" = ["S314"]
+
 [tool.isort]
 profile="black"
 force-single-line = false

@@ -4,7 +4,6 @@ __all__ = ['deserialize', 'serialize']
 
 import copy
 import warnings
-
 from pathlib import Path
 
 import pypulseq as pp
@@ -98,7 +97,7 @@ def deserialize(path: str | Path) -> list[pp.Sequence]:
 
         seq = pp.Sequence()
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
+            warnings.simplefilter('ignore')
             seq.read(str(current))
         seqs.append(seq)
 

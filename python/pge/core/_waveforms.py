@@ -47,6 +47,7 @@ def calc_acoustic_spectra(
         forbidden_bands,
     )
 
+
 def calc_pns(
     seq: 'SequenceCollection',
     subsequence_idx: int = 0,
@@ -89,6 +90,8 @@ def calc_pns(
         rheobase,
         alpha,
     )
+
+
 """Native-timing TR waveform extraction for SequenceCollection."""
 
 __all__ = ['TrWaveforms', 'get_tr_waveforms']
@@ -98,10 +101,10 @@ from typing import Literal
 
 import numpy as np
 
+from ._extension._pulseqlib_wrapper import _find_tr, _get_tr_waveforms
 
 # Import SequenceCollection before any type annotations use it
 from ._sequence import SequenceCollection
-from ._extension._pulseqlib_wrapper import _find_tr, _get_tr_waveforms
 
 # Physical-unit conversion constants
 _GAMMA_DEFAULT = 42.576e6  # Hz/T
@@ -126,7 +129,7 @@ class ChannelWaveform:
         - Gradients (Gx, Gy, Gz): mT/m
         - RF magnitude: µT
         - RF phase: radians
-        - ADC: normalized (0–1 range)
+        - ADC: normalized (0-1 range)
     """
 
     time_us: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
@@ -189,7 +192,7 @@ class BlockDescriptor:
     adc_phase_offset_rad : float
         ADC receive phase offset for this block (radians).
     rotation_matrix : list
-        Slice selection rotation matrix (if applicable), typically 3×3.
+        Slice selection rotation matrix (if applicable), typically 3x3.
     """
 
     start_us: float = 0.0
@@ -244,8 +247,12 @@ class TrWaveforms:
     gz: ChannelWaveform = field(default_factory=ChannelWaveform)
     rf_mag: ChannelWaveform = field(default_factory=ChannelWaveform)
     rf_phase: ChannelWaveform = field(default_factory=ChannelWaveform)
-    rf_mag_channels: list = field(default_factory=list)    # per-channel ChannelWaveform; empty for single-Tx
-    rf_phase_channels: list = field(default_factory=list)  # per-channel ChannelWaveform; empty for single-Tx
+    rf_mag_channels: list = field(
+        default_factory=list
+    )  # per-channel ChannelWaveform; empty for single-Tx
+    rf_phase_channels: list = field(
+        default_factory=list
+    )  # per-channel ChannelWaveform; empty for single-Tx
     adc_events: list = field(default_factory=list)
     blocks: list = field(default_factory=list)
     total_duration_us: float = 0.0
@@ -325,9 +332,18 @@ def get_tr_waveforms(
 
     # Unpack raw waveform arrays
     hz_per_m_to_mT_per_m = 1e3 / gamma
-    gx = ChannelWaveform(np.array(raw['gx']['time_us']), np.array(raw['gx']['amplitude']) * hz_per_m_to_mT_per_m)
-    gy = ChannelWaveform(np.array(raw['gy']['time_us']), np.array(raw['gy']['amplitude']) * hz_per_m_to_mT_per_m)
-    gz = ChannelWaveform(np.array(raw['gz']['time_us']), np.array(raw['gz']['amplitude']) * hz_per_m_to_mT_per_m)
+    gx = ChannelWaveform(
+        np.array(raw['gx']['time_us']),
+        np.array(raw['gx']['amplitude']) * hz_per_m_to_mT_per_m,
+    )
+    gy = ChannelWaveform(
+        np.array(raw['gy']['time_us']),
+        np.array(raw['gy']['amplitude']) * hz_per_m_to_mT_per_m,
+    )
+    gz = ChannelWaveform(
+        np.array(raw['gz']['time_us']),
+        np.array(raw['gz']['amplitude']) * hz_per_m_to_mT_per_m,
+    )
     # Convert RF magnitude from Hz to µT for validation (µT = 1e6 / gamma * Hz).
     # The C backend stores signed magnitude (negative for negative lobes) with
     # phase separate.  Convert to unsigned magnitude + adjusted phase so the
@@ -348,11 +364,15 @@ def get_tr_waveforms(
         npts = len(rf_mag_uT) // nch
         t_rf = np.array(raw['rf_mag']['time_us'])
         rf_mag_channels = [
-            ChannelWaveform(t_rf[c * npts:(c + 1) * npts], rf_mag_uT[c * npts:(c + 1) * npts])
+            ChannelWaveform(
+                t_rf[c * npts : (c + 1) * npts], rf_mag_uT[c * npts : (c + 1) * npts]
+            )
             for c in range(nch)
         ]
         rf_phase_channels = [
-            ChannelWaveform(t_rf[c * npts:(c + 1) * npts], rf_phase_raw[c * npts:(c + 1) * npts])
+            ChannelWaveform(
+                t_rf[c * npts : (c + 1) * npts], rf_phase_raw[c * npts : (c + 1) * npts]
+            )
             for c in range(nch)
         ]
     else:
@@ -362,18 +382,18 @@ def get_tr_waveforms(
     # Extract per-block scan table parameters if present
     blocks = []
     for blk in raw['blocks']:
-        block_kwargs = dict(
-            start_us=blk.get('start_us', 0.0),
-            duration_us=blk.get('duration_us', 0.0),
-            segment_idx=blk.get('segment_idx', -1),
-            rf_isocenter_us=blk.get('rf_isocenter_us', -1.0),
-            adc_kzero_us=blk.get('adc_kzero_us', -1.0),
-            rf_freq_offset_hz=blk.get('rf_freq_offset_hz', 0.0),
-            rf_phase_offset_rad=blk.get('rf_phase_offset_rad', 0.0),
-            adc_freq_offset_hz=blk.get('adc_freq_offset_hz', 0.0),
-            adc_phase_offset_rad=blk.get('adc_phase_offset_rad', 0.0),
-            rotation_matrix=blk.get('rotation_matrix', []),
-        )
+        block_kwargs = {
+            'start_us': blk.get('start_us', 0.0),
+            'duration_us': blk.get('duration_us', 0.0),
+            'segment_idx': blk.get('segment_idx', -1),
+            'rf_isocenter_us': blk.get('rf_isocenter_us', -1.0),
+            'adc_kzero_us': blk.get('adc_kzero_us', -1.0),
+            'rf_freq_offset_hz': blk.get('rf_freq_offset_hz', 0.0),
+            'rf_phase_offset_rad': blk.get('rf_phase_offset_rad', 0.0),
+            'adc_freq_offset_hz': blk.get('adc_freq_offset_hz', 0.0),
+            'adc_phase_offset_rad': blk.get('adc_phase_offset_rad', 0.0),
+            'rotation_matrix': blk.get('rotation_matrix', []),
+        }
         blocks.append(BlockDescriptor(**block_kwargs))
 
     # Get TR timing info for pypulseq overlay

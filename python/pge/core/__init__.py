@@ -6,12 +6,12 @@ as well as the sequence plugin contract and typed protocol helpers.
 """
 
 __all__ = [
-    'Opts',
-    'GEOpts',
     'BoolParam',
     'Description',
     'FloatParam',
+    'GEOpts',
     'IntParam',
+    'Opts',
     'Protocol',
     'ProtocolValue',
     'PulseqSequence',

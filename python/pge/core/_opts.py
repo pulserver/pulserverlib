@@ -7,66 +7,65 @@ and acoustic forbidden-band helpers.
 
 from __future__ import annotations
 
-__all__ = ["Opts", "GEOpts"]
+__all__ = ['GEOpts', 'Opts']
 
 from collections.abc import Sequence
 
 import pypulseq as pp
 
-
 # coil -> (chronaxie_us, rheobase, alpha, gmax_g_per_cm, smax_g_per_cm_per_ms)
 _COIL_PNS = {
-    "xrmw": (360.0, 20.0, 0.324, 33.0, 120.0),
-    "xrm": (334.0, 23.4, 0.333, 50.0, 200.0),
-    "whole": (370.0, 23.7, 0.344, 23.0, 77.0),
-    "zoom": (354.0, 29.1, 0.309, 40.0, 150.0),
-    "hrmbuhp": (359.0, 26.5, 0.370, 100.0, 200.0),
-    "hrmw": (642.4, 17.9, 0.310, 70.0, 200.0),
-    "magnus": (611.0, 55.2, 0.324, 300.0, 750.0),
+    'xrmw': (360.0, 20.0, 0.324, 33.0, 120.0),
+    'xrm': (334.0, 23.4, 0.333, 50.0, 200.0),
+    'whole': (370.0, 23.7, 0.344, 23.0, 77.0),
+    'zoom': (354.0, 29.1, 0.309, 40.0, 150.0),
+    'hrmbuhp': (359.0, 26.5, 0.370, 100.0, 200.0),
+    'hrmw': (642.4, 17.9, 0.310, 70.0, 200.0),
+    'magnus': (611.0, 55.2, 0.324, 300.0, 750.0),
 }
 
 # ESP model aliases that do not have explicit PNS tuples in the provided table.
 # We map to the closest available family defaults.
 _COIL_PNS_ALIASES = {
-    "vrmw": "xrmw",
-    "hrmb": "hrmbuhp",
-    "irmw": "hrmw",
+    'vrmw': 'xrmw',
+    'hrmb': 'hrmbuhp',
+    'irmw': 'hrmw',
 }
 
 # coil -> tuple(axis_x_rows, axis_y_rows, axis_z_rows)
 # row format = (esp_min_us, esp_max_us, max_amp_g_per_cm)
 _COIL_ESP = {
-    "xrmw": (
+    'xrmw': (
         [],
         [],
         [(330.0, 460.0, 0.0)],
     ),
-    "vrmw": (
+    'vrmw': (
         [],
         [],
         [(330.0, 460.0, 0.0)],
     ),
-    "xrm": (
+    'xrm': (
         [(410.0, 510.0, 0.0)],
         [(410.0, 510.0, 0.0)],
         [(360.0, 440.0, 0.0)],
     ),
-    "hrmw": (
+    'hrmw': (
         [(420.0, 459.0, 0.0), (816.0, 865.0, 1.6)],
         [(420.0, 459.0, 0.0), (816.0, 876.0, 1.6)],
         [],
     ),
-    "hrmb": (
+    'hrmb': (
         [(393.0, 445.0, 0.0), (476.0, 528.0, 0.0), (952.0, 988.0, 0.0)],
         [(393.0, 445.0, 0.0), (476.0, 504.0, 0.0)],
         [(393.0, 445.0, 0.0), (476.0, 491.0, 0.0)],
     ),
-    "hrmbuhp": (
+    'hrmbuhp': (
         [(350.0, 445.0, 0.0), (481.0, 488.0, 0.0)],
         [(350.0, 445.0, 0.0), (481.0, 488.0, 0.0)],
         [(418.0, 426.0, 0.0)],
     ),
-    "irmw": (
+    'irmw': (
         [(827.0, 896.0, 0.0)],
         [(827.0, 896.0, 0.0)],
         [],
@@ -130,7 +129,7 @@ def _esp_us_to_band_hz(esp_min_us: float, esp_max_us: float) -> tuple[float, flo
         If either ESP value is non-positive.
     """
     if esp_min_us <= 0.0 or esp_max_us <= 0.0:
-        raise ValueError("ESP values must be positive (microseconds)")
+        raise ValueError('ESP values must be positive (microseconds)')
     f1 = 1.0 / (2.0 * esp_min_us * 1e-6)
     f2 = 1.0 / (2.0 * esp_max_us * 1e-6)
     return (min(f1, f2), max(f1, f2))
@@ -142,10 +141,10 @@ class Opts(pp.Opts):
     Parameters
     ----------
     gamma : float, optional
-        Gyromagnetic ratio in Hz/T. 
+        Gyromagnetic ratio in Hz/T.
         If not provided, defaults to 42.576 MHz/T for proton imaging.
     B0 : float, optional
-        Main magnetic field in tesla. 
+        Main magnetic field in tesla.
         If not provided, defaults to 3.0 T.
     max_grad : float, optional
         Maximum gradient amplitude in mT/m.
@@ -223,9 +222,9 @@ class Opts(pp.Opts):
             gamma=gamma,
             B0=B0,
             max_grad=max_grad,
-            grad_unit="mT/m",
+            grad_unit='mT/m',
             max_slew=max_slew,
-            slew_unit="T/m/s",
+            slew_unit='T/m/s',
             rf_raster_time=rf_raster_time,
             grad_raster_time=grad_raster_time,
             adc_raster_time=adc_raster_time,
@@ -251,10 +250,10 @@ class Opts(pp.Opts):
             self.set_forbidden_bands(forbidden_bands)
 
         if self.b1_max_uT is not None and abs(self.b1_max_uT) >= 100.0:
-            raise ValueError("b1_max_uT appears too large; expected microtesla scale")
+            raise ValueError('b1_max_uT appears too large; expected microtesla scale')
 
         if self.alpha is not None and self.alpha <= 0.0:
-            raise ValueError("alpha must be > 0")
+            raise ValueError('alpha must be > 0')
 
     @classmethod
     def from_coil_model(
@@ -287,10 +286,10 @@ class Opts(pp.Opts):
         model_name : str
             Coil model identifier.
         gamma : float, optional
-            Gyromagnetic ratio in Hz/T. 
+            Gyromagnetic ratio in Hz/T.
             If not provided, defaults to 42.576 MHz/T for proton imaging.
         B0 : float, optional
-            Main magnetic field in tesla. 
+            Main magnetic field in tesla.
             If not provided, defaults to 3.0 T for known models.
         b1_max_uT : float, optional
             RF peak limit in microtesla.
@@ -334,10 +333,16 @@ class Opts(pp.Opts):
 
         pns_key = model
         if pns_key not in _COIL_PNS:
-            pns_key = _COIL_PNS_ALIASES.get(model, "")
+            pns_key = _COIL_PNS_ALIASES.get(model, '')
         if pns_key not in _COIL_PNS:
-            known = sorted(set(_COIL_PNS.keys()) | set(_COIL_ESP.keys()) | set(_COIL_PNS_ALIASES.keys()))
-            raise ValueError(f"Unknown coil model '{model_name}'. Known models: {known}")
+            known = sorted(
+                set(_COIL_PNS.keys())
+                | set(_COIL_ESP.keys())
+                | set(_COIL_PNS_ALIASES.keys())
+            )
+            raise ValueError(
+                f"Unknown coil model '{model_name}'. Known models: {known}"
+            )
 
         chronaxie_us, rheobase, alpha, gmax_gpcm, smax_gpcm_ms = _COIL_PNS[pns_key]
 
@@ -383,7 +388,7 @@ class Opts(pp.Opts):
         list[tuple[float, float, float]]
             Bands in ``(freq_min_hz, freq_max_hz, max_amplitude_mT_per_m)``.
         """
-        rows_by_axis = _COIL_ESP.get(model, None)
+        rows_by_axis = _COIL_ESP.get(model)
         if rows_by_axis is None:
             return []
 
@@ -394,7 +399,9 @@ class Opts(pp.Opts):
                 out.append((fmin, fmax, _g_per_cm_to_mT_per_m(float(max_amp_gpcm))))
         return out
 
-    def set_forbidden_bands(self, forbidden_bands: Sequence[tuple[float, float, float]]) -> None:
+    def set_forbidden_bands(
+        self, forbidden_bands: Sequence[tuple[float, float, float]]
+    ) -> None:
         """Set forbidden bands in public units.
 
         Parameters
@@ -413,9 +420,11 @@ class Opts(pp.Opts):
             fmax = float(fmax)
             amax = float(amax)
             if fmin < 0.0 or fmax <= 0.0 or fmin >= fmax:
-                raise ValueError("Forbidden-band frequencies must satisfy 0 <= fmin < fmax")
+                raise ValueError(
+                    'Forbidden-band frequencies must satisfy 0 <= fmin < fmax'
+                )
             if amax < 0.0:
-                raise ValueError("Forbidden-band max amplitude must be >= 0")
+                raise ValueError('Forbidden-band max amplitude must be >= 0')
             bands.append((fmin, fmax, amax))
         self._forbidden_bands_mT_per_m = bands
 

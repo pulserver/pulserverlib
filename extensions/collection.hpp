@@ -7,6 +7,8 @@
 #define PULSEQLIB_COLLECTION_HPP
 
 #include <cstring>
+#include <cmath>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -313,17 +315,28 @@ public:
         int target_window_size,
         float target_resolution_hz,
         float max_freq_hz,
-        const std::vector<ForbiddenBand>& bands = {}) const
+        const std::vector<ForbiddenBand>& bands = {},
+        float peak_log10_threshold = std::numeric_limits<float>::quiet_NaN(),
+        float peak_norm_scale = std::numeric_limits<float>::quiet_NaN(),
+        float peak_eps = std::numeric_limits<float>::quiet_NaN()) const
     {
         std::vector<pulseqlib_forbidden_band> cbands(bands.size());
         for (size_t i = 0; i < bands.size(); ++i)
             cbands[i] = bands[i].to_c();
 
+        pulseqlib_opts run_opts = opts_;
+        if (!std::isnan(peak_log10_threshold))
+            run_opts.peak_log10_threshold = peak_log10_threshold;
+        if (!std::isnan(peak_norm_scale))
+            run_opts.peak_norm_scale = peak_norm_scale;
+        if (!std::isnan(peak_eps))
+            run_opts.peak_eps = peak_eps;
+
         pulseqlib_acoustic_spectra cs = PULSEQLIB_ACOUSTIC_SPECTRA_INIT;
         pulseqlib_diagnostic diag;
         pulseqlib_diagnostic_init(&diag);
         int code = pulseqlib_calc_acoustic_spectra(
-            &cs, &diag, coll_, ss, canonical_tr_idx, &opts_,
+            &cs, &diag, coll_, ss, canonical_tr_idx, &run_opts,
             target_window_size, target_resolution_hz, max_freq_hz,
             static_cast<int>(cbands.size()),
             cbands.empty() ? nullptr : cbands.data());

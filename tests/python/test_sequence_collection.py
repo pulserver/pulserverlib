@@ -155,7 +155,7 @@ def test_sequence_collection_opts_override_system(simple_gre_seq):
 
 def test_geopts_from_coil_model_defaults():
     opts = Opts.from_coil_model(
-        'hrmw',
+        "hrmw",
         gamma=42.576e6,
         B0=3.0,
         b1_max_uT=10.0,
@@ -192,12 +192,12 @@ def test_check_uses_opts_forbidden_bands_default(simple_gre_seq, monkeypatch):
 
     import pge.core._sequence as _sequence_mod
 
-    monkeypatch.setattr(_sequence_mod, '_check_consistency', _fake_consistency)
-    monkeypatch.setattr(_sequence_mod, '_check_safety', _fake_safety)
+    monkeypatch.setattr(_sequence_mod, "_check_consistency", _fake_consistency)
+    monkeypatch.setattr(_sequence_mod, "_check_safety", _fake_safety)
 
     sc.check()
 
-    bands = captured['forbidden_bands']
+    bands = captured["forbidden_bands"]
     assert len(bands) == 1
     assert np.isclose(bands[0][0], 100.0)
     assert np.isclose(bands[0][1], 200.0)

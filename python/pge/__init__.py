@@ -9,8 +9,8 @@ Public API:
 """
 
 __all__ = [
-    'Opts',
     'GEOpts',
+    'Opts',
     'SequenceCollection',
     'deserialize',
     'serialize',

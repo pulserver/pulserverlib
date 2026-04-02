@@ -9,6 +9,7 @@
 #include <pybind11/stl.h>
 
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -154,7 +155,10 @@ static py::dict _calc_acoustic_spectra(
     int target_window_size,
     float target_resolution_hz,
     float max_freq_hz,
-    py::list py_bands)
+    py::list py_bands,
+    py::object peak_log10_threshold,
+    py::object peak_norm_scale,
+    py::object peak_eps)
 {
     std::vector<pulseqlib::ForbiddenBand> bands;
     for (auto item : py_bands) {
@@ -166,8 +170,27 @@ static py::dict _calc_acoustic_spectra(
         bands.push_back(b);
     }
 
+    auto parse_optional_float = [](const py::object& obj) -> float {
+        if (obj.is_none()) {
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        return obj.cast<float>();
+    };
+
+    float peak_log10_threshold_val = parse_optional_float(peak_log10_threshold);
+    float peak_norm_scale_val = parse_optional_float(peak_norm_scale);
+    float peak_eps_val = parse_optional_float(peak_eps);
+
     auto sp = pc.coll().calc_acoustic_spectra(
-        subsequence_idx, canonical_tr_idx, target_window_size, target_resolution_hz, max_freq_hz, bands);
+        subsequence_idx,
+        canonical_tr_idx,
+        target_window_size,
+        target_resolution_hz,
+        max_freq_hz,
+        bands,
+        peak_log10_threshold_val,
+        peak_norm_scale_val,
+        peak_eps_val);
 
     py::dict out;
     out["freq_min_hz"]       = sp.freq_min_hz;
@@ -359,7 +382,10 @@ PYBIND11_MODULE(_pulseqlib_wrapper, m) {
             py::arg("target_window_size"),
             py::arg("target_resolution_hz"),
             py::arg("max_freq_hz"),
-            py::arg("forbidden_bands") = py::list());
+            py::arg("forbidden_bands") = py::list(),
+            py::arg("peak_log10_threshold") = py::none(),
+            py::arg("peak_norm_scale") = py::none(),
+            py::arg("peak_eps") = py::none());
 
         m.def("_calc_pns", &_calc_pns,
             py::arg("collection"),

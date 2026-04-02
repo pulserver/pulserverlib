@@ -9,6 +9,7 @@ __all__ = ['write_to_stream']
 import os
 import platform
 import tempfile
+from pathlib import Path
 
 import pypulseq as pp
 
@@ -16,9 +17,9 @@ import pypulseq as pp
 def _tmpdir() -> str | None:
     """Return a RAM-disk directory on Linux, or ``None`` elsewhere."""
     if platform.system() == 'Linux':
-        shm = '/dev/shm'
-        if os.path.isdir(shm) and os.access(shm, os.W_OK):
-            return shm
+        shm = Path('/dev') / 'shm'
+        if shm.is_dir() and os.access(shm, os.W_OK):
+            return str(shm)
     return None  # tempfile will choose a platform default
 
 
@@ -51,6 +52,7 @@ def write_to_stream(
     bytes
         Raw bytes of the ``.seq`` file.
     """
+    _ = check_timing
     tmpdir = _tmpdir()
 
     # Write using pypulseq's native method (handles all sections)

@@ -96,9 +96,17 @@ typedef struct pulseqlib_opts {
     float grad_raster_us;            /**< gradient sample raster (us)       */
     float adc_raster_us;             /**< ADC dwell raster (us)             */
     float block_raster_us;           /**< block duration raster (us)        */
+    float peak_log10_threshold;      /**< resonance detector log10 threshold */
+    float peak_norm_scale;           /**< resonance detector normalization   */
+    float peak_eps;                  /**< resonance detector epsilon         */
 } pulseqlib_opts;
 
-#define PULSEQLIB_OPTS_INIT {0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}
+#define PULSEQLIB_OPTS_INIT { \
+    0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, \
+    PULSEQLIB_PEAK_LOG10_THRESHOLD_DEFAULT, \
+    PULSEQLIB_PEAK_NORM_SCALE_DEFAULT, \
+    PULSEQLIB_PEAK_EPS_DEFAULT \
+}
 
 /* ================================================================== */
 /*  RF statistics                                                     */
