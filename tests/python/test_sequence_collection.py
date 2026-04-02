@@ -4,7 +4,7 @@ import numpy as np
 import pypulseq as pp
 import pytest
 
-from pge import SequenceCollection
+from pge import Opts, SequenceCollection
 
 
 def _safe_delay_collection() -> SequenceCollection:
@@ -135,3 +135,70 @@ def test_check_with_pns():
         decay_constant_us=360.0,
         pns_threshold_percent=1000.0,
     )
+
+
+def test_sequence_collection_opts_override_system(simple_gre_seq):
+    opts = Opts(
+        gamma=float(simple_gre_seq.system.gamma),
+        B0=float(simple_gre_seq.system.B0),
+        max_grad=40.0,
+        max_slew=150.0,
+        b1_max_uT=10.0,
+        rf_raster_time=float(simple_gre_seq.system.rf_raster_time),
+        grad_raster_time=float(simple_gre_seq.system.grad_raster_time),
+        adc_raster_time=float(simple_gre_seq.system.adc_raster_time),
+        block_duration_raster=float(simple_gre_seq.system.block_duration_raster),
+    )
+    sc = SequenceCollection(simple_gre_seq, system=opts)
+    assert sc.system is opts
+
+
+def test_geopts_from_coil_model_defaults():
+    opts = Opts.from_coil_model(
+        'hrmw',
+        gamma=42.576e6,
+        B0=3.0,
+        b1_max_uT=10.0,
+    )
+    assert np.isclose(opts.grad_raster_time, 4e-6)
+    assert np.isclose(opts.rf_raster_time, 2e-6)
+    assert np.isclose(opts.adc_raster_time, 2e-6)
+    assert np.isclose(opts.chronaxie_us, 642.4)
+    assert np.isclose(opts.default_stim_threshold(), 17.9 / 0.310)
+    assert len(opts.forbidden_bands) > 0
+
+
+def test_check_uses_opts_forbidden_bands_default(simple_gre_seq, monkeypatch):
+    opts = Opts(
+        gamma=float(simple_gre_seq.system.gamma),
+        B0=float(simple_gre_seq.system.B0),
+        max_grad=40.0,
+        max_slew=150.0,
+        forbidden_bands=[(100.0, 200.0, 1.0)],
+        rf_raster_time=float(simple_gre_seq.system.rf_raster_time),
+        grad_raster_time=float(simple_gre_seq.system.grad_raster_time),
+        adc_raster_time=float(simple_gre_seq.system.adc_raster_time),
+        block_duration_raster=float(simple_gre_seq.system.block_duration_raster),
+    )
+    sc = SequenceCollection(simple_gre_seq, system=opts)
+
+    captured = {}
+
+    def _fake_consistency(_cseq):
+        return None
+
+    def _fake_safety(_cseq, **kwargs):
+        captured.update(kwargs)
+
+    import pge.core._sequence as _sequence_mod
+
+    monkeypatch.setattr(_sequence_mod, '_check_consistency', _fake_consistency)
+    monkeypatch.setattr(_sequence_mod, '_check_safety', _fake_safety)
+
+    sc.check()
+
+    bands = captured['forbidden_bands']
+    assert len(bands) == 1
+    assert np.isclose(bands[0][0], 100.0)
+    assert np.isclose(bands[0][1], 200.0)
+    assert np.isclose(bands[0][2], 1.0e-3 * float(opts.gamma))

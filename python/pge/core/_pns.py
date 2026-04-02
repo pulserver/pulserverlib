@@ -61,7 +61,9 @@ def pns(
     # The rightmost (largest) threshold is always black.
     sorted_thresholds = sorted(thresholds)
     n_thr = len(sorted_thresholds)
-    if n_thr <= 1:
+    if n_thr == 0:
+        threshold_styles = []
+    elif n_thr == 1:
         threshold_styles = [(sorted_thresholds[0], (0.0, 0.0, 0.0))]
     else:
         threshold_styles = []

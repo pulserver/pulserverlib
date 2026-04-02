@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import pypulseq as pp
 
+from ._opts import Opts as PGEOpts
 from ._extension._pulseqlib_wrapper import (
     _check_consistency,
     _check_safety,
@@ -87,6 +88,10 @@ class SequenceCollection(pp.Sequence):
     num_averages : int
         Number of averages; influences scan-time calculations and is used
         by analysis methods such as plotting and validation.
+    system : pp.Opts or pge.Opts, optional
+        Optional system override used for C-backend initialisation and
+        high-level defaults (PNS and forbidden bands). If omitted, uses
+        ``seqs[0].system`` from the first sequence.
     """
 
     def __init__(
@@ -94,6 +99,7 @@ class SequenceCollection(pp.Sequence):
         seq: str | Path | pp.Sequence | list[pp.Sequence],
         parse_labels: bool = True,
         num_averages: int = 1,
+        system: pp.Opts | PGEOpts | None = None,
     ):
         from ._cache import deserialize
 
@@ -116,9 +122,10 @@ class SequenceCollection(pp.Sequence):
 
         # Delegate pp.Sequence attribute access to the first sequence
         object.__setattr__(self, '_seq', seqs[0])
+        object.__setattr__(self, '_system_override', system)
 
         # ── Build the C collection from all sequence blobs ──────
-        sys = seqs[0].system
+        sys = system if system is not None else seqs[0].system
         blobs = [write_to_stream(s) for s in seqs]
         cseq = _PulseqCollection(
             blobs,
@@ -143,10 +150,26 @@ class SequenceCollection(pp.Sequence):
             return getattr(self._seq, name)
 
     def __setattr__(self, name, value):
-        if name in ('_seq', '_cseq', '_seqs', '_num_averages'):
+        if name in ('_seq', '_cseq', '_seqs', '_num_averages', '_system_override'):
             object.__setattr__(self, name, value)
+        elif name == 'system':
+            object.__setattr__(self, '_system_override', value)
+            setattr(self._seq, name, value)
         else:
             setattr(self._seq, name, value)
+
+    @property
+    def system(self):
+        """System options in effect for this collection."""
+        override = object.__getattribute__(self, '_system_override')
+        return override if override is not None else self._seq.system
+
+    def _default_forbidden_bands_hz_per_m(self) -> list[tuple[float, float, float]]:
+        """Return default forbidden bands in backend units (Hz, Hz/m)."""
+        sys = self.system
+        if hasattr(sys, 'forbidden_bands_hz_per_m'):
+            return list(sys.forbidden_bands_hz_per_m())
+        return []
 
     @property
     def num_averages(self) -> int:
@@ -615,7 +638,8 @@ class SequenceCollection(pp.Sequence):
         forbidden_bands : list of (freq_min, freq_max, max_amplitude), optional
             Acoustic forbidden-band specifications for gradient spectrum analysis.
             Each tuple gives ``(freq_min_Hz, freq_max_Hz, max_allowed_amplitude_Hz_per_m)``.
-            If ``None``, no acoustic checks are performed.
+            If ``None``, use defaults from ``self.system`` when available
+            (e.g., :class:`pge.Opts`); otherwise no acoustic checks are performed.
         pns_threshold_percent : float, default 80.0
             PNS threshold as a percentage of maximum stimulation (100.0 = 100 %).
             Used only if both *stim_threshold* and *decay_constant_us* are > 0.
@@ -665,7 +689,10 @@ class SequenceCollection(pp.Sequence):
         """
         _check_consistency(self._cseq)
 
-        bands = list(forbidden_bands) if forbidden_bands else []
+        if forbidden_bands is None:
+            bands = self._default_forbidden_bands_hz_per_m()
+        else:
+            bands = list(forbidden_bands)
         skip_pns = stim_threshold <= 0.0 or decay_constant_us <= 0.0
 
         _check_safety(
@@ -683,8 +710,8 @@ class SequenceCollection(pp.Sequence):
         self,
         *,
         sequence_idx: int = 0,
-        stim_threshold: float,
-        decay_constant_us: float,
+        stim_threshold: float | None = None,
+        decay_constant_us: float | None = None,
         threshold_percent: float | list[float] | tuple[float, ...] = [80.0, 100.0],
     ) -> None:
         """Plot peripheral nerve stimulation (PNS) waveforms for a TR.
@@ -701,12 +728,14 @@ class SequenceCollection(pp.Sequence):
         ----------
         sequence_idx : int, default 0
             Subsequence index (0-based) to analyze.
-        stim_threshold : float
+        stim_threshold : float, optional
             PNS stimulation threshold in Hz/m/s. This equals
             ``rheobase / alpha`` in the SAFE nerve model (Siebold et al. 2015).
-        decay_constant_us : float
+            If ``None``, attempts to use ``self.system.default_stim_threshold()``.
+        decay_constant_us : float, optional
             PNS decay constant / chronaxie in microseconds. Typical values
-            are 330–360 µs for standard stimulation models.
+            are 330–360 µs for standard stimulation models. If ``None``,
+            attempts to use ``self.system.chronaxie_us``.
         threshold_percent : float or sequence of float, default [80.0, 100.0]
             Threshold line(s) to draw on the plot, as percentage of maximum
             stimulation (100.0 = 100 %). Accepts:
@@ -717,7 +746,8 @@ class SequenceCollection(pp.Sequence):
         Raises
         ------
         ValueError
-            If *sequence_idx* is out of range.
+            If *sequence_idx* is out of range, or if required PNS parameters
+            are unavailable from both call arguments and ``self.system``.
 
         Notes
         -----
@@ -750,11 +780,21 @@ class SequenceCollection(pp.Sequence):
         """
         from ._pns import pns as _pns_impl
 
+        if stim_threshold is None and hasattr(self.system, 'default_stim_threshold'):
+            stim_threshold = self.system.default_stim_threshold()
+        if decay_constant_us is None and hasattr(self.system, 'chronaxie_us'):
+            decay_constant_us = self.system.chronaxie_us
+
+        if stim_threshold is None or decay_constant_us is None:
+            raise ValueError(
+                'stim_threshold and decay_constant_us are required unless provided by system'
+            )
+
         _pns_impl(
             self,
             sequence_idx=sequence_idx,
-            stim_threshold=stim_threshold,
-            decay_constant_us=decay_constant_us,
+            stim_threshold=float(stim_threshold),
+            decay_constant_us=float(decay_constant_us),
             threshold_percent=threshold_percent,
         )
 
@@ -786,7 +826,8 @@ class SequenceCollection(pp.Sequence):
             Acoustic forbidden-band specifications for gradient spectrum analysis.
             Each tuple gives ``(freq_min_Hz, freq_max_Hz, max_allowed_amplitude_Hz_per_m)``.
             Drawn as shaded regions on the harmonic plot. If ``None``, no bands
-            are drawn (but analysis still runs).
+            are drawn unless defaults are available from ``self.system``
+            (e.g., :class:`pge.Opts`).
         window_duration : float, default 25.0e-3
             Sliding-window size for spectrograms in seconds (default 25 ms).
             Smaller windows reveal time-varying frequency content; larger
@@ -838,6 +879,9 @@ class SequenceCollection(pp.Sequence):
         pns : Plot peripheral nerve stimulation waveforms.
         """
         from ._acoustics import grad_spectrum as _gs_impl
+
+        if forbidden_bands is None:
+            forbidden_bands = self._default_forbidden_bands_hz_per_m()
 
         _gs_impl(
             self,
@@ -929,7 +973,7 @@ class SequenceCollection(pp.Sequence):
         ...     subsequence_idx=0,
         ...     tr_instance='max_pos',
         ...     show_segments=True,
-        ...     show_slew=True
+        ...     show_centers=True
         ... )
 
         Plot a specific actual instance:

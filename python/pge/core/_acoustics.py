@@ -215,17 +215,6 @@ def grad_spectrum(
                 color='red',
                 zorder=0,
             )
-            # Threshold line within band
-            band_mask = (frequencies >= band[0]) & (frequencies <= band[1])
-            if np.any(band_mask):
-                ax.hlines(
-                    band[2],
-                    band[0],
-                    band[1],
-                    colors='red',
-                    linestyles='--',
-                    linewidth=1.2,
-                )
 
         for thr in thresholds:
             ax.axhline(

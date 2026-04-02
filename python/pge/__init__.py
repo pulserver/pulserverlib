@@ -9,12 +9,16 @@ Public API:
 """
 
 __all__ = [
+    'Opts',
+    'GEOpts',
     'SequenceCollection',
     'deserialize',
     'serialize',
 ]
 
 from .core import (
+    GEOpts,
+    Opts,
     SequenceCollection,
     deserialize,
     serialize,

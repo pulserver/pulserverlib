@@ -6,6 +6,8 @@ as well as the sequence plugin contract and typed protocol helpers.
 """
 
 __all__ = [
+    'Opts',
+    'GEOpts',
     'BoolParam',
     'Description',
     'FloatParam',
@@ -27,6 +29,7 @@ __all__ = [
 
 from ._base import PulseqSequence
 from ._cache import deserialize, serialize
+from ._opts import GEOpts, Opts
 from ._params import (
     BoolParam,
     Description,

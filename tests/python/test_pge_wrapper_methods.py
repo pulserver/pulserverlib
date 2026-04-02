@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from pge import SequenceCollection
+from pge import Opts, SequenceCollection
 from pge.core._plot import plot as _plot_impl
 
 
@@ -258,3 +258,146 @@ def test_validate_raises_on_failure(simple_gre_seq, monkeypatch):
             grad_atol=1e-9,
             rf_rms_percent=1e-9,
         )
+
+
+def test_pns_uses_opts_defaults(representative_generated_seq_path, monkeypatch):
+    opts = Opts(
+        gamma=42.576e6,
+        B0=3.0,
+        max_grad=40.0,
+        max_slew=150.0,
+        chronaxie_us=360.0,
+        rheobase=23.4,
+        alpha=0.333,
+    )
+    sc = SequenceCollection(str(representative_generated_seq_path), system=opts)
+
+    captured = {}
+
+    def _fake_calc_pns(*args, **kwargs):
+        captured.update(kwargs)
+        return {
+            'num_samples': 4,
+            'slew_x': [0.0, 1.0, 0.5, 0.0],
+            'slew_y': [0.0, 0.2, 0.1, 0.0],
+            'slew_z': [0.0, 0.4, 0.2, 0.0],
+        }
+
+    import pge.core._pns as _pns_mod
+
+    monkeypatch.setattr(_pns_mod, '_calc_pns', _fake_calc_pns)
+
+    sc.pns(sequence_idx=0)
+
+    assert np.isclose(captured['chronaxie_us'], 360.0)
+    assert np.isclose(captured['rheobase'], 23.4 / 0.333)
+    plt.close(plt.gcf())
+
+
+def test_grad_spectrum_uses_opts_forbidden_bands_default(simple_gre_seq, monkeypatch):
+    opts = Opts(
+        gamma=float(simple_gre_seq.system.gamma),
+        B0=float(simple_gre_seq.system.B0),
+        max_grad=40.0,
+        max_slew=150.0,
+        forbidden_bands=[(100.0, 200.0, 1.0)],
+        rf_raster_time=float(simple_gre_seq.system.rf_raster_time),
+        grad_raster_time=float(simple_gre_seq.system.grad_raster_time),
+        adc_raster_time=float(simple_gre_seq.system.adc_raster_time),
+        block_duration_raster=float(simple_gre_seq.system.block_duration_raster),
+    )
+    sc = SequenceCollection(simple_gre_seq, system=opts)
+
+    captured = {}
+
+    def _fake_calc_acoustic(*args, **kwargs):
+        captured.update(kwargs)
+        return {
+            'num_windows': 1,
+            'num_freq_bins': 4,
+            'freq_min_hz': 0.0,
+            'freq_spacing_hz': 50.0,
+            'spectrogram_gx': [0.0, 0.1, 0.2, 0.1],
+            'spectrogram_gy': [0.0, 0.1, 0.2, 0.1],
+            'spectrogram_gz': [0.0, 0.1, 0.2, 0.1],
+            'peaks_gx': [0, 0, 1, 0],
+            'peaks_gy': [0, 0, 1, 0],
+            'peaks_gz': [0, 0, 1, 0],
+            'spectrum_full_gx': [0.0, 0.2, 0.3, 0.1],
+            'spectrum_full_gy': [0.0, 0.2, 0.3, 0.1],
+            'spectrum_full_gz': [0.0, 0.2, 0.3, 0.1],
+            'peaks_full_gx': [0, 0, 1, 0],
+            'peaks_full_gy': [0, 0, 1, 0],
+            'peaks_full_gz': [0, 0, 1, 0],
+            'freq_spacing_seq_hz': 100.0,
+            'num_freq_bins_seq': 4,
+            'spectrum_seq_gx': [0.0, 0.0, 0.0, 0.0],
+            'spectrum_seq_gy': [0.0, 0.0, 0.0, 0.0],
+            'spectrum_seq_gz': [0.0, 0.0, 0.0, 0.0],
+        }
+
+    import pge.core._acoustics as _ac_mod
+
+    monkeypatch.setattr(_ac_mod, '_calc_acoustic_spectra', _fake_calc_acoustic)
+
+    sc.grad_spectrum(sequence_idx=0)
+
+    bands = captured['forbidden_bands']
+    assert len(bands) == 1
+    assert np.isclose(bands[0][0], 100.0)
+    assert np.isclose(bands[0][1], 200.0)
+    assert np.isclose(bands[0][2], 1.0e-3 * float(opts.gamma))
+    plt.close(plt.gcf())
+
+
+def test_grad_spectrum_explicit_bands_override_opts(simple_gre_seq, monkeypatch):
+    opts = Opts(
+        gamma=float(simple_gre_seq.system.gamma),
+        B0=float(simple_gre_seq.system.B0),
+        max_grad=40.0,
+        max_slew=150.0,
+        forbidden_bands=[(100.0, 200.0, 1.0)],
+        rf_raster_time=float(simple_gre_seq.system.rf_raster_time),
+        grad_raster_time=float(simple_gre_seq.system.grad_raster_time),
+        adc_raster_time=float(simple_gre_seq.system.adc_raster_time),
+        block_duration_raster=float(simple_gre_seq.system.block_duration_raster),
+    )
+    sc = SequenceCollection(simple_gre_seq, system=opts)
+
+    captured = {}
+
+    def _fake_calc_acoustic(*args, **kwargs):
+        captured.update(kwargs)
+        return {
+            'num_windows': 1,
+            'num_freq_bins': 4,
+            'freq_min_hz': 0.0,
+            'freq_spacing_hz': 50.0,
+            'spectrogram_gx': [0.0, 0.1, 0.2, 0.1],
+            'spectrogram_gy': [0.0, 0.1, 0.2, 0.1],
+            'spectrogram_gz': [0.0, 0.1, 0.2, 0.1],
+            'peaks_gx': [0, 0, 1, 0],
+            'peaks_gy': [0, 0, 1, 0],
+            'peaks_gz': [0, 0, 1, 0],
+            'spectrum_full_gx': [0.0, 0.2, 0.3, 0.1],
+            'spectrum_full_gy': [0.0, 0.2, 0.3, 0.1],
+            'spectrum_full_gz': [0.0, 0.2, 0.3, 0.1],
+            'peaks_full_gx': [0, 0, 1, 0],
+            'peaks_full_gy': [0, 0, 1, 0],
+            'peaks_full_gz': [0, 0, 1, 0],
+            'freq_spacing_seq_hz': 100.0,
+            'num_freq_bins_seq': 4,
+            'spectrum_seq_gx': [0.0, 0.0, 0.0, 0.0],
+            'spectrum_seq_gy': [0.0, 0.0, 0.0, 0.0],
+            'spectrum_seq_gz': [0.0, 0.0, 0.0, 0.0],
+        }
+
+    import pge.core._acoustics as _ac_mod
+
+    monkeypatch.setattr(_ac_mod, '_calc_acoustic_spectra', _fake_calc_acoustic)
+
+    explicit = [(250.0, 300.0, 1234.0)]
+    sc.grad_spectrum(sequence_idx=0, forbidden_bands=explicit)
+
+    assert captured['forbidden_bands'] == explicit
+    plt.close(plt.gcf())
