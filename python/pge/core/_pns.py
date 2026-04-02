@@ -57,6 +57,18 @@ def pns(
     else:
         thresholds = [float(threshold_percent)]
 
+    # Color thresholds from left-to-right: lighter gray to black.
+    # The rightmost (largest) threshold is always black.
+    sorted_thresholds = sorted(thresholds)
+    n_thr = len(sorted_thresholds)
+    if n_thr <= 1:
+        threshold_styles = [(sorted_thresholds[0], (0.0, 0.0, 0.0))]
+    else:
+        threshold_styles = []
+        for i, thr in enumerate(sorted_thresholds):
+            gray = 0.75 * float(n_thr - 1 - i) / float(n_thr - 1)
+            threshold_styles.append((thr, (gray, gray, gray)))
+
     num_samples = result_dict['num_samples']
     pns_x = np.asarray(result_dict['slew_x'], dtype=np.float32)
     pns_y = np.asarray(result_dict['slew_y'], dtype=np.float32)
@@ -74,11 +86,11 @@ def pns(
     ax.plot(time_ms, pns_y, color='C1', linewidth=1.2, label='PNS Y')
     ax.plot(time_ms, pns_z, color='C2', linewidth=1.2, label='PNS Z')
 
-    for thr in thresholds:
+    for thr, color in threshold_styles:
         ax.axhline(
             thr,
-            color='red',
-            linestyle='--',
+            color=color,
+            linestyle=':',
             linewidth=2,
             label=f'{thr:.0f}% threshold',
         )
