@@ -171,53 +171,134 @@ def plot(
     label=None,
     num_averages: int = 0,
 ):
-    """Plot native-timing TR waveforms.
+    """Plot native-timing TR waveforms with optional overlays and annotations.
 
-    Layout is (3, 2): first column has RF magnitude (top), RF phase
-    (middle), ADC mask (bottom); second column has Gx, Gy, Gz.
+    Creates a (3, 2) figure showing RF (magnitude/phase), ADC readout, and
+    gradient (Gx/Gy/Gz) waveforms using native microsecond timing from the
+    C library. Supports overlaying pypulseq reference or XML truth files
+    for validation, and adding optional annotations (segment colors, block
+    boundaries, slew rate, etc.).
 
     Parameters
     ----------
-    source : SequenceCollection or pp.Sequence or str/Path
-        Primary data source. A :class:`SequenceCollection` creates a
-        fresh figure. A pypulseq ``Sequence`` or XML file path can be
-        plotted directly (auto-creates a figure) or overlaid on an
-        existing figure via ``fig``.
-    subsequence_idx : int
-        Subsequence index (default 0).
-    tr_idx : int or {'max_pos', 'zero_var'}
-        TR index (0-based) or amplitude-mode string.
-    collapse_delays : bool
-        Shrink pure-delay blocks to 0.1 ms at C level (default True).
-    show_segments : bool
-        Colour-code gradient waveforms by segment index.
-    show_blocks : bool
-        Draw vertical dotted lines at block boundaries (default False).
-    show_slew : bool
-        Overlay slew rate on gradient panels.
-    show_rf_centers : bool
-        Mark RF iso-centres on the RF magnitude subplot (default False).
-    show_echoes : bool
-        Mark echo (ADC centre) on the ADC panel (default False).
-    max_grad_mT_per_m : float or None
-        Horizontal reference line for max gradient amplitude.
-    max_slew_T_per_m_per_s : float or None
-        Horizontal reference for max slew rate (only if show_slew).
-    time_unit : str
-        ``'ms'`` (default) or ``'us'``.
-    figsize : tuple or None
-        Figure size.  Default ``(14, 8)``.
-    fig : PlotHandle or None
-        Existing plot handle for overlay.  Forbidden when *source* is
-        a SequenceCollection. Optional for pypulseq Sequence/XML; when
-        omitted, a new figure is created automatically.
-    label : str or None
-        Legend label for overlay traces.
+    source : SequenceCollection, pp.Sequence, str, or Path
+        Primary waveform source:
+
+        - **SequenceCollection** — creates a new figure from C-backend
+          waveforms (no pre-existing figure allowed).
+        - **pypulseq Sequence** — extracted to SequenceCollection and plotted;
+          or overlaid on ``fig`` if provided.
+        - **str or Path** — path to ``.seq`` or ``.xml`` file; same behavior
+          as pypulseq Sequence. Auto-wrapped as SequenceCollection if no
+          ``fig`` is provided.
+        - **XML file** — loads reference waveforms from truth file (for overlay
+          when ``fig`` is provided).
+
+    subsequence_idx : int, default 0
+        Subsequence index (0-based) to plot.
+    tr_idx : int or str, default 0
+        TR selector:
+
+        - **int (≥ 0)** — 0-based TR instance index (degenerate sequences).
+        - **int (< 0)** — reverse indexing; ``-1`` selects the last TR.
+        - **str** — amplitude-mode selector:
+          ``'max_pos'`` (structural canonical, safety view) or
+          ``'zero_var'`` (zero-variable-grad, k-space view).
+
+    collapse_delays : bool, default True
+        If ``True``, collapse pure-delay blocks (no RF, grad, ADC) to 0.1 ms
+        for visual clarity. Timing information is preserved.
+    show_segments : bool, default True
+        If ``True``, colour-code gradient waveforms by segment index.
+        Segment boundaries are marked with subtle separators.
+    show_blocks : bool, default False
+        If ``True``, draw vertical dotted lines at block boundaries.
+    show_slew : bool, default False
+        If ``True``, overlay numerical slew-rate (dG/dt in T/m/s) on
+        each gradient panel as a thin line.
+    show_rf_centers : bool, default False
+        If ``True``, mark RF pulse envelope peaks (iso-centres) with
+        vertical markers on the RF magnitude subplot.
+    show_echoes : bool, default False
+        If ``True``, shade ADC sampling windows on the ADC subplot.
+    max_grad_mT_per_m : float, optional
+        Gradient axis upper limit (mT/m). If ``None``, auto-scaled from
+        sequence data and system constraints.
+    max_slew_T_per_m_per_s : float, optional
+        Slew-rate axis upper limit (T/m/s, only if ``show_slew=True``).
+        If ``None``, auto-scaled.
+    time_unit : str, default 'ms'
+        Time axis unit: ``'ms'`` (milliseconds, default) or ``'us'`` (microseconds).
+    figsize : tuple, optional
+        Figure size ``(width, height)`` in inches. Default attempts sensible
+        scaling; typically 14 × 8 inches for multi-trace layouts.
+    fig : PlotHandle, optional
+        Existing plot handle for overlay. If provided, waveforms from *source*
+        are overlaid onto the figure (e.g., reference overlaid on C-backend).
+        **Forbidden when source is a SequenceCollection.** Optional for
+        pypulseq Sequence or XML; when omitted, a new figure is created.
+    label : str, optional
+        Legend label for overlay traces (used only when ``fig`` is provided).
+    num_averages : int, default 0
+        Override average count for waveform extraction. 0 uses the default
+        from the SequenceCollection (set at construction). Used internally
+        for consistency with validation and analysis functions.
 
     Returns
     -------
     PlotHandle
-        Handle containing figure, axes, and TR metadata.
+        A namespace containing:
+
+        - ``fig`` — matplotlib Figure object.
+        - ``axes`` — tuple of Axes (typically 6 subplots in 3×2 layout).
+        - ``tr_duration_us`` — TR duration in microseconds (context).
+        - ``prep_duration_us`` — prep region duration (context).
+
+    Raises
+    ------
+    ValueError
+        If ``fig`` is provided when ``source`` is a SequenceCollection.
+        If ``tr_idx`` is out of range for the selected subsequence.
+
+    Notes
+    -----
+    Native timing means ADC samples are plotted at their actual microsecond
+    clock positions, revealing aliasing patterns and spectral properties that
+    uniform resampling would obscure.
+
+    Colour palette for segments uses MATLAB line colors (7-color cycle);
+    prep/cooldown regions are shown in gray. Amplitude-mode selector
+    (``'max_pos'`` vs ``'zero_var'`` vs ``'actual'``) controls how multi-shot
+    gradient amplitudes are resolved (structural max, zero-variable, or a
+    specific instance).
+
+    Examples
+    --------
+    Plot C-backend waveforms for a single TR:
+
+    >>> from python.pge.core import SequenceCollection
+    >>> sc = SequenceCollection('path/to/sequence.seq')
+    >>> sc.plot(subsequence_idx=0, tr_idx=5)
+
+    Plot with segment coloring and slew-rate overlay:
+
+    >>> sc.plot(subsequence_idx=0, show_segments=True, show_slew=True)
+
+    Overlay pypulseq reference for validation:
+
+    >>> handle = sc.plot(subsequence_idx=0, tr_idx=0)  # C-backend base
+    >>> seq_ref = SeqCollection('path/to/ref.seq')
+    >>> plot(seq_ref, subsequence_idx=0, tr_idx=0, fig=handle, label='Reference')
+
+    Use amplitude-mode selector:
+
+    >>> sc.plot(tr_idx='max_pos')  # Structural canonical TR
+    >>> sc.plot(tr_idx='zero_var')  # Zero-variable-grad view
+
+    See Also
+    --------
+    SequenceCollection.plot : Wrapper method (preferred interface).
+    get_tr_waveforms : Extract native-timing waveforms programmatically.
     """
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle

@@ -7,7 +7,35 @@ def calc_acoustic_spectra(
     max_freq_hz: float = 0.0,
     forbidden_bands=None,
 ) -> dict:
-    """Compute acoustic spectra for a specific canonical TR of a subsequence."""
+    """Compute acoustic spectra (gradient frequency content) for a TR.
+
+    Uses sliding-window FFT to analyze gradient spectrum across time,
+    identifying resonances and forbidden-band violations. Results are
+    returned as a dict with harmonic spectrum and time-frequency data.
+
+    Parameters
+    ----------
+    seq : SequenceCollection
+        The sequence to analyze.
+    subsequence_idx : int, default 0
+        Subsequence index (0-based).
+    canonical_tr_idx : int, default 0
+        Canonical TR index (0-based) to analyze.
+    target_window_size : int, default 0
+        FFT window size in samples. If 0, auto-selected from duration.
+    target_resolution_hz : float, default 0.0
+        Target frequency resolution (Hz). If 0, uses default (5 Hz).
+    max_freq_hz : float, default 0.0
+        Maximum frequency for analysis (Hz). If 0, uses default (3000 Hz).
+    forbidden_bands : list, optional
+        List of ``(freq_min, freq_max, max_amplitude)`` tuples defining
+        acoustic forbidden bands. If ``None``, no bands are checked.
+
+    Returns
+    -------
+    dict
+        Acoustic spectrum analysis results from C backend.
+    """
     if forbidden_bands is None:
         forbidden_bands = []
     return seq._cseq._calc_acoustic_spectra(
@@ -27,7 +55,33 @@ def calc_pns(
     rheobase: float = 20.0,
     alpha: float = 0.333,
 ) -> dict:
-    """Compute PNS slew-rate waveforms for a specific canonical TR of a subsequence."""
+    """Compute peripheral nerve stimulation (PNS) risk waveforms for a TR.
+
+    Uses the SAFE nerve model (Siebold et al. 2015) to convolve gradient
+    slew rates with exponential decay, producing a PNS percentage waveform.
+    Identifies peak stimulation levels per axis and combined.
+
+    Parameters
+    ----------
+    seq : SequenceCollection
+        The sequence to analyze.
+    subsequence_idx : int, default 0
+        Subsequence index (0-based).
+    canonical_tr_idx : int, default 0
+        Canonical TR index (0-based) to analyze.
+    chronaxie_us : float, default 360.0
+        Chronaxie parameter (µs) — decay time constant of nerve response.
+    rheobase : float, default 20.0
+        Rheobase parameter (Hz/m/s) — minimum stimulation threshold.
+    alpha : float, default 0.333
+        Alpha parameter (dimensionless) — scaling exponent for nerve model.
+
+    Returns
+    -------
+    dict
+        PNS analysis results from C backend, including per-axis and
+        combined percentage waveforms and peak levels.
+    """
     return seq._cseq._calc_pns(
         subsequence_idx,
         canonical_tr_idx,
@@ -57,13 +111,22 @@ _GAMMA_DEFAULT = 42.576e6  # Hz/T
 class ChannelWaveform:
     """Single-channel waveform with native (non-uniform) timing.
 
+    Represents a waveform (gradient, RF, ADC) with per-point time stamps
+    and amplitudes. Times are native microsecond clock positions from the
+    C library, not interpolated to a uniform raster. This preserves ADC
+    sampling patterns and reveals aliasing artifacts.
+
     Attributes
     ----------
     time_us : np.ndarray
-        Time points in microseconds, shape ``(N,)``.
+        Time points in microseconds, shape ``(N,)``. Typically a 1D float32 array.
     amplitude : np.ndarray
-        Amplitude values, shape ``(N,)``.  Units depend on channel:
-        mT/m for gradients, µT for RF magnitude, rad for RF phase.
+        Amplitude values, shape ``(N,)``. Units depend on channel:
+
+        - Gradients (Gx, Gy, Gz): mT/m
+        - RF magnitude: µT
+        - RF phase: radians
+        - ADC: normalized (0–1 range)
     """
 
     time_us: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
@@ -72,7 +135,24 @@ class ChannelWaveform:
 
 @dataclass
 class AdcEvent:
-    """ADC event descriptor."""
+    """ADC (analog-to-digital converter) event descriptor.
+
+    Represents a single readout window with timing, frequency offset,
+    phase offset, and sampling parameters.
+
+    Attributes
+    ----------
+    onset_us : float
+        Event start time relative to TR start (microseconds).
+    duration_us : float
+        Event duration (microseconds).
+    num_samples : int
+        Number of samples acquired during this event.
+    freq_offset_hz : float
+        Receiver frequency offset (Hz) for this event.
+    phase_offset_rad : float
+        Receiver phase offset (radians) for this event.
+    """
 
     onset_us: float = 0.0
     duration_us: float = 0.0
@@ -83,7 +163,30 @@ class AdcEvent:
 
 @dataclass
 class BlockDescriptor:
-    """Per-block metadata within a TR."""
+    """Per-block metadata within a TR (scan table parameters).
+
+    Describes a pypulseq block's timing, segment assignment, and RF/ADC
+    offsets in the context of the extracted TR waveforms.
+
+    Attributes
+    ----------
+    start_us : float
+        Block start time relative to TR start (microseconds).
+    duration_us : float
+        Block duration (microseconds).
+    segment_idx : int
+        Segment index (-1 for prep/cooldown, 0+ for imaging segments).
+    rf_freq_offset_hz : float
+        RF transmit frequency offset for this block (Hz).
+    rf_phase_offset_rad : float
+        RF transmit phase offset for this block (radians).
+    adc_freq_offset_hz : float
+        ADC receive frequency offset for this block (Hz).
+    adc_phase_offset_rad : float
+        ADC receive phase offset for this block (radians).
+    rotation_matrix : list
+        Slice selection rotation matrix (if applicable), typically 3×3.
+    """
 
     start_us: float = 0.0
     duration_us: float = 0.0
@@ -97,31 +200,37 @@ class BlockDescriptor:
 
 @dataclass
 class TrWaveforms:
-    """Complete native-timing TR waveforms for plotting.
+    """Complete native-timing TR waveforms for plotting and analysis.
 
-    Gradient amplitudes are in mT/m,  RF magnitude in µT,
-    RF phase in radians.  Times are in microseconds.
+    Contains gradient, RF, and ADC waveforms extracted from the C backend
+    with native (non-uniform) microsecond timing. Amplitudes are converted
+    to physical units: mT/m for gradients, µT for RF magnitude.
+    RF phase is in radians.
 
     Attributes
     ----------
     gx, gy, gz : ChannelWaveform
-        Gradient waveforms (mT/m).
+        Gradient waveforms (mT/m) for X, Y, Z axes.
     rf_mag : ChannelWaveform
         RF magnitude envelope (µT).
     rf_phase : ChannelWaveform
         RF phase (rad).
+    rf_mag_channels : list[ChannelWaveform]
+        Per-channel RF magnitudes (for pTx systems). Empty for single-Tx.
+    rf_phase_channels : list[ChannelWaveform]
+        Per-channel RF phases (for pTx systems). Empty for single-Tx.
     adc_events : list[AdcEvent]
-        ADC event descriptors.
+        Readout window descriptors (onset, duration, sampling rate, offsets).
     blocks : list[BlockDescriptor]
-        Per-block metadata (timing, segment assignment).
+        Per-block scan table metadata (timing, segment assignment, offsets).
     total_duration_us : float
-        Total duration of the extracted block range (µs).
+        Total duration of extracted block range (µs).
     gamma_hz_per_t : float
-        Gyromagnetic ratio used for unit conversion.
+        Gyromagnetic ratio used for unit conversion (Hz/T). Default 42.576e6.
     tr_duration_us : float
-        Duration of a single main TR (µs), for pypulseq overlay.
+        Duration of a single main imaging TR (µs), for pypulseq overlay context.
     prep_duration_us : float
-        Total duration of prep blocks (µs), for pypulseq overlay.
+        Total duration of prep blocks (µs), for pypulseq overlay context.
     """
 
     gx: ChannelWaveform = field(default_factory=ChannelWaveform)

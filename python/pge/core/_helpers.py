@@ -6,9 +6,44 @@ import numpy as np
 
 
 def _add_echo_spacing_axis(ax, freq_min, freq_max):
-    """
-    Add a secondary x-axis showing echo spacing (us) = 1/(2*frequency).
-    Uses proper inverse transformation so tick values are correct.
+    """Add secondary x-axis showing echo spacing (µs) dual to frequency (Hz).
+
+    Creates a second x-axis at the top of the provided Axes object that
+    displays echo spacing values (µs) corresponding to frequency ticks on
+    the primary axis. Uses the relationship: echo_spacing = 1 / (2 * frequency).
+
+    This is useful for spectral plots where both frequency and echo-spacing
+    interpretations are relevant (e.g., gradient spectrum analysis).
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to which the secondary axis is added.
+    freq_min : float
+        Minimum frequency (Hz) for the primary axis (currently unused,
+        kept for potential future enhancements).
+    freq_max : float
+        Maximum frequency (Hz) for the primary axis (currently unused).
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The secondary (top) x-axis object, ready for further customization.
+
+    Notes
+    -----
+    - The secondary axis shares the same x-limits as the primary axis.
+    - Frequency values ≤ 0 are displayed as ∞ (infinity symbol).
+    - Echo spacing is computed as 1 / (2 * frequency_Hz) in microseconds.
+    - The secondary axis y-label is set to ``'Echo Spacing (µs)'``.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> fig, ax = plt.subplots()
+    >>> ax.set_xlabel('Frequency (Hz)')
+    >>> _add_echo_spacing_axis(ax, freq_min=0, freq_max=3000)
+    >>> # Now the top x-axis shows echo spacing values
     """
     ax_top = ax.twiny()
 

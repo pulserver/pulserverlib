@@ -6,6 +6,31 @@ from pathlib import Path
 
 # Fallback stub for _validate_tr if not imported
 def _validate_tr(seq, sidx, tidx):
+    """Map validation indices to internal TR data structure.
+
+    This is a stub function that must be overridden by the actual C-backend
+    implementation. It extracts per-TR metadata needed for validation scope
+    resolution.
+
+    Parameters
+    ----------
+    seq : _PulseqCollection
+        C-backend collection object.
+    sidx : int
+        Subsequence index.
+    tidx : int
+        TR index.
+
+    Returns
+    -------
+    dict
+        TR metadata (populated by actual implementation).
+
+    Raises
+    ------
+    NotImplementedError
+        Always, unless overridden by actual import.
+    """
     raise NotImplementedError("_validate_tr must be implemented or imported.")
 
 import numpy as np
@@ -17,7 +42,32 @@ from ._waveforms import get_tr_waveforms
 
 
 def _interp_to_ref(t_ref, a_ref, t_test, a_test):
-    """Interpolate *test* waveform onto *ref* time base, return aligned pair."""
+    """Interpolate test waveform onto reference time base for comparison.
+
+    Aligns two waveforms (reference and test) to the same time grid by
+    interpolating the test waveform onto the reference time points.
+    Handles empty arrays, complex inputs, duplicate time points, and
+    end-of-window padding gracefully.
+
+    Parameters
+    ----------
+    t_ref : array-like
+        Reference time points (seconds or microseconds; units are preserved).
+    a_ref : array-like
+        Reference amplitudes (same length as t_ref).
+    t_test : array-like
+        Test time points (same units as t_ref).
+    a_test : array-like
+        Test amplitudes (same length as t_test).
+
+    Returns
+    -------
+    tuple of (a_ref_clipped, a_test_interp)
+        - ``a_ref_clipped`` : array of reference amplitudes (clipped to valid
+          reference indices to match interpolated length).
+        - ``a_test_interp`` : array of test amplitudes interpolated onto
+          reference time points, padded with zeros outside time range.
+    """
     t_ref = np.asarray(t_ref).ravel()
     a_ref = np.asarray(a_ref).ravel()
     t_test = np.asarray(t_test).ravel()
@@ -55,7 +105,24 @@ def _interp_to_ref(t_ref, a_ref, t_test, a_test):
 
 
 def _rms_error(ref, test):
-    """Percentage RMS error relative to ref (0 if ref is silent)."""
+    """Compute normalized RMS error between reference and test waveforms.
+
+    Calculates percentage RMS error relative to reference amplitude. Returns
+    0 if reference is negligible (norm < 1e-30), avoiding division by zero.
+
+    Parameters
+    ----------
+    ref : array-like
+        Reference waveform values.
+    test : array-like
+        Test waveform values (same shape as ref).
+
+    Returns
+    -------
+    float
+        RMS error as a percentage of reference norm (0–100+ range).
+        Returns 0 if reference is silent.
+    """
     norm = np.sqrt(np.mean(ref**2))
     if norm < 1e-30:
         return 0.0
@@ -63,10 +130,25 @@ def _rms_error(ref, test):
 
 
 def _is_non_degenerate(tr_info):
-    """True for bSSFP-like layouts where each ACTUAL-mode TR spans a full pass.
+    """Determine if sequence layout is non-degenerate (bSSFP-like).
 
-    In that case the C library returns one waveform per *pass* (slice), with
-    imaging blocks replicated ``num_averages`` times inside each pass.
+    Non-degenerate sequences (e.g., bSSFP) have prep/cooldown regions that
+    span multiple TRs ("passes"). The C library returns one waveform per
+    pass, with imaging blocks repeated ``num_averages`` times per pass.
+
+    Degenerate sequences (e.g., GRE) have prep/cooldown that play once,
+    followed by repeated imaging blocks.
+
+    Parameters
+    ----------
+    tr_info : dict
+        TR metadata from C backend, containing keys like 'degenerate_prep',
+        'degenerate_cooldown', 'num_prep_blocks', 'num_cooldown_blocks'.
+
+    Returns
+    -------
+    bool
+        ``True`` if sequence has non-degenerate prep or cooldown regions.
     """
     has_nd_prep = (not tr_info['degenerate_prep'] and tr_info['num_prep_blocks'] > 0)
     has_nd_cool = (not tr_info['degenerate_cooldown'] and tr_info['num_cooldown_blocks'] > 0)
@@ -74,14 +156,25 @@ def _is_non_degenerate(tr_info):
 
 
 def _total_addressable_trs(tr_info, num_averages=1):
-    """Total TRs addressable in ACTUAL mode (matches C-side logic).
+    """Compute total addressable TRs in ACTUAL mode (C-backend logic).
 
-    Non-degenerate (bSSFP): ``num_passes`` — each pass is a single TR that
-    embeds all averages.
+    TR count depends on sequence layout:
 
-    Degenerate (GRE-like): prep/cooldown play once; imaging repeats
-    ``num_averages`` times, giving ``num_prep_trs + num_averages * num_trs
-    + num_cooldown_trs``.
+    - **Non-degenerate** (bSSFP): returns ``num_passes`` (each pass = one TR).
+    - **Degenerate** (GRE): returns ``num_prep_trs + num_averages * num_trs + num_cooldown_trs``.
+
+    Parameters
+    ----------
+    tr_info : dict
+        TR metadata from C backend (keys: 'num_passes', 'num_trs',
+        'num_prep_trs', 'num_cooldown_trs', etc.).
+    num_averages : int, default 1
+        Number of imaging repetitions (scaling factor for degenerate case).
+
+    Returns
+    -------
+    int
+        Total addressable TRs (>= 1).
     """
     if _is_non_degenerate(tr_info):
         return tr_info['num_passes']
@@ -91,11 +184,25 @@ def _total_addressable_trs(tr_info, num_averages=1):
 
 
 def _canonical_pypulseq_block(tr_idx, tr_info, num_averages=1):
-    """Map a validate-loop *tr_idx* to the 0-based block offset used to
-    locate the corresponding time window in the pypulseq Sequence object.
+    """Map validate-loop TR index to canonical pypulseq block offset.
 
-    Non-degenerate: tr_idx selects a pass; block offset = pass_idx * pass_len.
-    Degenerate: imaging indices wrap modulo ``num_trs`` to canonical blocks.
+    Translates between validation scope (which may include prep/cooldown/imaging
+    repeats) and the underlying pypulseq block structure. Accounts for sequence
+    layout (non-degenerate vs. degenerate).
+
+    Parameters
+    ----------
+    tr_idx : int
+        TR index from validation loop (0-based, may span prep/imaging/cooldown).
+    tr_info : dict
+        TR metadata from C backend.
+    num_averages : int, default 1
+        Number of imaging averages (for degenerate layout).
+
+    Returns
+    -------
+    int
+        0-based block offset in pypulseq Sequence.block_events.
     """
     if _is_non_degenerate(tr_info):
         pass_len = (tr_info['num_prep_blocks']
@@ -121,10 +228,30 @@ def _abs_tr_start_s(
     tr_duration_us: float,
     imaging_tr_start: int | None = None,
 ) -> float:
-    """Compute the absolute start time (in seconds) of a TR.
+    """Compute absolute start time of a TR in seconds.
 
-    Sums block durations over the preparation region and adds
-    ``tr_idx * tr_duration``.
+    Sums block durations in the preparation region, then adds the TR offset.
+    If an imaging-TR anchor is provided by the C backend, it takes precedence
+    over num_prep_blocks for computing the main imaging window start.
+
+    Parameters
+    ----------
+    src_seq : pp.Sequence
+        pypulseq Sequence object with block_durations.
+    num_prep_blocks : int
+        Number of blocks in preparation region (fallback anchor).
+    tr_idx : int
+        TR number (0-based).
+    tr_duration_us : float
+        TR duration in microseconds.
+    imaging_tr_start : int, optional
+        C-backend imaging-TR start anchor (0-based block index, preferred).
+        If ``None``, uses *num_prep_blocks*.
+
+    Returns
+    -------
+    float
+        Absolute start time in seconds.
     """
     prep_s = 0.0
     bd = src_seq.block_durations
@@ -140,7 +267,23 @@ def _abs_tr_start_s(
 
 
 def _abs_block_start_s(src_seq, block_start: int) -> float:
-    """Compute absolute time in seconds for a 0-based block index."""
+    """Compute absolute start time of a block in seconds.
+
+    Sums block durations from the start of the sequence up to
+    and including *block_start*.
+
+    Parameters
+    ----------
+    src_seq : pp.Sequence
+        pypulseq Sequence object with block_durations.
+    block_start : int
+        0-based block index.
+
+    Returns
+    -------
+    float
+        Absolute start time in seconds (0 if block_start ≤ 0).
+    """
     if block_start <= 0:
         return 0.0
 
@@ -152,7 +295,29 @@ def _abs_block_start_s(src_seq, block_start: int) -> float:
 
 
 def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
-    """Extract reference waveforms from pypulseq for an exact time window."""
+    """Extract reference waveforms from pypulseq for a time window.
+
+    Calls pypulseq's waveforms_and_times() for the exact time window,
+    then clips and pads to ensure consistent array shapes. Returns a dict
+    with time and amplitude arrays for all channels (gradients, RF, ADC).
+
+    Parameters
+    ----------
+    seq : SequenceCollection
+        Collection containing pypulseq Sequences.
+    sequence_idx : int
+        Subsequence index (0-based).
+    abs_t0_s : float
+        Window start time in seconds.
+    window_duration_us : float
+        Window duration in microseconds.
+
+    Returns
+    -------
+    dict
+        Keys: 'gx', 'gy', 'gz', 'rf_mag', 'rf_phase', 'adc_mag', 'adc_phase'.
+        Values: ``(t_us, amplitude)`` tuples. Empty tuples if channel not present.
+    """
     src_seq = seq._seqs[sequence_idx]
     gamma = seq.system.gamma
 
@@ -296,11 +461,25 @@ def _pypulseq_reference_window(seq, sequence_idx, abs_t0_s, window_duration_us):
 
 
 def _concat_refs(segments):
-    """Concatenate reference dicts from multiple (offset_us, ref) segments.
+    """Concatenate reference waveforms from multiple time segments.
 
     Each *ref* is a dict returned by :func:`_pypulseq_reference_window`.
     Times in each ref are relative to that segment's start; *offset_us*
-    shifts them into the combined timeline.
+    shifts them into the combined timeline. Handles gaps specially for ADC
+    phase to avoid spurious linear ramps across regions without ADC activity.
+
+    Parameters
+    ----------
+    segments : list of (offset_us, ref_dict)
+        List of ``(offset_in_microseconds, reference_dict)`` tuples.
+        reference_dict contains keys like 'gx', 'gy', 'gz', 'rf_mag', etc.
+
+    Returns
+    -------
+    dict
+        Merged reference dict with times shifted to global timeline (starting
+        from first segment). Include special handling for multi-channel RF
+        and ADC event lists.
     """
     result = {}
 
@@ -371,10 +550,26 @@ def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1,
                         duration_us=None):
     """Extract reference waveforms from pypulseq for a single TR.
 
+    Handles both degenerate (GRE-like) and non-degenerate (bSSFP) layouts:
+
+    - **Degenerate**: extracts a single TR window.
+    - **Non-degenerate**: extracts prep + imaging (repeated per num_averages)
+      + cooldown, matching the full pass structure returned by C backend.
+
     Parameters
     ----------
-    duration_us : float | None
-        Override window duration.  When *None*, uses ``tr_duration_us`` from
+    seq : SequenceCollection
+        The sequence collection.
+    sequence_idx : int
+        Subsequence index (0-based).
+    tr_idx : int
+        TR index (0-based) to extract.
+    tr_info : dict
+        TR metadata from C backend.
+    num_averages : int, default 1
+        Number of imaging repetitions to include (non-degenerate only).
+    duration_us : float | None, optional
+        Override window duration. When ``None``, uses ``tr_duration_us`` from
         *tr_info* for degenerate TRs, or the full pass duration (computed from
         block_durations) for non-degenerate.
 
@@ -432,12 +627,23 @@ def _pypulseq_reference(seq, sequence_idx, tr_idx, tr_info, num_averages=1,
 
 
 def _xml_reference(xml_path):
-    """Extract reference waveforms from an XML file.
+    """Extract reference waveforms from an XML truth file.
+
+    Parses XML with structure ``<root><gx>, <gy>, <gz>, <rf>, ...</root>``
+    where each element contains space-separated time and amplitude pairs.
+    Converts units to match internal representation (mT/m for gradients,
+    µT for RF magnitude).
+
+    Parameters
+    ----------
+    xml_path : str or Path
+        Path to XML truth file.
 
     Returns
     -------
     dict
-        Same format as :func:`_pypulseq_reference`.
+        Same format as :func:`_pypulseq_reference`: keys like 'gx', 'gy', 'gz',
+        'rf_mag' with values ``(time_us, amplitude)`` tuples.
     """
     import xml.etree.ElementTree as ET
 
@@ -483,22 +689,88 @@ def validate(
     do_plot: bool = False,
     grad_atol: float | None = None,
     rf_rms_percent: float = 10.0,
-) -> None:
-    """
-    Validate subsequences and TRs against pypulseq or an XML reference.
+) -> bool:
+    """Validate scan-table waveforms against a reference implementation.
 
-    Behaviour
-    ---------
-    - ``do_plot=False``:
-      - ``subsequence_idx=None`` validates all subsequences.
-      - ``tr_instance=None`` validates all TRs for each selected subsequence.
-    - ``do_plot=True``:
-      - A concrete (subsequence, TR) target is required.
-      - ``subsequence_idx=None`` auto-resolves to 0 only if there is exactly
-        one subsequence; otherwise raises ``ValueError``.
-      - ``tr_instance=None`` auto-resolves to 0 only if the selected
-        subsequence has exactly one addressable TR; otherwise raises
-        ``ValueError``.
+    Compares C-backend gradient and RF waveforms from ``seq._cseq`` against
+    reference waveforms from pypulseq (default) or an XML truth file.
+    Scope selection is ``None``-driven:
+
+    - **do_plot=False** (default): ``None`` defaults iterate *all* subsequences
+      and TRs. ``subsequence_idx=None`` → all; ``tr_instance=None`` → all per subseq.
+
+    - **do_plot=True**: ``None`` defaults are auto-resolved to 0 only when
+      exactly one candidate exists; otherwise raises ``ValueError``.
+
+    Parameters
+    ----------
+    seq : SequenceCollection
+        The collection to validate.
+    subsequence_idx : int or None, default None
+        Subsequence index (0-based). If ``None``:
+
+        - With ``do_plot=False``: iterate all subsequences.
+        - With ``do_plot=True``: auto-select 0 if ``num_sequences == 1``,
+          else raise.
+
+    tr_instance : int or None, default None
+        TR instance (0-based index, or negative for reverse indexing).
+        If ``None``:
+
+        - With ``do_plot=False``: iterate all TRs in the selected subsequence(s).
+        - With ``do_plot=True``: auto-select 0 if exactly one addressable TR exists,
+          else raise.
+
+    xml_path : str, Path, or None, optional
+        Path to an XML truth file with ``<gx>``, ``<gy>``, ``<gz>``, ``<rf>`` elements
+        containing reference waveforms. If ``None``, uses pypulseq as reference.
+    do_plot : bool, default False
+        If ``True``, visually compare selected waveforms (enforces explicit targeting).
+    grad_atol : float, optional
+        Absolute tolerance (mT/m) for gradient RMS error. If ``None``, uses defaults.
+    rf_rms_percent : float, default 10.0
+        RF RMS error threshold as percentage of peak magnitude.
+
+    Returns
+    -------
+    bool
+        ``True`` if all validations passed; ``False`` if any waveform
+        comparison failed or visual mismatches occurred.
+
+    Raises
+    ------
+    ValueError
+        If ``do_plot=True`` and scope cannot be auto-resolved (e.g.,
+        ``subsequence_idx=None`` with ``num_sequences > 1``).
+
+    Notes
+    -----
+    The ``num_averages`` parameter is read from ``seq.num_averages``
+    (set at construction time), not passed here. This ensures consistency
+    with other analysis methods.
+
+    Validation matches C-backend canonical TR selection: when multiple TRs
+    are present, the first canonical instance (determined by shot-ID grouping
+    and amplitude filtering) is selected.
+
+    Examples
+    --------
+    Validate all TRs (default for ``do_plot=False``):
+
+    >>> result = validate(sc)
+    >>> print(f"Validation {'passed' if result else 'failed'}")
+
+    Validate with visual plot for a specific TR:
+
+    >>> result = validate(sc, subsequence_idx=0, tr_instance=5, do_plot=True)
+
+    Validate against an XML truth file:
+
+    >>> result = validate(sc, xml_path='path/to/truth.xml')
+
+    See Also
+    --------
+    SequenceCollection.validate : Wrapper method (preferred).
     """
     from ._extension._pulseqlib_wrapper import _find_tr
 
@@ -766,7 +1038,40 @@ def _validation_plot(
     messages,
     num_averages=0,
 ):
-    """Create the comparison overlay using :func:`_plot.plot`."""
+    """Create a validation comparison plot with C-backend and reference overlays.
+
+    Generates a (3, 2) figure showing gradients, RF, and ADC with C-backend
+    waveforms as the base and reference waveforms (from pypulseq or XML file)
+    overlaid for visual comparison. Color-codes mismatches and displays
+    any validation error messages.
+
+    Parameters
+    ----------
+    seq : SequenceCollection
+        The sequence to plot.
+    sequence_idx : int
+        Subsequence index (0-based).
+    xml_path : str, Path, or None
+        Path to XML truth file. If ``None``, uses pypulseq reference.
+    tr_idx : int
+        TR index to plot.
+    max_grad_mT_per_m : float
+        Gradient axis limit (mT/m) for display.
+    ok : bool
+        If ``True``, validation passed; ``False`` indicates failure.
+        Color-codes the figure title and message display accordingly.
+    messages : list of str
+        Error messages from validation (if ``ok=False``).
+    num_averages : int, default 0
+        Number of averages (for reference extraction context).
+
+    Notes
+    -----
+    This is an internal function called only when ``do_plot=True`` in
+    :func:`validate`. It uses the public :func:`_plot.plot` function
+    to generate the base C-backend figure, then overlays reference
+    waveforms for visual comparison.
+    """
     from ._plot import plot as _plot_impl
 
     # Branch 1: C-backend base figure

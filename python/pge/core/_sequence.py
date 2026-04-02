@@ -157,21 +157,52 @@ class SequenceCollection(pp.Sequence):
 
     @property
     def num_sequences(self) -> int:
-        """Number of sequences in the collection."""
+        """Total number of sequences in this collection.
+
+        Returns
+        -------
+        int
+            Number of pypulseq Sequence objects loaded during initialization.
+            A value of 1 is typical for single-sequence initialization;
+            values > 1 indicate linked sequence files (via ``"next"`` definitions).
+
+        See Also
+        --------
+        get_sequence : Retrieve a sequence by index.
+        num_blocks : Number of unique blocks in a subsequence.
+        """
         return len(self._seqs)
 
     def get_sequence(self, idx: int) -> pp.Sequence:
-        """Return the sequence at *idx* (0-based).
+        """Retrieve a deep copy of a sequence by index.
+
+        The returned sequence is a snapshot of the internal sequence
+        object and can be modified without affecting the collection.
 
         Parameters
         ----------
         idx : int
-            Index into the sequence list.
+            Index into the sequence list (0-based).
 
         Returns
         -------
         pp.Sequence
-            A deep copy of the stored sequence.
+            A deep copy of the stored pypulseq Sequence at position *idx*.
+
+        Raises
+        ------
+        IndexError
+            If *idx* < 0 or *idx* >= ``num_sequences``.
+
+        Examples
+        --------
+        >>> sc = SequenceCollection('multi_seq_001.seq')  # linked files
+        >>> seq1 = sc.get_sequence(1)
+        >>> print(f"Sequence 1 has {len(seq1.block_events)} blocks")
+
+        See Also
+        --------
+        num_sequences : Total number of sequences in the collection.
         """
         if idx < 0 or idx >= len(self._seqs):
             raise IndexError(
@@ -182,27 +213,46 @@ class SequenceCollection(pp.Sequence):
     # ── Unique-block accessors ────────────────────────────────
 
     def num_blocks(self, sequence_idx: int = 0) -> int:
-        """Number of unique blocks in the given subsequence.
+        """Number of unique blocks in a subsequence.
+
+        A "unique block" is a distinct block content identified by the C
+        backend's deduplication logic. Identical blocks appearing multiple
+        times in the sequence are counted only once.
 
         Parameters
         ----------
-        sequence_idx : int
-            Subsequence index (0-based, default 0).
+        sequence_idx : int, default 0
+            Subsequence index (0-based).
+
+        Returns
+        -------
+        int
+            Number of unique blocks in the subsequence.
+
+        Raises
+        ------
+        IndexError
+            If *sequence_idx* is out of range.
+
+        See Also
+        --------
+        get_block : Retrieve a normalized unique block by index.
+        num_segments : Number of unique segments (collections of blocks).
         """
         return _get_num_unique_blocks(self._cseq, sequence_idx)
 
     def get_block(self, sequence_idx: int, block_idx: int) -> SimpleNamespace:
-        """Return the *block_idx*-th unique block, normalised.
+        """Retrieve a unique block by index, normalized for comparison.
 
         The C library maps *block_idx* to the corresponding 1-based
-        ``block_events`` key.  The block is then fetched from the
-        pypulseq Sequence and normalised:
+        ``block_events`` key in pypulseq. The block is then fetched,
+        normalized, and returned. Normalization:
 
-        * RF ``freq_offset`` / ``phase_offset`` → 0;
-          ``signal`` scaled to unit peak.
-        * Gradient waveforms scaled to unit peak; trapezoid amplitudes
-          set to ±1.
-        * ADC ``freq_offset`` / ``phase_offset`` → 0.
+        - **RF**: ``freq_offset`` and ``phase_offset`` → 0;
+          ``signal`` scaled to unit peak amplitude.
+        - **Gradients**: waveforms scaled to unit peak; trapezoid
+          amplitudes set to ±1.
+        - **ADC**: ``freq_offset`` and ``phase_offset`` → 0.
 
         Parameters
         ----------
@@ -214,7 +264,25 @@ class SequenceCollection(pp.Sequence):
         Returns
         -------
         SimpleNamespace
-            The normalised pypulseq block.
+            A pypulseq block object (normalized, modified in-place).
+            Attributes include ``rf``, ``gx``, ``gy``, ``gz``, ``adc``.
+
+        Raises
+        ------
+        IndexError
+            If *sequence_idx* or *block_idx* is out of range.
+
+        Examples
+        --------
+        >>> sc = SequenceCollection('path/to/sequence.seq')
+        >>> block = sc.get_block(sequence_idx=0, block_idx=5)
+        >>> if hasattr(block, 'rf') and block.rf is not None:
+        ...     print(f"RF pulse peak: {np.max(np.abs(block.rf.signal)):.3f}")
+
+        See Also
+        --------
+        num_blocks : Total unique blocks in a subsequence.
+        get_segment : Extract an entire segment as a pypulseq Sequence.
         """
         block_id = _get_unique_block_id(self._cseq, sequence_idx, block_idx)
         block = self._seqs[sequence_idx].get_block(block_id)
@@ -234,17 +302,39 @@ class SequenceCollection(pp.Sequence):
         return subseqs[sequence_idx]
 
     def num_segments(self, sequence_idx: int = 0) -> int:
-        """Number of unique segments in the given subsequence.
+        """Number of unique segments in a subsequence.
+
+        A "segment" is a collection of blocks that compose a coherent
+        imaging unit (e.g., excitation, readout, spoiling). Multiple
+        segments are combined to form one TR.
 
         Parameters
         ----------
-        sequence_idx : int
-            Subsequence index (0-based, default 0).
+        sequence_idx : int, default 0
+            Subsequence index (0-based).
+
+        Returns
+        -------
+        int
+            Number of unique segments in the subsequence.
+
+        Raises
+        ------
+        IndexError
+            If *sequence_idx* is out of range.
+
+        See Also
+        --------
+        get_segment : Extract a segment as a pypulseq Sequence.
+        segment_size : Number of blocks in a segment.
+        tr_size : Number of blocks per TR.
         """
         return len(self._subseq_report(sequence_idx)['segments'])
 
     def segment_size(self, sequence_idx: int, segment_idx: int) -> int:
         """Number of blocks in a segment.
+
+        A segment is identified by its position within a subsequence.
 
         Parameters
         ----------
@@ -252,6 +342,28 @@ class SequenceCollection(pp.Sequence):
             Subsequence index (0-based).
         segment_idx : int
             Local segment index within *sequence_idx* (0-based).
+
+        Returns
+        -------
+        int
+            Number of blocks composing the segment.
+
+        Raises
+        ------
+        IndexError
+            If *sequence_idx* or *segment_idx* is out of range.
+
+        Examples
+        --------
+        >>> sc = SequenceCollection('path/to/sequence.seq')
+        >>> for seg_idx in range(sc.num_segments()):
+        ...     size = sc.segment_size(0, seg_idx)
+        ...     print(f"Segment {seg_idx}: {size} blocks")
+
+        See Also
+        --------
+        get_segment : Extract a segment as a pypulseq Sequence.
+        num_segments : Total segments in a subsequence.
         """
         ss = self._subseq_report(sequence_idx)
         segments = ss['segments']
@@ -263,12 +375,12 @@ class SequenceCollection(pp.Sequence):
         return segments[segment_idx]['num_blocks']
 
     def get_segment(self, sequence_idx: int, segment_idx: int) -> pp.Sequence:
-        """Extract a segment as a normalised :class:`pypulseq.Sequence`.
+        """Extract a segment as a normalized pypulseq Sequence.
 
         Uses the C library's *start_block* and *num_blocks* for the
         requested segment to parse the corresponding consecutive blocks
-        from the stored pypulseq Sequence, normalises each block, and
-        returns a new Sequence built via ``add_block``.
+        from the stored pypulseq Sequence. Each block is normalized
+        (see :meth:`get_block`), and a new Sequence is constructed.
 
         Parameters
         ----------
@@ -280,8 +392,30 @@ class SequenceCollection(pp.Sequence):
         Returns
         -------
         pp.Sequence
-            A new pypulseq Sequence containing the normalised blocks of
+            A new pypulseq Sequence containing the normalized blocks of
             the requested segment.
+
+        Raises
+        ------
+        IndexError
+            If *sequence_idx* or *segment_idx* is out of range.
+
+        Examples
+        --------
+        >>> sc = SequenceCollection('path/to/sequence.seq')
+        >>> seg = sc.get_segment(sequence_idx=0, segment_idx=2)
+        >>> print(f"Segment has {len(seg.block_events)} blocks")
+
+        Notes
+        -----
+        The returned Sequence uses the same system parameters as the
+        original sequence(s).
+
+        See Also
+        --------
+        get_block : Retrieve a single normalized block.
+        num_segments : Total segments in a subsequence.
+        segment_size : Blocks in a segment.
         """
         ss = self._subseq_report(sequence_idx)
         segments = ss['segments']
@@ -303,41 +437,101 @@ class SequenceCollection(pp.Sequence):
         return new_seq
 
     def tr_size(self, sequence_idx: int = 0) -> int:
-        """Number of blocks per TR in the given subsequence.
+        """Number of blocks per TR (repetition time) in a subsequence.
+
+        A TR is composed of multiple segments (e.g., preparation, readout,
+        spoiling). This method returns the total number of blocks required
+        to form one complete TR.
 
         Parameters
         ----------
-        sequence_idx : int
-            Subsequence index (0-based, default 0).
+        sequence_idx : int, default 0
+            Subsequence index (0-based).
+
+        Returns
+        -------
+        int
+            Number of blocks per TR in the subsequence.
+
+        Raises
+        ------
+        IndexError
+            If *sequence_idx* is out of range.
+
+        Examples
+        --------
+        >>> sc = SequenceCollection('path/to/sequence.seq')
+        >>> blocks_per_tr = sc.tr_size(0)
+        >>> num_segs = sc.num_segments(0)
+        >>> print(f"TR composed of {num_segs} segments, {blocks_per_tr} blocks total")
+
+        See Also
+        --------
+        num_segments : Segments per TR.
+        segment_size : Blocks per segment.
         """
         return self._subseq_report(sequence_idx)['tr_size']
 
     # ── Report ────────────────────────────────────────────────
 
     def report(self, *, do_print: bool = False):
-        """Structured report of the sequence collection.
+        """Structured report of the sequence collection organization.
 
-        Returns one :class:`~types.SimpleNamespace` per subsequence
-        containing:
+        Returns metadata about each subsequence including unique blocks,
+        segments, TR timing, and segment ordering. Useful for understanding
+        sequence structure and debugging layout issues.
 
-        - ``num_blocks`` — number of unique blocks.
-        - ``segments`` — list of ``(start_block, num_blocks)`` tuples.
-        - ``num_prep_blocks`` — preparation blocks before first TR.
-        - ``num_cooldown_blocks`` — cooldown blocks after last TR.
-        - ``tr_size`` — blocks per TR.
-        - ``tr_duration_s`` — TR duration in seconds.
-        - ``segment_order`` — ordered segment IDs composing one TR.
-        - ``prep_segment_table`` — segment IDs for prep region.
-        - ``cooldown_segment_table`` — segment IDs for cooldown.
+        Returns one :class:`~types.SimpleNamespace` per subsequence containing:
+
+        - ``num_blocks`` (int) — number of unique blocks in the subsequence.
+        - ``segments`` (list of tuple) — ``(start_block, num_blocks)`` tuples
+          for each segment.
+        - ``num_prep_blocks`` (int) — preparation blocks before first TR.
+        - ``num_cooldown_blocks`` (int) — cooldown blocks after last TR.
+        - ``tr_size`` (int) — number of blocks per TR.
+        - ``tr_duration_s`` (float) — TR duration in seconds.
+        - ``segment_order`` (list) — ordered segment IDs composing one TR.
+        - ``prep_segment_table`` (list) — segment IDs for prep region.
+        - ``cooldown_segment_table`` (list) — segment IDs for cooldown region.
 
         Parameters
         ----------
-        do_print : bool
-            If ``True``, return a formatted string instead.
+        do_print : bool, default False
+            If ``False`` (default), return structured data objects.
+            If ``True``, return a formatted human-readable string.
 
         Returns
         -------
         list[SimpleNamespace] or str
+            If ``do_print=False``: list of :class:`types.SimpleNamespace` objects,
+            one per subsequence, containing the fields listed above.
+            If ``do_print=True``: formatted text summary suitable for console output.
+
+        Examples
+        --------
+        Get structured metadata for all subsequences:
+
+        >>> sc = SequenceCollection('path/to/sequence.seq')
+        >>> reports = sc.report()
+        >>> for idx, rep in enumerate(reports):
+        ...     print(f"Subseq {idx}: {rep.num_blocks} blocks, TR={rep.tr_duration_s*1e3:.1f}ms")
+
+        Print human-readable summary:
+
+        >>> print(sc.report(do_print=True))
+        Sequence length: 1.200000 s  |  Subsequences: 2  |  Total unique segments: 5
+        --- Subsequence 0 ---
+          TR size:            64 blocks
+          TR duration:        12.345 ms
+          Prep blocks:        8
+          Cooldown blocks:    4
+          ...
+
+        See Also
+        --------
+        get_sequence : Retrieve a specific sequence by index.
+        get_block : Retrieve a normalized unique block.
+        get_segment : Extract a segment as a new pypulseq Sequence.
         """
         raw = _get_report(self._cseq)
         results = []
@@ -398,36 +592,76 @@ class SequenceCollection(pp.Sequence):
         forbidden_bands: list[tuple[float, float, float]] | None = None,
         pns_threshold_percent: float = 80.0,
     ) -> None:
-        """Run consistency and safety checks.
+        """Run consistency and safety checks on the sequence collection.
 
-        Checks performed (in order):
+        Performs a series of automated checks in order:
 
-        1. **Consistency** — segment boundaries, RF periodicity, label
-           tables.
+        1. **Consistency** — segment boundaries, RF periodicity, label tables.
         2. **Peak gradient** amplitude vs system limit.
         3. **Gradient continuity** across block boundaries.
         4. **Peak slew-rate** vs system limit.
-        5. **Acoustic** forbidden-band violations (per segment).
-        6. **PNS** threshold check (per segment, if PNS params given).
+        5. **Acoustic spectra** — forbidden-band violations (per segment, if bands given).
+        6. **PNS** — peripheral nerve stimulation risk (per segment, if PNS params given).
 
         Parameters
         ----------
-        stim_threshold : float
-            PNS stimulation threshold (Hz/m/s).  This equals
-            ``rheobase / alpha`` in the SAFE nerve model.  Set > 0
-            together with *decay_constant_us* to enable PNS checking.
-        decay_constant_us : float
-            PNS decay constant / chronaxie (µs).
-        forbidden_bands : list of (freq_min, freq_max, max_amplitude)
-            Acoustic forbidden-band specifications.  Each tuple gives
-            ``(freq_min_Hz, freq_max_Hz, max_allowed_amplitude_Hz_per_m)``.
-        pns_threshold_percent : float
-            PNS threshold as a percentage (100 = 100 %).
+        stim_threshold : float, default 0.0
+            PNS stimulation threshold in Hz/m/s. This equals ``rheobase / alpha``
+            in the SAFE nerve model. Set > 0 together with *decay_constant_us*
+            to enable PNS safety checking. Set to 0 to skip PNS checks.
+        decay_constant_us : float, default 0.0
+            PNS decay constant / chronaxie in microseconds. Set > 0 together
+            with *stim_threshold* to enable PNS checking.
+        forbidden_bands : list of (freq_min, freq_max, max_amplitude), optional
+            Acoustic forbidden-band specifications for gradient spectrum analysis.
+            Each tuple gives ``(freq_min_Hz, freq_max_Hz, max_allowed_amplitude_Hz_per_m)``.
+            If ``None``, no acoustic checks are performed.
+        pns_threshold_percent : float, default 80.0
+            PNS threshold as a percentage of maximum stimulation (100.0 = 100 %).
+            Used only if both *stim_threshold* and *decay_constant_us* are > 0.
 
         Raises
         ------
         RuntimeError
-            If a consistency or safety violation is detected.
+            If any consistency or safety violation is detected. The exception
+            message contains details about the specific failure location
+            (subsequence, block, segment, etc.).
+
+        Notes
+        -----
+        If *stim_threshold* or *decay_constant_us* is ≤ 0, PNS checking is
+        automatically skipped regardless of the other parameter's value.
+
+        All checks are performed on all subsequences in the collection.
+
+        Examples
+        --------
+        Check consistency and default safety limits:
+
+        >>> sc = SequenceCollection('path/to/sequence.seq')
+        >>> sc.check()  # Raises RuntimeError on failure
+
+        Check with custom PNS parameters (Siebold et al. 2015):
+
+        >>> sc.check(
+        ...     stim_threshold=120.0,
+        ...     decay_constant_us=360.0,
+        ...     pns_threshold_percent=80.0,
+        ... )
+
+        Check with forbidden acoustic bands:
+
+        >>> bands = [
+        ...     (100, 500, 1.0),    # Band 1: 100–500 Hz, max 1.0 Hz/m
+        ...     (2000, 3000, 0.5),  # Band 2: 2–3 kHz, max 0.5 Hz/m
+        ... ]
+        >>> sc.check(forbidden_bands=bands)
+
+        See Also
+        --------
+        validate : Validate waveforms against reference implementation.
+        pns : Plot PNS waveforms (visualization only, no pass/fail).
+        grad_spectrum : Plot acoustic spectra (visualization only, no pass/fail).
         """
         _check_consistency(self._cseq)
 
@@ -453,22 +687,66 @@ class SequenceCollection(pp.Sequence):
         decay_constant_us: float,
         threshold_percent: float | list[float] | tuple[float, ...] = [80.0, 100.0],
     ) -> None:
-        """Plot convolved PNS waveforms for a representative TR.
+        """Plot peripheral nerve stimulation (PNS) waveforms for a TR.
 
-        Displays per-axis and combined PNS percentage waveforms
-        together with a horizontal threshold line.  No pass/fail
-        check is performed — use :meth:`check` for that.
+        Displays per-axis (X, Y, Z) and combined PNS percentage waveforms
+        together with horizontal threshold guide line(s). No pass/fail check
+        is performed — use :meth:`check` for safety validation.
+
+        Canonical-TR selection follows the C-backend logic: the first canonical
+        TR instance (determined by shot-ID grouping and amplitude filtering)
+        is plotted.
 
         Parameters
         ----------
-        sequence_idx : int
-            Subsequence index (0-based, default 0).
+        sequence_idx : int, default 0
+            Subsequence index (0-based) to analyze.
         stim_threshold : float
-            PNS stimulation threshold (Hz/m/s) = rheobase / alpha.
+            PNS stimulation threshold in Hz/m/s. This equals
+            ``rheobase / alpha`` in the SAFE nerve model (Siebold et al. 2015).
         decay_constant_us : float
-            PNS decay constant / chronaxie (us).
-        threshold_percent : float or sequence of float
-            Threshold line(s) to draw (default 80 % and 100 %).
+            PNS decay constant / chronaxie in microseconds. Typical values
+            are 330–360 µs for standard stimulation models.
+        threshold_percent : float or sequence of float, default [80.0, 100.0]
+            Threshold line(s) to draw on the plot, as percentage of maximum
+            stimulation (100.0 = 100 %). Accepts:
+
+            - Single ``float``: e.g., ``80.0`` draws one line at 80 %.
+            - Sequence (list/tuple): e.g., ``[80.0, 100.0]`` draws two lines.
+
+        Raises
+        ------
+        ValueError
+            If *sequence_idx* is out of range.
+
+        Notes
+        -----
+        This is a visualization function only. To enforce PNS safety limits,
+        use :meth:`check` with *stim_threshold* and *decay_constant_us*.
+
+        The waveforms are computed using the C backend's convolution-based
+        approach, which models nerve response dynamics accurately.
+
+        Examples
+        --------
+        Plot PNS waveforms with 80% and 100% threshold lines:
+
+        >>> sc = SequenceCollection('path/to/sequence.seq')
+        >>> sc.pns(stim_threshold=120.0, decay_constant_us=360.0)
+
+        Plot with only a single 80% threshold line:
+
+        >>> sc.pns(
+        ...     sequence_idx=0,
+        ...     stim_threshold=120.0,
+        ...     decay_constant_us=360.0,
+        ...     threshold_percent=[80.0],
+        ... )
+
+        See Also
+        --------
+        check : Run safety checks including PNS validation.
+        grad_spectrum : Plot acoustic spectra (gradient-based).
         """
         from ._pns import pns as _pns_impl
 
@@ -492,25 +770,72 @@ class SequenceCollection(pp.Sequence):
     ) -> None:
         """Plot acoustic spectra for gradient waveforms in a TR.
 
-        Creates a two-row figure: spectrograms on top,
-        harmonic spectra with forbidden-band overlays on the bottom.
+        Creates a two-row figure: spectrograms (top) and harmonic spectrum
+        with forbidden-band overlays (bottom). Useful for identifying acoustic
+        resonance issues and validating against site-specific constraints.
         No pass/fail check is performed — use :meth:`check` for that.
+
+        Canonical-TR selection follows the C-backend logic (first canonical TR
+        determined by shot-ID grouping and amplitude filtering).
 
         Parameters
         ----------
-        sequence_idx : int
-            Subsequence index (0-based, default 0).
-        forbidden_bands : list of (freq_min, freq_max, max_amplitude)
-            Forbidden frequency bands (Hz, Hz, Hz/m).
-        window_duration : float
-            Sliding-window size in seconds (default 25 ms).
-        spectral_resolution : float
-            Target frequency resolution in Hz (default 5 Hz).
-        max_frequency : float
-            Upper frequency limit in Hz (default 3000 Hz).
+        sequence_idx : int, default 0
+            Subsequence index (0-based) to analyze.
+        forbidden_bands : list of (freq_min, freq_max, max_amplitude), optional
+            Acoustic forbidden-band specifications for gradient spectrum analysis.
+            Each tuple gives ``(freq_min_Hz, freq_max_Hz, max_allowed_amplitude_Hz_per_m)``.
+            Drawn as shaded regions on the harmonic plot. If ``None``, no bands
+            are drawn (but analysis still runs).
+        window_duration : float, default 25.0e-3
+            Sliding-window size for spectrograms in seconds (default 25 ms).
+            Smaller windows reveal time-varying frequency content; larger
+            windows improve frequency resolution.
+        spectral_resolution : float, default 5.0
+            Target frequency resolution for FFT in Hz (default 5 Hz).
+            Actual resolution = ``1 / (2 * (window_duration / overlap_factor))``.
+        max_frequency : float, default 3000.0
+            Upper frequency limit for all plots in Hz (default 3 kHz).
         threshold_percent : float or sequence of float, optional
-            Extra horizontal threshold guide(s) drawn on harmonic plots.
-            Accepts either a single value or a list/tuple.
+            Extra horizontal threshold guide line(s) drawn on harmonic plots,
+            as percentage of peak amplitude. Accepts a single float or
+            a list/tuple. If ``None``, no extra lines are drawn.
+
+        Raises
+        ------
+        ValueError
+            If *sequence_idx* is out of range or parameters are inconsistent.
+
+        Notes
+        -----
+        This is a visualization function only. To enforce acoustic safety limits,
+        use :meth:`check` with *forbidden_bands*.
+
+        Spectrograms show time evolution of gradient spectrum; the bottom harmonic
+        plot shows the peak envelope across all time windows.
+
+        Examples
+        --------
+        Plot gradient spectra with forbidden bands:
+
+        >>> sc = SequenceCollection('path/to/sequence.seq')
+        >>> bands = [
+        ...     (100, 500, 1.0),    # 100–500 Hz: max 1.0 Hz/m
+        ...     (2000, 3000, 0.5),  # 2–3 kHz: max 0.5 Hz/m
+        ... ]
+        >>> sc.grad_spectrum(forbidden_bands=bands)
+
+        Plot with custom time/frequency resolution:
+
+        >>> sc.grad_spectrum(
+        ...     window_duration=50e-3,  # 50 ms windows
+        ...     spectral_resolution=2.0,  # 2 Hz bins
+        ... )
+
+        See Also
+        --------
+        check : Run acoustic safety checks.
+        pns : Plot peripheral nerve stimulation waveforms.
         """
         from ._acoustics import grad_spectrum as _gs_impl
 
@@ -540,11 +865,67 @@ class SequenceCollection(pp.Sequence):
         time_unit: str = 'ms',
         figsize: tuple | None = None,
     ) -> None:
-        """Plot (3, 2) TR waveforms with colour-coded segments.
+        """Plot TR waveforms with colour-coded segments and optional overlays.
 
-        Displays gradients (Gx, Gy, Gz), RF magnitude / phase, and
-        ADC events for a single TR instance of the requested
-        subsequence.  Waveforms are obtained from the C library.
+        Displays a (3, 2) figure showing gradients (Gx, Gy, Gz), RF magnitude / phase,
+        and ADC events for a single TR instance of the requested subsequence.
+        Waveforms are obtained from the C-backed analysis library using native timing.
+
+        Parameters
+        ----------
+        subsequence_idx : int, default 0
+            Subsequence index (0-based) to plot.
+        tr_instance : int or str, default 0
+            TR instance selector. Accepts:
+
+            - Non-negative integer: 0-based index into the sequence.
+            - Negative integer: -1 for last, -2 for second-to-last, etc.
+            - String label: e.g., ``'shot_001'`` to select by label identifier.
+
+        collapse_delays : bool, default True
+            If ``True``, remove zero-duration delay blocks from the timeline,
+            reducing visual clutter. Timing information is preserved.
+        show_segments : bool, default True
+            If ``True``, colour-code waveforms by segment index and draw
+            segment boundary lines.
+        show_blocks : bool, default False
+            If ``True``, draw vertical lines at block boundaries.
+        show_slew : bool, default False
+            If ``True``, overlay gradient slew-rate (dG/dt) as a thin line
+            on each gradient subplot.
+        show_rf_centers : bool, default False
+            If ``True``, mark RF pulse envelope peaks with vertical markers.
+        show_echoes : bool, default False
+            If ``True``, mark ADC sampling windows with shaded rectangles.
+        max_grad_mT_per_m : float, optional
+            Override gradient axis limit (mT/m). If ``None``, computed from
+            sequence data and system constraints.
+        max_slew_T_per_m_per_s : float, optional
+            Override slew-rate axis limit (T/m/s) when ``show_slew=True``.
+            If ``None``, computed from sequence data and system constraints.
+        time_unit : str, default 'ms'
+            Time axis unit: 'ms' (milliseconds, default) or 'us' (microseconds).
+        figsize : tuple, optional
+            Figure size ``(width, height)`` in inches. If ``None``, uses
+            matplotlib's default sizing (typically 10 × 6 inches).
+
+        Raises
+        ------
+        ValueError
+            If ``subsequence_idx`` is out of range or ``tr_instance`` does not
+            match any sequence element by index or label.
+
+        Notes
+        -----
+        Native timing means ADC samples are plotted at their actual microsecond
+        clock positions from the C library, not at uniform intervals. This
+        reveals aliasing artifacts and spectral properties that uniform
+        resampling would mask.
+
+        See Also
+        --------
+        validate : Validate waveforms against reference.
+        check : Run consistency and safety checks.
         """
         from ._plot import plot as _plot_impl
         _plot_impl(
@@ -575,13 +956,91 @@ class SequenceCollection(pp.Sequence):
         grad_atol: float | None = None,
         rf_rms_percent: float = 10.0,
     ) -> bool:
-        """Validate scan-table waveforms against a reference.
+        """Validate scan-table waveforms against a reference implementation.
 
-        Scope defaults are ``None``-driven:
-        - ``do_plot=False``: ``subsequence_idx=None`` iterates all subsequences,
-          and ``tr_instance=None`` iterates all TRs in each selected subsequence.
-        - ``do_plot=True``: a specific (subsequence, TR) target is required,
-          with auto-selection to 0 allowed only when exactly one candidate exists.
+        Compares C-backend waveforms against pypulseq reference blocks,
+        reporting pass/fail status and RMS errors per channel. Scope selection
+        follows ``None``-driven semantics:
+
+        - **do_plot=False** (default): ``None`` defaults iterate *all* selected
+          dimensions. ``subsequence_idx=None`` → all subsequences;
+          ``tr_instance=None`` → all TRs per subsequence.
+
+        - **do_plot=True**: ``None`` defaults are not allowed; caller must
+          specify explicit targets. Single-candidate auto-select is permitted
+          (i.e., if collection has exactly one subsequence, ``subsequence_idx=None``
+          auto-selects to 0).
+
+        Parameters
+        ----------
+        do_plot : bool, default False
+            If ``True``, visually compare waveforms; enforces explicit targeting
+            semantics when ``do_plot=False`` allows traversal.
+        subsequence_idx : int or None, default None
+            Subsequence index (0-based) to validate. If ``None``:
+
+            - With ``do_plot=False``: validate all subsequences.
+            - With ``do_plot=True``: auto-select 0 only if
+              ``num_sequences == 1``, else raise.
+
+        tr_instance : int or None, default None
+            TR instance selector (0-based index or label). If ``None``:
+
+            - With ``do_plot=False``: validate all TRs in selected subsequence(s).
+            - With ``do_plot=True``: auto-select 0 only if exactly one TR exists
+              in the selected subsequence, else raise.
+
+        grad_atol : float, optional
+            Absolute tolerance (mT/m or mT/m per unit) for gradient waveforms.
+            If ``None``, uses a sensible default derived from sequence data.
+        rf_rms_percent : float, default 10.0
+            RMS error threshold as a percentage of RF peak magnitude.
+
+        Returns
+        -------
+        bool
+            ``True`` if validation passed (or completed for ``do_plot=True``);
+            ``False`` if any waveform comparison failed or vis mismatches found.
+
+        Raises
+        ------
+        ValueError
+            If ``do_plot=True`` and scope cannot be auto-resolved (e.g.,
+            ``subsequence_idx=None`` with ``num_sequences > 1``).
+        IndexError
+            If specified indices are out of bounds.
+
+        Notes
+        -----
+        The ``num_averages`` parameter is read from the constructor state
+        (``self.num_averages``), not passed at call time. This ensures
+        consistency across all analysis methods.
+
+        Validation uses the C-backend's canonical TR selection logic: when
+        multiple TRs are present, the first canonical instance (determined by
+        shot-ID grouping and amplitude filtering) is selected.
+
+        Examples
+        --------
+        Validate a single-subsequence collection (default all TRs):
+
+        >>> sc = SequenceCollection('path/to/sequence.seq', num_averages=3)
+        >>> result = sc.validate()
+        >>> print(f"Validation {'passed' if result else 'failed'}")
+
+        Validate with visual feedback on a specific TR:
+
+        >>> result = sc.validate(do_plot=True, tr_instance=5)
+
+        Validate all subsequences in a multi-subsequence collection:
+
+        >>> sc = SequenceCollection(seqs_list)  # list[Sequence]
+        >>> result = sc.validate()  # Iterates all subseqs, all TRs
+
+        See Also
+        --------
+        check : Run consistency and safety checks (no visual feedback).
+        plot : Plot waveforms for a single TR.
         """
         from ._validate import validate as _validate_impl
         return _validate_impl(
