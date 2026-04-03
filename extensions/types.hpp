@@ -226,6 +226,19 @@ struct AcousticSpectra {
     std::vector<int>   peaks_seq_gx;
     std::vector<int>   peaks_seq_gy;
     std::vector<int>   peaks_seq_gz;
+
+    int                num_instances       = 0;
+
+    /* -- structural candidate frequencies -- */
+    std::vector<float> candidate_freqs_gx;
+    std::vector<float> candidate_freqs_gy;
+    std::vector<float> candidate_freqs_gz;
+    std::vector<float> candidate_amps_gx;
+    std::vector<float> candidate_amps_gy;
+    std::vector<float> candidate_amps_gz;
+    std::vector<int>   candidate_violations_gx;
+    std::vector<int>   candidate_violations_gy;
+    std::vector<int>   candidate_violations_gz;
 };
 
 // ── PNS result ──────────────────────────────────────────────────────

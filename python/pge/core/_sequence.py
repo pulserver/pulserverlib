@@ -815,6 +815,7 @@ class SequenceCollection(pp.Sequence):
         peak_log10_threshold: float | None = None,
         peak_norm_scale: float | None = None,
         peak_eps: float | None = None,
+        peak_prominence: float | None = None,
     ) -> None:
         """Plot acoustic spectra for gradient waveforms in a TR.
 
@@ -859,6 +860,10 @@ class SequenceCollection(pp.Sequence):
         peak_eps : float, optional
             Positive epsilon added before log transform for numerical
             stability.
+        peak_prominence : float, optional
+            Minimum prominence (in log10 units) for a detected peak.
+            Peaks with prominence below this value are discarded.
+            Use this to suppress spurious peaks in noisy spectra (e.g. FSE).
 
         Raises
         ------
@@ -912,6 +917,7 @@ class SequenceCollection(pp.Sequence):
             peak_log10_threshold=peak_log10_threshold,
             peak_norm_scale=peak_norm_scale,
             peak_eps=peak_eps,
+            peak_prominence=peak_prominence,
         )
 
     def calculate_gradient_spectrum(self, **kwargs) -> None:

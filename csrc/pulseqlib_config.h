@@ -44,6 +44,34 @@
 #define PULSEQLIB_PEAK_EPS_DEFAULT 1e-30f
 #endif
 
+#ifndef PULSEQLIB_PEAK_PROMINENCE_DEFAULT
+#define PULSEQLIB_PEAK_PROMINENCE_DEFAULT 0.0f
+#endif
+
+/* ------------------------------------------------------------------ */
+/*  Structural acoustic analysis defaults                             */
+/* ------------------------------------------------------------------ */
+
+/** Absolute tolerance for clustering consecutive spacings (us). */
+#ifndef PULSEQLIB_SPACING_ABS_TOL_US
+#define PULSEQLIB_SPACING_ABS_TOL_US 10.0f
+#endif
+
+/** Relative tolerance for clustering consecutive spacings (fraction). */
+#ifndef PULSEQLIB_SPACING_REL_TOL
+#define PULSEQLIB_SPACING_REL_TOL 0.02f
+#endif
+
+/** Minimum waveform samples before intra-waveform FFT is applied. */
+#ifndef PULSEQLIB_MIN_ARBITRARY_SAMPLES
+#define PULSEQLIB_MIN_ARBITRARY_SAMPLES 10
+#endif
+
+/** Maximum number of hierarchy levels for spacing clustering. */
+#ifndef PULSEQLIB_MAX_HIERARCHY_LEVELS
+#define PULSEQLIB_MAX_HIERARCHY_LEVELS 4
+#endif
+
 /* ------------------------------------------------------------------ */
 /*  Allocator overrides                                               */
 /* ------------------------------------------------------------------ */

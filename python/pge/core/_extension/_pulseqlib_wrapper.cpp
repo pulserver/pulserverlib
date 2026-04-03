@@ -158,7 +158,8 @@ static py::dict _calc_acoustic_spectra(
     py::list py_bands,
     py::object peak_log10_threshold,
     py::object peak_norm_scale,
-    py::object peak_eps)
+    py::object peak_eps,
+    py::object peak_prominence)
 {
     std::vector<pulseqlib::ForbiddenBand> bands;
     for (auto item : py_bands) {
@@ -180,6 +181,7 @@ static py::dict _calc_acoustic_spectra(
     float peak_log10_threshold_val = parse_optional_float(peak_log10_threshold);
     float peak_norm_scale_val = parse_optional_float(peak_norm_scale);
     float peak_eps_val = parse_optional_float(peak_eps);
+    float peak_prominence_val = parse_optional_float(peak_prominence);
 
     auto sp = pc.coll().calc_acoustic_spectra(
         subsequence_idx,
@@ -190,7 +192,8 @@ static py::dict _calc_acoustic_spectra(
         bands,
         peak_log10_threshold_val,
         peak_norm_scale_val,
-        peak_eps_val);
+        peak_eps_val,
+        peak_prominence_val);
 
     py::dict out;
     out["freq_min_hz"]       = sp.freq_min_hz;
@@ -222,6 +225,18 @@ static py::dict _calc_acoustic_spectra(
         out["peaks_seq_gy"]    = sp.peaks_seq_gy;
         out["peaks_seq_gz"]    = sp.peaks_seq_gz;
     }
+    out["num_instances"] = sp.num_instances;
+
+    out["candidate_freqs_gx"]      = sp.candidate_freqs_gx;
+    out["candidate_freqs_gy"]      = sp.candidate_freqs_gy;
+    out["candidate_freqs_gz"]      = sp.candidate_freqs_gz;
+    out["candidate_amps_gx"]       = sp.candidate_amps_gx;
+    out["candidate_amps_gy"]       = sp.candidate_amps_gy;
+    out["candidate_amps_gz"]       = sp.candidate_amps_gz;
+    out["candidate_violations_gx"] = sp.candidate_violations_gx;
+    out["candidate_violations_gy"] = sp.candidate_violations_gy;
+    out["candidate_violations_gz"] = sp.candidate_violations_gz;
+
     return out;
 }
 
@@ -385,7 +400,8 @@ PYBIND11_MODULE(_pulseqlib_wrapper, m) {
             py::arg("forbidden_bands") = py::list(),
             py::arg("peak_log10_threshold") = py::none(),
             py::arg("peak_norm_scale") = py::none(),
-            py::arg("peak_eps") = py::none());
+            py::arg("peak_eps") = py::none(),
+            py::arg("peak_prominence") = py::none());
 
         m.def("_calc_pns", &_calc_pns,
             py::arg("collection"),

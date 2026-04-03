@@ -25,6 +25,7 @@ def _plot_grad_spectrum_single(
     peak_log10_threshold: float | None,
     peak_norm_scale: float | None,
     peak_eps: float | None,
+    peak_prominence: float | None,
 ) -> None:
     import matplotlib.pyplot as plt
 
@@ -39,6 +40,7 @@ def _plot_grad_spectrum_single(
         peak_log10_threshold=peak_log10_threshold,
         peak_norm_scale=peak_norm_scale,
         peak_eps=peak_eps,
+        peak_prominence=peak_prominence,
     )
 
     num_windows = rd['num_windows']
@@ -58,16 +60,25 @@ def _plot_grad_spectrum_single(
         ).reshape(num_windows, num_freq_bins)
 
     spectrum_full = {}
-    peaks_full = {}
     for ax_name in ('gx', 'gy', 'gz'):
         spectrum_full[ax_name] = np.asarray(
             rd[f'spectrum_full_{ax_name}'],
             dtype=np.float32,
         )
-        peaks_full[ax_name] = np.asarray(
-            rd[f'peaks_full_{ax_name}'],
-            dtype=np.int32,
-        )
+
+    # Dirichlet kernel envelope for multi-TR visualization
+    num_instances = int(rd.get('num_instances', 0))
+    f0 = float(rd.get('freq_spacing_seq_hz', 0.0))
+    dirichlet_env = {}
+    if num_instances > 1 and f0 > 0.0:
+        N = num_instances
+        arg = np.pi * frequencies / f0
+        with np.errstate(divide='ignore', invalid='ignore'):
+            dkern = np.abs(np.sin(N * arg) / (N * np.sin(arg)))
+        # Fix 0/0 at multiples of f0
+        dkern[~np.isfinite(dkern)] = 1.0
+        for ax_name in ('gx', 'gy', 'gz'):
+            dirichlet_env[ax_name] = spectrum_full[ax_name] * dkern
 
     freq_min = 0.0
     freq_max = float(frequencies[-1])
@@ -137,15 +148,15 @@ def _plot_grad_spectrum_single(
             label='Canonical TR',
         )
 
-        peak_mask = peaks_full[ax_name] > 0
-        if np.any(peak_mask):
+        if ax_name in dirichlet_env:
             ax.plot(
-                frequencies[peak_mask],
-                spectrum_full[ax_name][peak_mask],
-                'o',
+                frequencies,
+                dirichlet_env[ax_name],
                 color=color,
-                markersize=5,
-                markeredgewidth=0,
+                lw=0.6,
+                alpha=0.35,
+                linestyle=':',
+                label=f'Dirichlet (N={num_instances})',
             )
 
         for band in forbidden_bands:
@@ -155,6 +166,23 @@ def _plot_grad_spectrum_single(
                 alpha=0.15,
                 color='red',
                 zorder=0,
+            )
+
+        # Structural candidate frequency overlays
+        cand_freqs = np.asarray(rd.get(f'candidate_freqs_{ax_name}', []), dtype=np.float64)
+        cand_viols = np.asarray(rd.get(f'candidate_violations_{ax_name}', []), dtype=np.int32)
+        for ci in range(len(cand_freqs)):
+            cf = cand_freqs[ci]
+            if cf < freq_min or cf > freq_max:
+                continue
+            is_viol = int(cand_viols[ci]) if ci < len(cand_viols) else 0
+            ax.axvline(
+                cf,
+                color='red' if is_viol else 'green',
+                linestyle='-' if is_viol else '--',
+                linewidth=1.0 if is_viol else 0.6,
+                alpha=0.7 if is_viol else 0.4,
+                zorder=1,
             )
 
         for thr in thresholds:
@@ -192,6 +220,7 @@ def grad_spectrum(
     peak_log10_threshold: float | None = None,
     peak_norm_scale: float | None = None,
     peak_eps: float | None = None,
+    peak_prominence: float | None = None,
 ) -> None:
     """Plot acoustic spectra for gradient waveforms in the canonical TR.
 
@@ -235,6 +264,9 @@ def grad_spectrum(
         detection.
     peak_eps : float, optional
         Positive epsilon added before log transform for numerical stability.
+    peak_prominence : float, optional
+        Minimum prominence (in log10 units) for a peak to be retained.
+        Peaks with prominence below this value are discarded.
     """
     if forbidden_bands is None:
         forbidden_bands = []
@@ -274,4 +306,5 @@ def grad_spectrum(
                 peak_log10_threshold=peak_log10_threshold,
                 peak_norm_scale=peak_norm_scale,
                 peak_eps=peak_eps,
+                peak_prominence=peak_prominence,
             )

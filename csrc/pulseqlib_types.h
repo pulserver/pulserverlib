@@ -99,13 +99,15 @@ typedef struct pulseqlib_opts {
     float peak_log10_threshold;      /**< resonance detector log10 threshold */
     float peak_norm_scale;           /**< resonance detector normalization   */
     float peak_eps;                  /**< resonance detector epsilon         */
+    float peak_prominence;           /**< resonance detector min prominence  */
 } pulseqlib_opts;
 
 #define PULSEQLIB_OPTS_INIT { \
     0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, \
     PULSEQLIB_PEAK_LOG10_THRESHOLD_DEFAULT, \
     PULSEQLIB_PEAK_NORM_SCALE_DEFAULT, \
-    PULSEQLIB_PEAK_EPS_DEFAULT \
+    PULSEQLIB_PEAK_EPS_DEFAULT, \
+    PULSEQLIB_PEAK_PROMINENCE_DEFAULT \
 }
 
 /* ================================================================== */
@@ -349,12 +351,32 @@ typedef struct pulseqlib_acoustic_spectra {
     int*   peaks_seq_gx;        /**< binary peak mask                  */
     int*   peaks_seq_gy;
     int*   peaks_seq_gz;
+
+    /* -- repetition info ------------------------------------------- */
+    int    num_instances;        /**< TR repetition count (for display) */
+
+    /* -- structural candidate frequencies -------------------------- */
+    int    num_candidates_gx;    /**< candidate count per axis         */
+    int    num_candidates_gy;
+    int    num_candidates_gz;
+    float* candidate_freqs_gx;   /**< [num_candidates_gx] (Hz)        */
+    float* candidate_freqs_gy;
+    float* candidate_freqs_gz;
+    float* candidate_amps_gx;    /**< analytical spectral amplitudes   */
+    float* candidate_amps_gy;
+    float* candidate_amps_gz;
+    int*   candidate_violations_gx; /**< 1 = violates a band           */
+    int*   candidate_violations_gy;
+    int*   candidate_violations_gz;
 } pulseqlib_acoustic_spectra;
 
 #define PULSEQLIB_ACOUSTIC_SPECTRA_INIT { \
     0.0f, 0.0f, 0, 0,  NULL, NULL, NULL,  NULL, NULL, NULL, \
     NULL, NULL, NULL,  NULL, NULL, NULL, \
-    0.0f, 0,  NULL, NULL, NULL,  NULL, NULL, NULL \
+    0.0f, 0,  NULL, NULL, NULL,  NULL, NULL, NULL, \
+    0, \
+    0, 0, 0, \
+    NULL, NULL, NULL,  NULL, NULL, NULL,  NULL, NULL, NULL \
 }
 
 /* ================================================================== */

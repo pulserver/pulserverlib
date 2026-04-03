@@ -318,7 +318,8 @@ public:
         const std::vector<ForbiddenBand>& bands = {},
         float peak_log10_threshold = std::numeric_limits<float>::quiet_NaN(),
         float peak_norm_scale = std::numeric_limits<float>::quiet_NaN(),
-        float peak_eps = std::numeric_limits<float>::quiet_NaN()) const
+        float peak_eps = std::numeric_limits<float>::quiet_NaN(),
+        float peak_prominence = std::numeric_limits<float>::quiet_NaN()) const
     {
         std::vector<pulseqlib_forbidden_band> cbands(bands.size());
         for (size_t i = 0; i < bands.size(); ++i)
@@ -331,6 +332,8 @@ public:
             run_opts.peak_norm_scale = peak_norm_scale;
         if (!std::isnan(peak_eps))
             run_opts.peak_eps = peak_eps;
+        if (!std::isnan(peak_prominence))
+            run_opts.peak_prominence = peak_prominence;
 
         pulseqlib_acoustic_spectra cs = PULSEQLIB_ACOUSTIC_SPECTRA_INIT;
         pulseqlib_diagnostic diag;
@@ -376,6 +379,18 @@ public:
             assign_i(a.peaks_seq_gy,    cs.peaks_seq_gy,    cs.num_freq_bins_seq);
             assign_i(a.peaks_seq_gz,    cs.peaks_seq_gz,    cs.num_freq_bins_seq);
         }
+
+        a.num_instances = cs.num_instances;
+
+        assign_f(a.candidate_freqs_gx, cs.candidate_freqs_gx, cs.num_candidates_gx);
+        assign_f(a.candidate_freqs_gy, cs.candidate_freqs_gy, cs.num_candidates_gy);
+        assign_f(a.candidate_freqs_gz, cs.candidate_freqs_gz, cs.num_candidates_gz);
+        assign_f(a.candidate_amps_gx,  cs.candidate_amps_gx,  cs.num_candidates_gx);
+        assign_f(a.candidate_amps_gy,  cs.candidate_amps_gy,  cs.num_candidates_gy);
+        assign_f(a.candidate_amps_gz,  cs.candidate_amps_gz,  cs.num_candidates_gz);
+        assign_i(a.candidate_violations_gx, cs.candidate_violations_gx, cs.num_candidates_gx);
+        assign_i(a.candidate_violations_gy, cs.candidate_violations_gy, cs.num_candidates_gy);
+        assign_i(a.candidate_violations_gz, cs.candidate_violations_gz, cs.num_candidates_gz);
 
         pulseqlib_acoustic_spectra_free(&cs);
         return a;

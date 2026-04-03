@@ -16,12 +16,15 @@ static void pulseqlib__select_canonical_tr_window_idx(
     int has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
 
     if (has_nd_prep || has_nd_cool) {
-        /* Non-degenerate: canonical_tr_idx selects pass */
+        /* Non-degenerate: canonical_tr_idx selects pass.
+         * Pass-expanded waveform already bakes in num_averages via
+         * _build_pass_expanded_block_order; num_instances counts how
+         * many times this pass-expanded waveform repeats. */
         int pass_len = desc->pass_len;
         *start_block = canonical_tr_idx * pass_len;
         *block_count = pass_len;
         *amplitude_mode = PULSEQLIB_AMP_MAX_POS;
-        *num_instances = 1;
+        *num_instances = (desc->num_passes > 1) ? desc->num_passes : 1;
         *tr_duration_us = 0.0f;
         {
             int n;
@@ -40,12 +43,16 @@ static void pulseqlib__select_canonical_tr_window_idx(
         return;
     }
 
-    /* Degenerate: canonical_tr_idx selects imaging TR */
-    *start_block = trd->num_prep_blocks + trd->imaging_tr_start + canonical_tr_idx * trd->tr_size;
-    *block_count = trd->tr_size;
-    *amplitude_mode = PULSEQLIB_AMP_MAX_POS;
-    *num_instances = 1;
-    *tr_duration_us = trd->tr_duration_us;
+    /* Degenerate: canonical_tr_idx selects imaging TR.
+     * No pass expansion occurs, so averages must be accounted for here. */
+    {
+        int num_avgs = (desc->num_averages > 1) ? desc->num_averages : 1;
+        *start_block = trd->num_prep_blocks + trd->imaging_tr_start + canonical_tr_idx * trd->tr_size;
+        *block_count = trd->tr_size;
+        *amplitude_mode = PULSEQLIB_AMP_MAX_POS;
+        *num_instances = trd->num_trs * num_avgs;
+        *tr_duration_us = trd->tr_duration_us;
+    }
 }
 
 static int pulseqlib__build_pass_expanded_block_order(
@@ -781,6 +788,16 @@ void pulseqlib_acoustic_spectra_free(pulseqlib_acoustic_spectra* s)
     if (s->peaks_seq_gy)     PULSEQLIB_FREE(s->peaks_seq_gy);
     if (s->peaks_seq_gz)     PULSEQLIB_FREE(s->peaks_seq_gz);
 
+    if (s->candidate_freqs_gx)      PULSEQLIB_FREE(s->candidate_freqs_gx);
+    if (s->candidate_freqs_gy)      PULSEQLIB_FREE(s->candidate_freqs_gy);
+    if (s->candidate_freqs_gz)      PULSEQLIB_FREE(s->candidate_freqs_gz);
+    if (s->candidate_amps_gx)       PULSEQLIB_FREE(s->candidate_amps_gx);
+    if (s->candidate_amps_gy)       PULSEQLIB_FREE(s->candidate_amps_gy);
+    if (s->candidate_amps_gz)       PULSEQLIB_FREE(s->candidate_amps_gz);
+    if (s->candidate_violations_gx) PULSEQLIB_FREE(s->candidate_violations_gx);
+    if (s->candidate_violations_gy) PULSEQLIB_FREE(s->candidate_violations_gy);
+    if (s->candidate_violations_gz) PULSEQLIB_FREE(s->candidate_violations_gz);
+
     memset(s, 0, sizeof(*s));
 }
 
@@ -997,6 +1014,13 @@ static int compute_window_spectrum(
 /*  Resonance peak detection                                          */
 /* ================================================================== */
 
+static int compare_float(const void* a, const void* b)
+{
+    float fa = *(const float*)a;
+    float fb = *(const float*)b;
+    return (fa > fb) - (fa < fb);
+}
+
 /* FIX: output first */
 static void detect_resonances(
     int* peaks,
@@ -1004,10 +1028,13 @@ static void detect_resonances(
     int n,
     float peak_log10_threshold,
     float peak_norm_scale,
-    float peak_eps)
+    float peak_eps,
+    float peak_prominence)
 {
     int i;
-    float max_val, sum_log, mean_log, norm, log_val;
+    float max_val, median_log, norm;
+    float* log_buf;
+    float left_min, right_min, prom;
 
     if (n <= 0 || !mag || !peaks) return;
     for (i = 0; i < n; ++i) peaks[i] = 0;
@@ -1017,21 +1044,1015 @@ static void detect_resonances(
     for (i = 0; i < n; ++i) if (mag[i] > max_val) max_val = mag[i];
     if (max_val <= 0.0f) return;
 
-    sum_log = 0.0f;
+    /* compute log-scaled values and median baseline */
+    log_buf = (float*)PULSEQLIB_ALLOC((size_t)n * sizeof(float));
+    if (!log_buf) return;
+
     for (i = 0; i < n; ++i) {
         norm = (mag[i] / max_val + peak_eps) * peak_norm_scale;
-        sum_log += (float)log10((double)norm);
+        log_buf[i] = (float)log10((double)norm);
     }
-    mean_log = sum_log / (float)n;
+    {
+        float* sorted = (float*)PULSEQLIB_ALLOC((size_t)n * sizeof(float));
+        if (!sorted) { PULSEQLIB_FREE(log_buf); return; }
+        memcpy(sorted, log_buf, (size_t)n * sizeof(float));
+        qsort(sorted, (size_t)n, sizeof(float), compare_float);
+        if (n % 2 == 1)
+            median_log = sorted[n / 2];
+        else
+            median_log = 0.5f * (sorted[n / 2 - 1] + sorted[n / 2]);
+        PULSEQLIB_FREE(sorted);
+    }
 
     for (i = 1; i < n - 1; ++i) {
         if (mag[i] > mag[i-1] && mag[i] > mag[i+1]) {
-            norm    = (mag[i] / max_val + peak_eps) * peak_norm_scale;
-            log_val = (float)log10((double)norm);
-            if (log_val - mean_log > peak_log10_threshold)
+            if (log_buf[i] - median_log > peak_log10_threshold) {
+                if (peak_prominence > 0.0f) {
+                    /* left trough: lowest log value between previous higher peak and i */
+                    left_min = log_buf[i];
+                    {
+                        int j;
+                        for (j = i - 1; j >= 0; --j) {
+                            if (log_buf[j] < left_min) left_min = log_buf[j];
+                            if (log_buf[j] > log_buf[i]) break;
+                        }
+                    }
+                    /* right trough: lowest log value between i and next higher peak */
+                    right_min = log_buf[i];
+                    {
+                        int j;
+                        for (j = i + 1; j < n; ++j) {
+                            if (log_buf[j] < right_min) right_min = log_buf[j];
+                            if (log_buf[j] > log_buf[i]) break;
+                        }
+                    }
+                    prom = log_buf[i] - (left_min > right_min ? left_min : right_min);
+                    if (prom < peak_prominence) continue;
+                }
                 peaks[i] = 1;
+            }
         }
     }
+
+    PULSEQLIB_FREE(log_buf);
+}
+
+/* ================================================================== */
+/*  Structural acoustic analysis — data types                         */
+/* ================================================================== */
+
+/** A single grad-def occurrence within the canonical TR. */
+typedef struct {
+    int   def_id;           /**< gradient definition id                */
+    int   def_index;        /**< index into grad_definitions[]         */
+    float start_time_us;    /**< block start time within the TR (us)   */
+    float amplitude;        /**< time-domain amplitude (Hz/m)          */
+} sa_occurrence;
+
+/** A run of uniform spacing within one grad-def's occurrences. */
+typedef struct {
+    float spacing_us;       /**< uniform spacing of this run (us)      */
+    int   count;            /**< number of occurrences in this run     */
+    float run_start_us;     /**< start time of first occurrence (us)   */
+} sa_spacing_run;
+
+/** Per grad-def spectral contribution. */
+typedef struct {
+    int   def_id;
+    float amplitude;        /**< worst-case time-domain amplitude (Hz/m) */
+    int   num_runs;
+    sa_spacing_run* runs;   /**< allocated array [num_runs]             */
+    float resonant_freq_hz; /**< >0 if intra-waveform has spectral peak; 0 = broadband */
+    int   resonant_num_cycles; /**< effective oscillation count for Dirichlet H_d(f) */
+} sa_def_contribution;
+
+/** Structural analysis results per axis. */
+typedef struct {
+    int num_contributions;
+    sa_def_contribution* contributions; /**< allocated [num_contributions] */
+} sa_axis_candidates;
+
+/** Structural analysis results for all three axes. */
+typedef struct {
+    sa_axis_candidates axes[3]; /**< 0=gx, 1=gy, 2=gz */
+} sa_structural_candidates;
+
+static void sa_free_structural_candidates(sa_structural_candidates* sc)
+{
+    int ax, c;
+    if (!sc) return;
+    for (ax = 0; ax < 3; ++ax) {
+        if (sc->axes[ax].contributions) {
+            for (c = 0; c < sc->axes[ax].num_contributions; ++c) {
+                if (sc->axes[ax].contributions[c].runs)
+                    PULSEQLIB_FREE(sc->axes[ax].contributions[c].runs);
+            }
+            PULSEQLIB_FREE(sc->axes[ax].contributions);
+        }
+        sc->axes[ax].contributions = NULL;
+        sc->axes[ax].num_contributions = 0;
+    }
+}
+
+/* ================================================================== */
+/*  Structural acoustic analysis — occurrence extraction              */
+/* ================================================================== */
+
+/**
+ * Extract grad-def occurrences for one axis within the canonical TR.
+ * @param axis  0=gx, 1=gy, 2=gz
+ * Returns number of occurrences, or -1 on allocation failure.
+ */
+static int sa_extract_def_occurrences(
+    sa_occurrence** out_occ,
+    const struct pulseqlib_sequence_descriptor* desc,
+    int start_block, int block_count, int axis)
+{
+    int i, n, cap;
+    float time_us;
+    sa_occurrence* occ;
+
+    cap = (block_count > 0) ? block_count : 16;
+    occ = (sa_occurrence*)PULSEQLIB_ALLOC((size_t)cap * sizeof(sa_occurrence));
+    if (!occ) return -1;
+    n = 0;
+    time_us = 0.0f;
+
+    for (i = 0; i < block_count; ++i) {
+        const struct pulseqlib_block_table_element* bte =
+            &desc->block_table[start_block + i];
+        const struct pulseqlib_block_definition* bdef =
+            &desc->block_definitions[bte->id];
+        int grad_table_idx;
+        float blk_dur;
+
+        switch (axis) {
+            case 0: grad_table_idx = bte->gx_id; break;
+            case 1: grad_table_idx = bte->gy_id; break;
+            case 2: grad_table_idx = bte->gz_id; break;
+            default: grad_table_idx = -1; break;
+        }
+
+        if (grad_table_idx >= 0) {
+            const struct pulseqlib_grad_table_element* gte =
+                &desc->grad_table[grad_table_idx];
+            const struct pulseqlib_grad_definition* gdef =
+                &desc->grad_definitions[gte->id];
+            float abs_amp = gte->amplitude;
+            float max_amp;
+
+            if (abs_amp < 0.0f) abs_amp = -abs_amp;
+            max_amp = gdef->max_amplitude[gte->shot_index];
+            if (max_amp < 0.0f) max_amp = -max_amp;
+
+            if (n >= cap) {
+                sa_occurrence* tmp;
+                cap *= 2;
+                tmp = (sa_occurrence*)PULSEQLIB_ALLOC((size_t)cap * sizeof(sa_occurrence));
+                if (!tmp) { PULSEQLIB_FREE(occ); return -1; }
+                memcpy(tmp, occ, (size_t)n * sizeof(sa_occurrence));
+                PULSEQLIB_FREE(occ);
+                occ = tmp;
+            }
+            occ[n].def_id = gte->id;
+            occ[n].def_index = gte->id;
+            occ[n].start_time_us = time_us;
+            occ[n].amplitude = abs_amp * max_amp;
+            ++n;
+        }
+
+        blk_dur = (bte->duration_us >= 0) ? (float)bte->duration_us
+                                           : (float)bdef->duration_us;
+        time_us += blk_dur;
+    }
+
+    *out_occ = occ;
+    return n;
+}
+
+/* ================================================================== */
+/*  Structural acoustic analysis — spacing clustering                 */
+/* ================================================================== */
+
+/**
+ * Cluster spacings for one grad-def's occurrences.
+ * Input: sorted array of start times for ONE def_id.
+ * Output: allocated array of spacing runs.
+ * Returns number of runs, or -1 on error.
+ */
+static int sa_cluster_def_spacings(
+    sa_spacing_run** out_runs,
+    const float* times, int count,
+    float abs_tol_us, float rel_tol)
+{
+    int i, num_runs, cap;
+    sa_spacing_run* runs;
+    float dt, tol, run_spacing;
+    int run_count;
+    float run_start;
+
+    *out_runs = NULL;
+    if (count < 2) {
+        /* Single occurrence: no spacing runs. */
+        return 0;
+    }
+
+    cap = 8;
+    runs = (sa_spacing_run*)PULSEQLIB_ALLOC((size_t)cap * sizeof(sa_spacing_run));
+    if (!runs) return -1;
+    num_runs = 0;
+
+    /* Start first run with first spacing */
+    run_spacing = times[1] - times[0];
+    run_count = 2;  /* Two occurrences = one spacing */
+    run_start = times[0];
+
+    for (i = 2; i < count; ++i) {
+        dt = times[i] - times[i - 1];
+        tol = abs_tol_us;
+        if (rel_tol * run_spacing > tol) tol = rel_tol * run_spacing;
+
+        if (dt > run_spacing - tol && dt < run_spacing + tol) {
+            /* Same spacing — extend current run. */
+            run_count++;
+            /* Update running average spacing */
+            run_spacing = (times[i] - run_start) / (float)(run_count - 1);
+        } else {
+            /* Different spacing — close current run, start new one. */
+            if (num_runs >= cap) {
+                sa_spacing_run* tmp;
+                cap *= 2;
+                tmp = (sa_spacing_run*)PULSEQLIB_ALLOC((size_t)cap * sizeof(sa_spacing_run));
+                if (!tmp) { PULSEQLIB_FREE(runs); return -1; }
+                memcpy(tmp, runs, (size_t)num_runs * sizeof(sa_spacing_run));
+                PULSEQLIB_FREE(runs);
+                runs = tmp;
+            }
+            runs[num_runs].spacing_us = run_spacing;
+            runs[num_runs].count = run_count;
+            runs[num_runs].run_start_us = run_start;
+            num_runs++;
+
+            /* Start new run */
+            run_spacing = dt;
+            run_count = 2;
+            run_start = times[i - 1];
+        }
+    }
+
+    /* Close final run */
+    if (num_runs >= cap) {
+        sa_spacing_run* tmp;
+        cap = num_runs + 1;
+        tmp = (sa_spacing_run*)PULSEQLIB_ALLOC((size_t)cap * sizeof(sa_spacing_run));
+        if (!tmp) { PULSEQLIB_FREE(runs); return -1; }
+        memcpy(tmp, runs, (size_t)num_runs * sizeof(sa_spacing_run));
+        PULSEQLIB_FREE(runs);
+        runs = tmp;
+    }
+    runs[num_runs].spacing_us = run_spacing;
+    runs[num_runs].count = run_count;
+    runs[num_runs].run_start_us = run_start;
+    num_runs++;
+
+    /* ----- Detect second hierarchy level: run-to-run spacing ----- */
+    if (num_runs >= 2) {
+        int j;
+        float* run_starts;
+        sa_spacing_run* level2;
+        int num_level2;
+
+        run_starts = (float*)PULSEQLIB_ALLOC((size_t)num_runs * sizeof(float));
+        if (run_starts) {
+            for (j = 0; j < num_runs; ++j)
+                run_starts[j] = runs[j].run_start_us;
+            num_level2 = sa_cluster_def_spacings(&level2, run_starts, num_runs,
+                                                  abs_tol_us, rel_tol);
+            if (num_level2 > 0 && level2) {
+                /* Append level-2 runs to the output */
+                sa_spacing_run* combined;
+                int total = num_runs + num_level2;
+                combined = (sa_spacing_run*)PULSEQLIB_ALLOC((size_t)total * sizeof(sa_spacing_run));
+                if (combined) {
+                    memcpy(combined, runs, (size_t)num_runs * sizeof(sa_spacing_run));
+                    memcpy(&combined[num_runs], level2, (size_t)num_level2 * sizeof(sa_spacing_run));
+                    PULSEQLIB_FREE(runs);
+                    runs = combined;
+                    num_runs = total;
+                }
+                PULSEQLIB_FREE(level2);
+            }
+            PULSEQLIB_FREE(run_starts);
+        }
+    }
+
+    *out_runs = runs;
+    return num_runs;
+}
+
+/* ================================================================== */
+/*  Structural acoustic analysis — build contributions per axis       */
+/* ================================================================== */
+
+static int sa_compare_int(const void* a, const void* b)
+{
+    return (*(const int*)a) - (*(const int*)b);
+}
+
+/**
+ * Build per-axis structural contributions from occurrences.
+ * For each unique def_id, clusters spacings and optionally
+ * computes intra-waveform FFT for arbitrary grads > min_samples.
+ */
+static int sa_build_axis_contributions(
+    sa_axis_candidates* ac,
+    const sa_occurrence* occ, int num_occ,
+    const struct pulseqlib_sequence_descriptor* desc,
+    float abs_tol_us, float rel_tol, int min_arb_samples,
+    float peak_log10_threshold, float peak_norm_scale,
+    float peak_eps, float peak_prominence)
+{
+    int i, j, num_unique, c;
+    int* unique_ids;
+    float* def_times;
+    int def_time_cap;
+
+    ac->num_contributions = 0;
+    ac->contributions = NULL;
+    if (num_occ <= 0) return PULSEQLIB_SUCCESS;
+
+    /* Collect unique def_ids */
+    unique_ids = (int*)PULSEQLIB_ALLOC((size_t)num_occ * sizeof(int));
+    if (!unique_ids) return PULSEQLIB_ERR_ALLOC_FAILED;
+    for (i = 0; i < num_occ; ++i) unique_ids[i] = occ[i].def_id;
+    qsort(unique_ids, (size_t)num_occ, sizeof(int), sa_compare_int);
+
+    num_unique = 1;
+    for (i = 1; i < num_occ; ++i)
+        if (unique_ids[i] != unique_ids[i - 1])
+            unique_ids[num_unique++] = unique_ids[i];
+
+    ac->contributions = (sa_def_contribution*)PULSEQLIB_ALLOC(
+        (size_t)num_unique * sizeof(sa_def_contribution));
+    if (!ac->contributions) { PULSEQLIB_FREE(unique_ids); return PULSEQLIB_ERR_ALLOC_FAILED; }
+    memset(ac->contributions, 0, (size_t)num_unique * sizeof(sa_def_contribution));
+
+    def_time_cap = num_occ;
+    def_times = (float*)PULSEQLIB_ALLOC((size_t)def_time_cap * sizeof(float));
+    if (!def_times) { PULSEQLIB_FREE(unique_ids);
+                      PULSEQLIB_FREE(ac->contributions); ac->contributions = NULL;
+                      return PULSEQLIB_ERR_ALLOC_FAILED; }
+
+    c = 0;
+    for (i = 0; i < num_unique; ++i) {
+        int did = unique_ids[i];
+        int n_times = 0;
+        float max_amp = 0.0f;
+        const struct pulseqlib_grad_definition* gdef = NULL;
+
+        /* Gather times and worst-case amplitude for this def */
+        for (j = 0; j < num_occ; ++j) {
+            if (occ[j].def_id == did) {
+                def_times[n_times++] = occ[j].start_time_us;
+                if (occ[j].amplitude > max_amp) max_amp = occ[j].amplitude;
+                gdef = &desc->grad_definitions[occ[j].def_index];
+            }
+        }
+
+        ac->contributions[c].def_id = did;
+        ac->contributions[c].amplitude = max_amp;
+        ac->contributions[c].resonant_freq_hz = 0.0f;
+        ac->contributions[c].resonant_num_cycles = 0;
+
+        /* Cluster spacings */
+        {
+            sa_spacing_run* runs = NULL;
+            int num_runs = sa_cluster_def_spacings(&runs, def_times, n_times,
+                                                    abs_tol_us, rel_tol);
+            if (num_runs < 0) {
+                PULSEQLIB_FREE(unique_ids); PULSEQLIB_FREE(def_times);
+                return PULSEQLIB_ERR_ALLOC_FAILED;
+            }
+            ac->contributions[c].runs = runs;
+            ac->contributions[c].num_runs = num_runs;
+        }
+
+        /* Intra-waveform FFT for arbitrary grads with enough samples.
+         * If the spectrum has any peaks (via detect_resonances), the waveform
+         * is resonant at the frequency of the absolute max; otherwise broadband. */
+        if (gdef && gdef->type == 1) {
+            int nsamp = gdef->fall_time_or_num_uncompressed_samples;
+            if (nsamp >= min_arb_samples) {
+                int shape_id = gdef->shot_shape_ids[0];
+                if (shape_id >= 0 && shape_id < desc->num_shapes &&
+                    desc->shapes[shape_id].num_samples >= min_arb_samples)
+                {
+                    int nfft_arb, nfreq_arb, s_idx;
+                    float* work;
+                    kiss_fft_cpx* fft_out;
+                    kiss_fftr_cfg cfg;
+                    float arb_norm, freq_res_arb;
+                    int num_shape_samp = desc->shapes[shape_id].num_samples;
+                    float raster = desc->grad_raster_us;
+
+                    nfft_arb = (int)pulseqlib__next_pow2((size_t)num_shape_samp);
+                    if (nfft_arb < 16) nfft_arb = 16;
+                    nfreq_arb = nfft_arb / 2 + 1;
+                    work = (float*)PULSEQLIB_ALLOC((size_t)nfft_arb * sizeof(float));
+                    fft_out = (kiss_fft_cpx*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(kiss_fft_cpx));
+                    cfg = kiss_fftr_alloc(nfft_arb, 0, NULL, NULL);
+                    if (work && fft_out && cfg) {
+                        float mean = 0.0f;
+                        float* mag_buf;
+
+                        /* Copy samples, remove mean */
+                        for (s_idx = 0; s_idx < num_shape_samp; ++s_idx) {
+                            work[s_idx] = desc->shapes[shape_id].samples[s_idx];
+                            mean += work[s_idx];
+                        }
+                        mean /= (float)num_shape_samp;
+                        for (s_idx = 0; s_idx < num_shape_samp; ++s_idx)
+                            work[s_idx] -= mean;
+
+                        /* Cosine (Hann) taper */
+                        for (s_idx = 0; s_idx < num_shape_samp; ++s_idx) {
+                            float w = 0.5f * (1.0f - (float)cos(
+                                2.0 * M_PI * (double)(s_idx + 1) / (double)num_shape_samp));
+                            work[s_idx] *= w;
+                        }
+
+                        /* Zero-pad */
+                        for (s_idx = num_shape_samp; s_idx < nfft_arb; ++s_idx)
+                            work[s_idx] = 0.0f;
+
+                        kiss_fftr(cfg, work, fft_out);
+                        arb_norm = 1.0f / (float)nfft_arb;
+                        freq_res_arb = (float)(1.0e6 / ((double)raster * (double)nfft_arb));
+
+                        /* Compute magnitude spectrum, detect peaks */
+                        mag_buf = (float*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(float));
+                        if (mag_buf) {
+                            int* wf_peaks;
+                            for (s_idx = 0; s_idx < nfreq_arb; ++s_idx) {
+                                float re = fft_out[s_idx].r * arb_norm;
+                                float im = fft_out[s_idx].i * arb_norm;
+                                mag_buf[s_idx] = (float)sqrt((double)(re * re + im * im));
+                            }
+                            wf_peaks = (int*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(int));
+                            if (wf_peaks) {
+                                int has_peak = 0;
+                                detect_resonances(wf_peaks, mag_buf, nfreq_arb,
+                                    peak_log10_threshold, peak_norm_scale,
+                                    peak_eps, peak_prominence);
+                                for (s_idx = 0; s_idx < nfreq_arb; ++s_idx) {
+                                    if (wf_peaks[s_idx]) { has_peak = 1; break; }
+                                }
+                                if (has_peak) {
+                                    /* Resonant: frequency of absolute max (skip DC bin) */
+                                    float peak_max = 0.0f;
+                                    int peak_idx = 1;
+                                    float f_pk, t_wf;
+                                    int n_eff;
+                                    for (s_idx = 1; s_idx < nfreq_arb; ++s_idx) {
+                                        if (mag_buf[s_idx] > peak_max) {
+                                            peak_max = mag_buf[s_idx];
+                                            peak_idx = s_idx;
+                                        }
+                                    }
+                                    f_pk = (float)peak_idx * freq_res_arb;
+                                    ac->contributions[c].resonant_freq_hz = f_pk;
+
+                                    /* N_eff = round(T_wf * f_peak) */
+                                    t_wf = (float)num_shape_samp * raster * 1.0e-6f;
+                                    n_eff = (int)(t_wf * f_pk + 0.5f);
+                                    if (n_eff < 1) n_eff = 1;
+                                    ac->contributions[c].resonant_num_cycles = n_eff;
+                                }
+                                PULSEQLIB_FREE(wf_peaks);
+                            }
+                            PULSEQLIB_FREE(mag_buf);
+                        }
+                    }
+                    if (work) PULSEQLIB_FREE(work);
+                    if (fft_out) PULSEQLIB_FREE(fft_out);
+                    if (cfg) kiss_fftr_free(cfg);
+                }
+            }
+        }
+        ++c;
+    }
+
+    ac->num_contributions = c;
+    PULSEQLIB_FREE(unique_ids);
+    PULSEQLIB_FREE(def_times);
+    return PULSEQLIB_SUCCESS;
+}
+
+/**
+ * Build structural candidates for all three axes.
+ */
+static int sa_build_structural_candidates(
+    sa_structural_candidates* sc,
+    const struct pulseqlib_sequence_descriptor* desc,
+    int start_block, int block_count,
+    float abs_tol_us, float rel_tol, int min_arb_samples,
+    float peak_log10_threshold, float peak_norm_scale,
+    float peak_eps, float peak_prominence)
+{
+    int ax, result;
+    sa_occurrence* occ;
+    int num_occ;
+
+    memset(sc, 0, sizeof(*sc));
+
+    for (ax = 0; ax < 3; ++ax) {
+        occ = NULL;
+        num_occ = sa_extract_def_occurrences(&occ, desc, start_block, block_count, ax);
+        if (num_occ < 0) {
+            sa_free_structural_candidates(sc);
+            return PULSEQLIB_ERR_ALLOC_FAILED;
+        }
+        result = sa_build_axis_contributions(
+            &sc->axes[ax], occ, num_occ, desc, abs_tol_us, rel_tol, min_arb_samples,
+            peak_log10_threshold, peak_norm_scale, peak_eps, peak_prominence);
+        PULSEQLIB_FREE(occ);
+        if (PULSEQLIB_FAILED(result)) {
+            sa_free_structural_candidates(sc);
+            return result;
+        }
+    }
+    return PULSEQLIB_SUCCESS;
+}
+
+/* ================================================================== */
+/*  Structural acoustic analysis — analytical spectrum evaluation     */
+/* ================================================================== */
+
+/**
+ * Evaluate Dirichlet kernel D_N(f*T) as a complex value with phase
+ * from the run start time: e^{-j 2 pi f t_start} * D_N(f*T).
+ *
+ * D_N(x) = sin(N*pi*x) / sin(pi*x), where x = f*T (in Hz*s).
+ */
+static void sa_eval_dirichlet(
+    float f_hz, float spacing_us, int count, float start_time_us,
+    float* out_re, float* out_im)
+{
+    double x, phase, numer, denom, d_val;
+    double T_s = (double)spacing_us * 1.0e-6;
+    double t0_s = (double)start_time_us * 1.0e-6;
+
+    x = (double)f_hz * T_s;
+    phase = -2.0 * M_PI * (double)f_hz * t0_s;
+
+    /* Handle x near integer to avoid 0/0 */
+    denom = sin(M_PI * x);
+    if (denom > -1.0e-12 && denom < 1.0e-12) {
+        /* At integer multiples: D_N = (+/-)N */
+        d_val = (double)count;
+    } else {
+        numer = sin((double)count * M_PI * x);
+        d_val = numer / denom;
+    }
+
+    *out_re = (float)(d_val * cos(phase));
+    *out_im = (float)(d_val * sin(phase));
+}
+
+/**
+ * Evaluate H_d(f) for one contribution.
+ * Broadband (traps or no detected peak): returns 1.0.
+ * Resonant arbitrary waveform: returns |D_{N_eff}(f / f_peak)| / N_eff,
+ * a Dirichlet kernel that peaks at 1.0 at multiples of f_peak with
+ * width ~ f_peak / N_eff.
+ */
+static float sa_eval_waveform_response(const sa_def_contribution* dc, float f_hz)
+{
+    double x, numer, denom, d_val;
+    int n_eff;
+
+    if (dc->resonant_freq_hz <= 0.0f || dc->resonant_num_cycles <= 0)
+        return 1.0f;
+
+    n_eff = dc->resonant_num_cycles;
+    x = (double)f_hz / (double)dc->resonant_freq_hz;
+
+    denom = sin(M_PI * x);
+    if (denom > -1.0e-12 && denom < 1.0e-12) {
+        /* At integer multiples of f_peak: D_N = (+/-)N, normalized = 1 */
+        return 1.0f;
+    }
+    numer = sin((double)n_eff * M_PI * x);
+    d_val = numer / ((double)n_eff * denom);
+    return (float)fabs(d_val);
+}
+
+/**
+ * Evaluate the spectrum of one def contribution at frequency f:
+ *
+ *   S_d(f) = A_d * H_d(f) * sum_runs[ e^{-j2pif*t_r} * D_{N_r}(f*T_r) ]
+ *
+ * Returns complex value (re, im).
+ */
+static void sa_eval_def_spectrum(
+    float f_hz, const sa_def_contribution* dc,
+    float* out_re, float* out_im)
+{
+    float h, amp, sum_re, sum_im;
+    int r;
+    float d_re, d_im;
+
+    amp = dc->amplitude;
+    h = sa_eval_waveform_response(dc, f_hz);
+
+    sum_re = 0.0f;
+    sum_im = 0.0f;
+    for (r = 0; r < dc->num_runs; ++r) {
+        sa_eval_dirichlet(
+            f_hz, dc->runs[r].spacing_us, dc->runs[r].count,
+            dc->runs[r].run_start_us, &d_re, &d_im);
+        sum_re += d_re;
+        sum_im += d_im;
+    }
+
+    /* Singleton defs with no runs still contribute amplitude 1 at all freqs.
+     * This is handled by the outer TR Dirichlet only. */
+    if (dc->num_runs == 0) {
+        sum_re = 1.0f;
+        sum_im = 0.0f;
+    }
+
+    *out_re = amp * h * sum_re;
+    *out_im = amp * h * sum_im;
+}
+
+/**
+ * Evaluate |S_axis(f)| = |sum_d S_d(f)| * |D_K(f*TR)| at frequency f.
+ */
+static float sa_eval_axis_spectrum(
+    float f_hz,
+    const sa_axis_candidates* ac,
+    int num_instances, float tr_duration_us)
+{
+    float sum_re, sum_im, mag;
+    float tr_re, tr_im;
+    int d;
+
+    sum_re = 0.0f;
+    sum_im = 0.0f;
+    for (d = 0; d < ac->num_contributions; ++d) {
+        float d_re, d_im;
+        sa_eval_def_spectrum(f_hz, &ac->contributions[d], &d_re, &d_im);
+        sum_re += d_re;
+        sum_im += d_im;
+    }
+
+    /* Multiply by outer TR Dirichlet */
+    if (num_instances > 1 && tr_duration_us > 0.0f) {
+        sa_eval_dirichlet(f_hz, tr_duration_us, num_instances, 0.0f,
+                          &tr_re, &tr_im);
+        mag = (float)sqrt((double)(
+            (sum_re * tr_re - sum_im * tr_im) * (sum_re * tr_re - sum_im * tr_im) +
+            (sum_re * tr_im + sum_im * tr_re) * (sum_re * tr_im + sum_im * tr_re)));
+    } else {
+        mag = (float)sqrt((double)(sum_re * sum_re + sum_im * sum_im));
+    }
+
+    return mag;
+}
+
+/* ================================================================== */
+/*  Structural acoustic analysis — peak finding and harmonics         */
+/* ================================================================== */
+
+/** A candidate frequency with its spectral amplitude and violation status. */
+typedef struct {
+    float freq_hz;
+    float amplitude;     /**< analytical spectral magnitude             */
+    float grad_amp;      /**< worst-case time-domain grad amp (Hz/m)    */
+    int   violation;     /**< 1 if inside a forbidden band and exceeds limit */
+} sa_candidate;
+
+/**
+ * Find fundamental candidate frequencies from all axes' structural
+ * analysis, expand harmonics, and check against forbidden bands.
+ *
+ * Strategy:
+ * 1. For each axis, for each def, each run's spacing → candidate at 1/(2*T).
+ *    Also add the TR fundamental 1/(2*TR).
+ * 2. Deduplicate candidate fundamentals.
+ * 3. Expand harmonics: k * f_c for k=1,2,... while k*f_c <= max_freq.
+ * 4. For each expanded candidate, evaluate |S_axis(f)| on all 3 axes.
+ * 5. Check each candidate against all forbidden bands from all axes.
+ */
+static int sa_find_candidates_and_check(
+    sa_candidate** out_candidates, int* out_num,
+    const sa_structural_candidates* sc,
+    int num_instances, float tr_duration_us,
+    float max_freq_hz,
+    int num_forbidden_bands,
+    const pulseqlib_forbidden_band* forbidden_bands)
+{
+    int ax, d, r, k, i, j;
+    int num_fundamentals, fund_cap;
+    float* fundamentals;
+    float* grad_amps;     /* worst-case grad amplitude per fundamental */
+    int num_candidates, cand_cap;
+    sa_candidate* candidates;
+    float f_fund, tol;
+
+    *out_candidates = NULL;
+    *out_num = 0;
+
+    fund_cap = 64;
+    fundamentals = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
+    grad_amps = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
+    if (!fundamentals || !grad_amps) {
+        if (fundamentals) PULSEQLIB_FREE(fundamentals);
+        if (grad_amps) PULSEQLIB_FREE(grad_amps);
+        return PULSEQLIB_ERR_ALLOC_FAILED;
+    }
+    num_fundamentals = 0;
+
+    /* ------ Collect fundamental frequencies from all axes ------ */
+
+    /* TR fundamental (always present) */
+    if (tr_duration_us > 0.0f) {
+        float f_tr = (float)(0.5e6 / (double)tr_duration_us);
+        if (f_tr <= max_freq_hz && f_tr > 0.0f) {
+            fundamentals[0] = f_tr;
+            grad_amps[0] = 0.0f;  /* will be filled by axis scan */
+            num_fundamentals = 1;
+        }
+    }
+
+    /* Per-axis, per-def, per-run fundamentals */
+    for (ax = 0; ax < 3; ++ax) {
+        for (d = 0; d < sc->axes[ax].num_contributions; ++d) {
+            const sa_def_contribution* dc = &sc->axes[ax].contributions[d];
+            float amp = dc->amplitude;
+            for (r = 0; r < dc->num_runs; ++r) {
+                if (dc->runs[r].spacing_us <= 0.0f) continue;
+                f_fund = (float)(0.5e6 / (double)dc->runs[r].spacing_us);
+                if (f_fund <= 0.0f || f_fund > max_freq_hz) continue;
+
+                /* Deduplicate: check if already in list */
+                tol = f_fund * 0.01f;  /* 1% tolerance */
+                if (tol < 1.0f) tol = 1.0f;
+                for (j = 0; j < num_fundamentals; ++j) {
+                    if (fundamentals[j] > f_fund - tol &&
+                        fundamentals[j] < f_fund + tol) {
+                        if (amp > grad_amps[j]) grad_amps[j] = amp;
+                        break;
+                    }
+                }
+                if (j == num_fundamentals) {
+                    /* New fundamental */
+                    if (num_fundamentals >= fund_cap) {
+                        float *tmp_f, *tmp_a;
+                        fund_cap *= 2;
+                        tmp_f = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
+                        tmp_a = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
+                        if (!tmp_f || !tmp_a) {
+                            if (tmp_f) PULSEQLIB_FREE(tmp_f);
+                            if (tmp_a) PULSEQLIB_FREE(tmp_a);
+                            PULSEQLIB_FREE(fundamentals); PULSEQLIB_FREE(grad_amps);
+                            return PULSEQLIB_ERR_ALLOC_FAILED;
+                        }
+                        memcpy(tmp_f, fundamentals, (size_t)num_fundamentals * sizeof(float));
+                        memcpy(tmp_a, grad_amps, (size_t)num_fundamentals * sizeof(float));
+                        PULSEQLIB_FREE(fundamentals); PULSEQLIB_FREE(grad_amps);
+                        fundamentals = tmp_f;
+                        grad_amps = tmp_a;
+                    }
+                    fundamentals[num_fundamentals] = f_fund;
+                    grad_amps[num_fundamentals] = amp;
+                    num_fundamentals++;
+                }
+            }
+        }
+    }
+
+    /* Resonant frequencies from arbitrary waveform peak detection */
+    for (ax = 0; ax < 3; ++ax) {
+        for (d = 0; d < sc->axes[ax].num_contributions; ++d) {
+            const sa_def_contribution* dc = &sc->axes[ax].contributions[d];
+            float f_res = dc->resonant_freq_hz;
+            float amp = dc->amplitude;
+            if (f_res <= 0.0f || f_res > max_freq_hz) continue;
+
+            tol = f_res * 0.01f;
+            if (tol < 1.0f) tol = 1.0f;
+            for (j = 0; j < num_fundamentals; ++j) {
+                if (fundamentals[j] > f_res - tol &&
+                    fundamentals[j] < f_res + tol) {
+                    if (amp > grad_amps[j]) grad_amps[j] = amp;
+                    break;
+                }
+            }
+            if (j == num_fundamentals) {
+                if (num_fundamentals >= fund_cap) {
+                    float *tmp_f, *tmp_a;
+                    fund_cap *= 2;
+                    tmp_f = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
+                    tmp_a = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
+                    if (!tmp_f || !tmp_a) {
+                        if (tmp_f) PULSEQLIB_FREE(tmp_f);
+                        if (tmp_a) PULSEQLIB_FREE(tmp_a);
+                        PULSEQLIB_FREE(fundamentals); PULSEQLIB_FREE(grad_amps);
+                        return PULSEQLIB_ERR_ALLOC_FAILED;
+                    }
+                    memcpy(tmp_f, fundamentals, (size_t)num_fundamentals * sizeof(float));
+                    memcpy(tmp_a, grad_amps, (size_t)num_fundamentals * sizeof(float));
+                    PULSEQLIB_FREE(fundamentals); PULSEQLIB_FREE(grad_amps);
+                    fundamentals = tmp_f;
+                    grad_amps = tmp_a;
+                }
+                fundamentals[num_fundamentals] = f_res;
+                grad_amps[num_fundamentals] = amp;
+                num_fundamentals++;
+            }
+        }
+    }
+
+    if (num_fundamentals == 0) {
+        PULSEQLIB_FREE(fundamentals);
+        PULSEQLIB_FREE(grad_amps);
+        return PULSEQLIB_SUCCESS;
+    }
+
+    /* ------ Expand harmonics ------ */
+    cand_cap = num_fundamentals * 16;
+    candidates = (sa_candidate*)PULSEQLIB_ALLOC((size_t)cand_cap * sizeof(sa_candidate));
+    if (!candidates) {
+        PULSEQLIB_FREE(fundamentals); PULSEQLIB_FREE(grad_amps);
+        return PULSEQLIB_ERR_ALLOC_FAILED;
+    }
+    num_candidates = 0;
+
+    for (i = 0; i < num_fundamentals; ++i) {
+        for (k = 1; ; ++k) {
+            float f_h = (float)k * fundamentals[i];
+            if (f_h > max_freq_hz) break;
+
+            if (num_candidates >= cand_cap) {
+                sa_candidate* tmp;
+                cand_cap *= 2;
+                tmp = (sa_candidate*)PULSEQLIB_ALLOC((size_t)cand_cap * sizeof(sa_candidate));
+                if (!tmp) {
+                    PULSEQLIB_FREE(candidates); PULSEQLIB_FREE(fundamentals);
+                    PULSEQLIB_FREE(grad_amps);
+                    return PULSEQLIB_ERR_ALLOC_FAILED;
+                }
+                memcpy(tmp, candidates, (size_t)num_candidates * sizeof(sa_candidate));
+                PULSEQLIB_FREE(candidates);
+                candidates = tmp;
+            }
+            candidates[num_candidates].freq_hz = f_h;
+            candidates[num_candidates].grad_amp = grad_amps[i];
+            candidates[num_candidates].amplitude = 0.0f;
+            candidates[num_candidates].violation = 0;
+            num_candidates++;
+        }
+    }
+
+    PULSEQLIB_FREE(fundamentals);
+    PULSEQLIB_FREE(grad_amps);
+
+    /* ------ Evaluate analytical amplitude (worst case across axes) ------ */
+    for (i = 0; i < num_candidates; ++i) {
+        float f = candidates[i].freq_hz;
+        float max_amp = 0.0f;
+
+        for (ax = 0; ax < 3; ++ax) {
+            float a = sa_eval_axis_spectrum(
+                f, &sc->axes[ax], num_instances, tr_duration_us);
+            if (a > max_amp) max_amp = a;
+        }
+        candidates[i].amplitude = max_amp;
+    }
+
+    /* ------ Check against forbidden bands (cross-axis) ------ */
+    for (i = 0; i < num_candidates; ++i) {
+        float f = candidates[i].freq_hz;
+        int b;
+        for (b = 0; b < num_forbidden_bands; ++b) {
+            if (f >= forbidden_bands[b].freq_min_hz &&
+                f <= forbidden_bands[b].freq_max_hz) {
+                /* Frequency falls in band — check amplitude */
+                if (candidates[i].grad_amp > forbidden_bands[b].max_amplitude_hz_per_m) {
+                    candidates[i].violation = 1;
+                }
+                break;
+            }
+        }
+    }
+
+    *out_candidates = candidates;
+    *out_num = num_candidates;
+    return PULSEQLIB_SUCCESS;
+}
+
+/* ================================================================== */
+/*  Structural acoustic analysis — top-level violation check          */
+/* ================================================================== */
+
+/**
+ * Run full structural acoustic analysis and populate spectra candidates.
+ * This replaces the amplitude check in check_acoustic_violations()
+ * with physics-informed structural analysis.
+ */
+static int sa_check_structural_violations(
+    pulseqlib_acoustic_spectra* spectra,
+    const struct pulseqlib_sequence_descriptor* desc,
+    int start_block, int block_count,
+    int num_instances, float tr_duration_us,
+    float max_freq_hz,
+    int num_forbidden_bands,
+    const pulseqlib_forbidden_band* forbidden_bands,
+    float peak_log10_threshold, float peak_norm_scale,
+    float peak_eps, float peak_prominence)
+{
+    sa_structural_candidates sc;
+    sa_candidate* candidates;
+    int num_candidates, result;
+    int ax, i, n_ax[3];
+    float* ax_freqs[3];
+    float* ax_amps[3];
+    int*   ax_viol[3];
+
+    memset(&sc, 0, sizeof(sc));
+    for (ax = 0; ax < 3; ++ax) {
+        n_ax[ax] = 0; ax_freqs[ax] = NULL; ax_amps[ax] = NULL; ax_viol[ax] = NULL;
+    }
+
+    result = sa_build_structural_candidates(
+        &sc, desc, start_block, block_count,
+        PULSEQLIB_SPACING_ABS_TOL_US,
+        PULSEQLIB_SPACING_REL_TOL,
+        PULSEQLIB_MIN_ARBITRARY_SAMPLES,
+        peak_log10_threshold, peak_norm_scale,
+        peak_eps, peak_prominence);
+    if (PULSEQLIB_FAILED(result)) return result;
+
+    candidates = NULL;
+    num_candidates = 0;
+    result = sa_find_candidates_and_check(
+        &candidates, &num_candidates,
+        &sc, num_instances, tr_duration_us,
+        max_freq_hz,
+        num_forbidden_bands, forbidden_bands);
+    if (PULSEQLIB_FAILED(result)) {
+        sa_free_structural_candidates(&sc);
+        return result;
+    }
+
+    /* --- Assign candidates to per-axis outputs --- */
+    /* All candidates are cross-axis, so store the full list on each axis.
+     * But re-evaluate with per-axis amplitude for display. */
+    for (ax = 0; ax < 3; ++ax) {
+        if (num_candidates > 0) {
+            ax_freqs[ax] = (float*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(float));
+            ax_amps[ax]  = (float*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(float));
+            ax_viol[ax]  = (int*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(int));
+            if (!ax_freqs[ax] || !ax_amps[ax] || !ax_viol[ax]) {
+                for (i = 0; i < 3; ++i) {
+                    if (ax_freqs[i]) PULSEQLIB_FREE(ax_freqs[i]);
+                    if (ax_amps[i]) PULSEQLIB_FREE(ax_amps[i]);
+                    if (ax_viol[i]) PULSEQLIB_FREE(ax_viol[i]);
+                }
+                if (candidates) PULSEQLIB_FREE(candidates);
+                sa_free_structural_candidates(&sc);
+                return PULSEQLIB_ERR_ALLOC_FAILED;
+            }
+            for (i = 0; i < num_candidates; ++i) {
+                ax_freqs[ax][i] = candidates[i].freq_hz;
+                ax_amps[ax][i]  = sa_eval_axis_spectrum(
+                    candidates[i].freq_hz, &sc.axes[ax],
+                    num_instances, tr_duration_us);
+                ax_viol[ax][i]  = candidates[i].violation;
+            }
+            n_ax[ax] = num_candidates;
+        }
+    }
+
+    /* Assign to spectra struct */
+    spectra->num_candidates_gx = n_ax[0];
+    spectra->num_candidates_gy = n_ax[1];
+    spectra->num_candidates_gz = n_ax[2];
+    spectra->candidate_freqs_gx = ax_freqs[0];
+    spectra->candidate_freqs_gy = ax_freqs[1];
+    spectra->candidate_freqs_gz = ax_freqs[2];
+    spectra->candidate_amps_gx  = ax_amps[0];
+    spectra->candidate_amps_gy  = ax_amps[1];
+    spectra->candidate_amps_gz  = ax_amps[2];
+    spectra->candidate_violations_gx = ax_viol[0];
+    spectra->candidate_violations_gy = ax_viol[1];
+    spectra->candidate_violations_gz = ax_viol[2];
+
+    if (candidates) PULSEQLIB_FREE(candidates);
+    sa_free_structural_candidates(&sc);
+    return PULSEQLIB_SUCCESS;
 }
 
 /* ================================================================== */
@@ -1045,7 +2066,8 @@ static int check_acoustic_violations(
     const pulseqlib_forbidden_band* bands, int num_bands,
     float peak_log10_threshold,
     float peak_norm_scale,
-    float peak_eps)
+    float peak_eps,
+    float peak_prominence)
 {
     int* peaks;
     int i, b;
@@ -1067,7 +2089,8 @@ static int check_acoustic_violations(
         num_freq_bins,
         peak_log10_threshold,
         peak_norm_scale,
-        peak_eps);
+        peak_eps,
+        peak_prominence);
 
     /* Check peaks against forbidden bands (informational) */
     for (i = 0; i < num_freq_bins; ++i) {
@@ -1101,7 +2124,8 @@ static int compute_sliding_window_spectra(
     const pulseqlib_forbidden_band* bands, int num_bands,
     float peak_log10_threshold,
     float peak_norm_scale,
-    float peak_eps)
+    float peak_eps,
+    float peak_prominence)
 {
     acoustic_waveform aw;
     int w, i, result, start_idx, window_len;
@@ -1159,7 +2183,8 @@ static int compute_sliding_window_spectra(
                 result = check_acoustic_violations(out_peaks ? &win_peaks : NULL,
                     &spectra_out[w * sup->output_freq_bins], frequencies,
                     sup->output_freq_bins, max_env_win, bands, num_bands,
-                    peak_log10_threshold, peak_norm_scale, peak_eps);
+                    peak_log10_threshold, peak_norm_scale, peak_eps,
+                    peak_prominence);
                 if (PULSEQLIB_FAILED(result)) {
                     if (win_spectrum) PULSEQLIB_FREE(win_spectrum);
                     acoustic_waveform_free(&aw); return result;
@@ -1176,7 +2201,8 @@ static int compute_sliding_window_spectra(
                     sup->output_freq_bins,
                     peak_log10_threshold,
                     peak_norm_scale,
-                    peak_eps);
+                    peak_eps,
+                    peak_prominence);
             }
         }
     }
@@ -1201,11 +2227,12 @@ static int compute_sequence_spectrum(
     int** out_seq_peaks,
     const float* waveform, int num_samples,
     float grad_raster_us, float target_spectral_res_hz,
-    float max_frequency, float fundamental_freq, int num_trs,
+    float max_frequency, float fundamental_freq,
     const pulseqlib_forbidden_band* bands, int num_bands,
     float peak_log10_threshold,
     float peak_norm_scale,
-    float peak_eps)
+    float peak_eps,
+    float peak_prominence)
 {
     int nfft, nfreq, output_bins_full, num_picked;
     int min_nfft, max_idx;
@@ -1216,7 +2243,7 @@ static int compute_sequence_spectrum(
     kiss_fftr_cfg cfg;
     float* picked_mag;
     float* picked_freq;
-    float mean, fft_norm, norm_factor;
+    float mean, fft_norm;
     int i, k, freq_idx;
     float freq, freq_low, freq_high, t;
     float re_low, im_low, re_high, im_high, re_interp, im_interp;
@@ -1281,7 +2308,7 @@ static int compute_sequence_spectrum(
                                                     fft_out[i].i * fft_out[i].i));
     }
 
-    if (fundamental_freq > 0.0f && seq_spectrum && num_trs > 0) {
+    if (fundamental_freq > 0.0f && seq_spectrum) {
         num_picked = (int)(max_freq / fundamental_freq) + 1;
         picked_mag = (float*)PULSEQLIB_ALLOC((size_t)num_picked * sizeof(float));
         if (!picked_mag) { result = PULSEQLIB_ERR_ALLOC_FAILED; goto fail; }
@@ -1290,8 +2317,6 @@ static int compute_sequence_spectrum(
             picked_freq = (float*)PULSEQLIB_ALLOC((size_t)num_picked * sizeof(float));
             if (!picked_freq) { result = PULSEQLIB_ERR_ALLOC_FAILED; goto fail; }
         }
-
-        norm_factor = (num_trs > 1) ? (1.0f / (float)num_trs) : 1.0f;
 
         for (k = 0; k < num_picked; ++k) {
             freq = (float)k * fundamental_freq;
@@ -1302,7 +2327,7 @@ static int compute_sequence_spectrum(
                 picked_mag[k] = 0.0f;
             } else if (freq_idx == 0) {
                 picked_mag[k] = (float)sqrt((double)(fft_out[0].r * fft_out[0].r +
-                                                     fft_out[0].i * fft_out[0].i)) * norm_factor;
+                                                     fft_out[0].i * fft_out[0].i));
             } else {
                 freq_low  = (float)freq_idx * freq_res;
                 freq_high = (float)(freq_idx + 1) * freq_res;
@@ -1312,7 +2337,7 @@ static int compute_sequence_spectrum(
                 re_interp = re_low * (1.0f - t) + re_high * t;
                 im_interp = im_low * (1.0f - t) + im_high * t;
                 picked_mag[k] = (float)sqrt((double)(re_interp * re_interp +
-                                                     im_interp * im_interp)) * norm_factor;
+                                                     im_interp * im_interp));
             }
         }
 
@@ -1329,7 +2354,8 @@ static int compute_sequence_spectrum(
         result = check_acoustic_violations(out_seq_peaks,
             *seq_spectrum, (seq_frequencies && *seq_frequencies) ? *seq_frequencies : NULL,
             num_picked, max_env, bands, num_bands,
-            peak_log10_threshold, peak_norm_scale, peak_eps);
+            peak_log10_threshold, peak_norm_scale, peak_eps,
+            peak_prominence);
         if (PULSEQLIB_FAILED(result)) goto fail;
     } else if (out_seq_peaks && seq_spectrum && *seq_spectrum) {
         num_picked = out_num_picked ? *out_num_picked : 0;
@@ -1341,7 +2367,8 @@ static int compute_sequence_spectrum(
             num_picked,
             peak_log10_threshold,
             peak_norm_scale,
-            peak_eps);
+            peak_eps,
+            peak_prominence);
         *out_seq_peaks = seq_peaks;
     }
 
@@ -1372,7 +2399,11 @@ static int calc_acoustic_spectra_from_uniform(
     const pulseqlib_forbidden_band* forbidden_bands,
     float peak_log10_threshold,
     float peak_norm_scale,
-    float peak_eps)
+    float peak_eps,
+    float peak_prominence,
+    const struct pulseqlib_sequence_descriptor* desc,
+    int start_block,
+    int block_count)
 {
     acoustic_support sup;
     pulseqlib_diagnostic local_diag;
@@ -1412,6 +2443,7 @@ static int calc_acoustic_spectra_from_uniform(
     spectra->freq_spacing_hz = sup.freq_resolution;
     spectra->num_freq_bins  = sup.output_freq_bins;
     spectra->num_windows    = sup.num_windows;
+    spectra->num_instances  = num_trs;
 
     output_size = sup.num_windows * sup.output_freq_bins;
 
@@ -1447,7 +2479,8 @@ static int calc_acoustic_spectra_from_uniform(
             waveforms->gx, NULL,
             waveforms->num_samples, padded_len, 0,
             forbidden_bands, num_forbidden_bands,
-            peak_log10_threshold, peak_norm_scale, peak_eps);
+            peak_log10_threshold, peak_norm_scale, peak_eps,
+            peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             acoustic_support_free(&sup);
@@ -1461,7 +2494,8 @@ static int calc_acoustic_spectra_from_uniform(
             waveforms->gy, NULL,
             waveforms->num_samples, padded_len, 0,
             forbidden_bands, num_forbidden_bands,
-            peak_log10_threshold, peak_norm_scale, peak_eps);
+            peak_log10_threshold, peak_norm_scale, peak_eps,
+            peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             acoustic_support_free(&sup);
@@ -1475,7 +2509,8 @@ static int calc_acoustic_spectra_from_uniform(
             waveforms->gz, NULL,
             waveforms->num_samples, padded_len, 0,
             forbidden_bands, num_forbidden_bands,
-            peak_log10_threshold, peak_norm_scale, peak_eps);
+            peak_log10_threshold, peak_norm_scale, peak_eps,
+            peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             acoustic_support_free(&sup);
@@ -1501,9 +2536,10 @@ static int calc_acoustic_spectra_from_uniform(
             (fundamental_freq > 0.0f) ? &spectra->peaks_seq_gx : NULL,
             waveforms->gx, waveforms->num_samples,
             waveforms->raster_us, target_spectral_resolution_hz,
-            max_frequency_hz, fundamental_freq, num_trs,
+            max_frequency_hz, fundamental_freq,
             forbidden_bands, num_forbidden_bands,
-            peak_log10_threshold, peak_norm_scale, peak_eps);
+            peak_log10_threshold, peak_norm_scale, peak_eps,
+            peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             diag->code = result; return result;
@@ -1513,9 +2549,10 @@ static int calc_acoustic_spectra_from_uniform(
             &num_freq_bins_full, &freq_res_full, NULL, NULL, NULL,
             waveforms->gy ? waveforms->gy : waveforms->gz,
             max_samples, waveforms->raster_us, target_spectral_resolution_hz,
-            max_frequency_hz, 0.0f, num_trs,
+            max_frequency_hz, 0.0f,
             forbidden_bands, num_forbidden_bands,
-            peak_log10_threshold, peak_norm_scale, peak_eps);
+            peak_log10_threshold, peak_norm_scale, peak_eps,
+            peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             diag->code = result; return result;
@@ -1562,9 +2599,10 @@ static int calc_acoustic_spectra_from_uniform(
             NULL, NULL, NULL, NULL, NULL,
             waveforms->gx, waveforms->num_samples,
             waveforms->raster_us, target_spectral_resolution_hz,
-            max_frequency_hz, 0.0f, num_trs,
+            max_frequency_hz, 0.0f,
             forbidden_bands, num_forbidden_bands,
-            peak_log10_threshold, peak_norm_scale, peak_eps);
+            peak_log10_threshold, peak_norm_scale, peak_eps,
+            peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             diag->code = result; return result;
@@ -1582,9 +2620,10 @@ static int calc_acoustic_spectra_from_uniform(
             (fundamental_freq > 0.0f) ? &spectra->peaks_seq_gy : NULL,
             waveforms->gy, waveforms->num_samples,
             waveforms->raster_us, target_spectral_resolution_hz,
-            max_frequency_hz, fundamental_freq, num_trs,
+            max_frequency_hz, fundamental_freq,
             forbidden_bands, num_forbidden_bands,
-            peak_log10_threshold, peak_norm_scale, peak_eps);
+            peak_log10_threshold, peak_norm_scale, peak_eps,
+            peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             diag->code = result; return result;
@@ -1610,9 +2649,10 @@ static int calc_acoustic_spectra_from_uniform(
             (fundamental_freq > 0.0f) ? &spectra->peaks_seq_gz : NULL,
             waveforms->gz, waveforms->num_samples,
             waveforms->raster_us, target_spectral_resolution_hz,
-            max_frequency_hz, fundamental_freq, num_trs,
+            max_frequency_hz, fundamental_freq,
             forbidden_bands, num_forbidden_bands,
-            peak_log10_threshold, peak_norm_scale, peak_eps);
+            peak_log10_threshold, peak_norm_scale, peak_eps,
+            peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_acoustic_spectra_free(spectra);
             diag->code = result; return result;
@@ -1634,9 +2674,25 @@ static int calc_acoustic_spectra_from_uniform(
         spectra->peaks_full_gx = (int*)PULSEQLIB_ALLOC((size_t)num_freq_bins_full * sizeof(int));
         spectra->peaks_full_gy = (int*)PULSEQLIB_ALLOC((size_t)num_freq_bins_full * sizeof(int));
         spectra->peaks_full_gz = (int*)PULSEQLIB_ALLOC((size_t)num_freq_bins_full * sizeof(int));
-        if (spectra->peaks_full_gx) detect_resonances(spectra->peaks_full_gx, spectra->spectrum_full_gx, num_freq_bins_full, peak_log10_threshold, peak_norm_scale, peak_eps);
-        if (spectra->peaks_full_gy) detect_resonances(spectra->peaks_full_gy, spectra->spectrum_full_gy, num_freq_bins_full, peak_log10_threshold, peak_norm_scale, peak_eps);
-        if (spectra->peaks_full_gz) detect_resonances(spectra->peaks_full_gz, spectra->spectrum_full_gz, num_freq_bins_full, peak_log10_threshold, peak_norm_scale, peak_eps);
+        if (spectra->peaks_full_gx) detect_resonances(spectra->peaks_full_gx, spectra->spectrum_full_gx, num_freq_bins_full, peak_log10_threshold, peak_norm_scale, peak_eps, peak_prominence);
+        if (spectra->peaks_full_gy) detect_resonances(spectra->peaks_full_gy, spectra->spectrum_full_gy, num_freq_bins_full, peak_log10_threshold, peak_norm_scale, peak_eps, peak_prominence);
+        if (spectra->peaks_full_gz) detect_resonances(spectra->peaks_full_gz, spectra->spectrum_full_gz, num_freq_bins_full, peak_log10_threshold, peak_norm_scale, peak_eps, peak_prominence);
+    }
+
+    /* ---- structural acoustic analysis ---- */
+    if (desc && block_count > 0) {
+        float max_f = max_frequency_hz;
+        if (max_f <= 0.0f) max_f = (float)(5.0e5 / (double)waveforms->raster_us);
+        result = sa_check_structural_violations(
+            spectra, desc, start_block, block_count,
+            num_trs, tr_duration_us, max_f,
+            num_forbidden_bands, forbidden_bands,
+            peak_log10_threshold, peak_norm_scale,
+            peak_eps, peak_prominence);
+        if (PULSEQLIB_FAILED(result)) {
+            pulseqlib_acoustic_spectra_free(spectra);
+            diag->code = result; return result;
+        }
     }
 
     diag->code = PULSEQLIB_SUCCESS;
@@ -1831,12 +2887,14 @@ int pulseqlib_calc_acoustic_spectra(
     pulseqlib__uniform_grad_waveforms uw;
     pulseqlib_diagnostic local_diag;
     int rc, start_block, block_count, amplitude_mode, num_instances;
+    int sa_start_block, sa_block_count;
     int* block_order;
     int has_nd_prep, has_nd_cool;
     float tr_duration_us;
     float peak_log10_threshold;
     float peak_norm_scale;
     float peak_eps;
+    float peak_prominence;
 
     memset(&uw, 0, sizeof(uw));
     block_order = NULL;
@@ -1850,10 +2908,12 @@ int pulseqlib_calc_acoustic_spectra(
     peak_log10_threshold = PULSEQLIB_PEAK_LOG10_THRESHOLD_DEFAULT;
     peak_norm_scale = PULSEQLIB_PEAK_NORM_SCALE_DEFAULT;
     peak_eps = PULSEQLIB_PEAK_EPS_DEFAULT;
+    peak_prominence = PULSEQLIB_PEAK_PROMINENCE_DEFAULT;
     if (opts) {
         peak_log10_threshold = opts->peak_log10_threshold;
         peak_norm_scale = opts->peak_norm_scale;
         peak_eps = opts->peak_eps;
+        peak_prominence = opts->peak_prominence;
     }
 
     desc = &coll->descriptors[subseq_idx];
@@ -1871,6 +2931,9 @@ int pulseqlib_calc_acoustic_spectra(
         &amplitude_mode,
         &num_instances,
         &tr_duration_us);
+
+    sa_start_block = start_block;
+    sa_block_count = block_count;
 
     has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
     has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
@@ -1904,7 +2967,9 @@ int pulseqlib_calc_acoustic_spectra(
         num_instances,
         tr_duration_us,
         num_forbidden_bands, forbidden_bands,
-        peak_log10_threshold, peak_norm_scale, peak_eps);
+        peak_log10_threshold, peak_norm_scale, peak_eps,
+        peak_prominence,
+        desc, sa_start_block, sa_block_count);
     pulseqlib__uniform_grad_waveforms_free(&uw);
     if (block_order) PULSEQLIB_FREE(block_order);
     return rc;
@@ -2543,6 +3608,7 @@ int pulseqlib_check_safety(
     pulseqlib_acoustic_spectra spectra;
     pulseqlib_pns_result pns_result;
     int start_block, block_count, amplitude_mode, num_instances;
+    int sa_start_block, sa_block_count;
     int* block_order;
     int has_nd_prep, has_nd_cool;
     float tr_duration_us;
@@ -2581,6 +3647,8 @@ int pulseqlib_check_safety(
             &num_instances,
             &tr_duration_us);
         (void)amplitude_mode;
+        sa_start_block = start_block;
+        sa_block_count = block_count;
         block_order = NULL;
         has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
         has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
@@ -2637,7 +3705,9 @@ int pulseqlib_check_safety(
                     num_forbidden_bands, forbidden_bands,
                     opts->peak_log10_threshold,
                     opts->peak_norm_scale,
-                    opts->peak_eps);
+                    opts->peak_eps,
+                    opts->peak_prominence,
+                    desc, sa_start_block, sa_block_count);
                 pulseqlib_acoustic_spectra_free(&spectra);
                 if (PULSEQLIB_FAILED(rc)) {
                     pulseqlib__uniform_grad_waveforms_free(&uw);
