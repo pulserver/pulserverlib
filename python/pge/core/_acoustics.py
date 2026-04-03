@@ -154,23 +154,24 @@ def _plot_grad_spectrum_single(
     # --- Annotations on top panel only ---
 
     # Per-candidate grad-amp labels (horizontal, mT/m, on top panel)
+    # Only show annotation for candidates that violate a forbidden band.
     ax_top = axes[0]
     for ci in range(len(cand_freqs)):
         cf = cand_freqs[ci]
         if cf < freq_min or cf > freq_max:
             continue
-        if ci < len(cand_grad_amps) and cand_grad_amps[ci] > 0.0:
-            is_viol = int(cand_viols[ci]) if ci < len(cand_viols) else 0
+        is_viol = int(cand_viols[ci]) if ci < len(cand_viols) else 0
+        if is_viol and ci < len(cand_grad_amps) and cand_grad_amps[ci] > 0.0:
             gamp_mT = float(cand_grad_amps[ci]) * hz_per_m_to_mT_per_m
             ax_top.annotate(
-                f'{gamp_mT:.1f}',
+                f'{gamp_mT:.1f} mT/m',
                 xy=(cf, 1.02),
                 xycoords=('data', 'axes fraction'),
                 ha='center',
                 va='bottom',
                 fontsize=7,
-                fontweight='bold' if is_viol else 'normal',
-                color='red' if is_viol else 'dimgray',
+                fontweight='bold',
+                color='red',
                 alpha=0.9,
                 clip_on=False,
             )
