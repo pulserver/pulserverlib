@@ -1718,7 +1718,11 @@ static int sa_build_axis_contributions(
 
             if (n_times_s == 0) continue;
 
-            /* For mixed-sign defs preserve ±; single-sign always +. */
+            /* Mixed-sign defs (e.g. EPI readout): preserve ± so that the two
+             * contributions interfere correctly in the spectrum.
+             * Single-sign defs: use +max_amp_abs regardless of original polarity
+             * because only the magnitude matters for spectral analysis and
+             * violation checking. */
             if (n_pos > 0 && n_neg > 0)
                 sign_amp = (s == 0) ? max_amp_abs : -max_amp_abs;
             else
