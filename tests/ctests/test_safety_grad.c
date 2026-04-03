@@ -378,7 +378,7 @@ MU_TEST_SUITE(suite_grad_canonical_sequence)
 }
 
 /* ================================================================== */
-/*  Suite D — Acoustic forbidden-frequency safety tests              */
+/*  Suite D — Mechanical resonance forbidden-frequency safety tests              */
 /* ================================================================== */
 
 #if 0  /* Temporary: acoustic checks are known stub work-in-progress. */
@@ -390,7 +390,7 @@ MU_TEST_SUITE(suite_grad_canonical_sequence)
  * expected_code > 0 means a passing (success) result is expected.
  * expected_code <= 0 means that specific error code is expected.
  */
-static void run_acoustic_check(const char* filename, int num_bands,
+static void run_mech_resonances_check(const char* filename, int num_bands,
                                 const pulseqlib_forbidden_band* bands,
                                 int expected_code)
 {
@@ -435,18 +435,18 @@ MU_TEST(test_epi_forbidden_readout_peak)
     bands[1].freq_max_hz           = 4500.0f;
     bands[1].max_amplitude_hz_per_m = 0.0f;
 
-    run_acoustic_check("epi_2d_1sl_1avg.seq", 2, bands,
-                       PULSEQLIB_ERR_ACOUSTIC_VIOLATION);
+    run_mech_resonances_check("epi_2d_1sl_1avg.seq", 2, bands,
+                       PULSEQLIB_ERR_MECH_RESONANCES_VIOLATION);
 }
 
-static void acoustic_setup(void)
+static void mech_resonances_setup(void)
 {
     gre_opts_init(&s_opts);
 }
 
-MU_TEST_SUITE(suite_acoustic_safety)
+MU_TEST_SUITE(suite_mech_resonances_safety)
 {
-    MU_SUITE_CONFIGURE(acoustic_setup, NULL);
+    MU_SUITE_CONFIGURE(mech_resonances_setup, NULL);
     MU_RUN_TEST(test_epi_forbidden_readout_peak);
 }
 

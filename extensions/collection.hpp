@@ -306,10 +306,10 @@ public:
         return w;
     }
 
-    // ── Acoustic spectra ─────────────────────────────────────────
+    // ── Mechanical resonances spectra ─────────────────────────────────────────
 
 
-    AcousticSpectra calc_acoustic_spectra(
+    MechResonancesSpectra calc_mech_resonances(
         int ss,
         int canonical_tr_idx,
         int target_window_size,
@@ -335,17 +335,17 @@ public:
         if (!std::isnan(peak_prominence))
             run_opts.peak_prominence = peak_prominence;
 
-        pulseqlib_acoustic_spectra cs = PULSEQLIB_ACOUSTIC_SPECTRA_INIT;
+        pulseqlib_mech_resonances_spectra cs = PULSEQLIB_MECH_RESONANCES_SPECTRA_INIT;
         pulseqlib_diagnostic diag;
         pulseqlib_diagnostic_init(&diag);
-        int code = pulseqlib_calc_acoustic_spectra(
+        int code = pulseqlib_calc_mech_resonances(
             &cs, &diag, coll_, ss, canonical_tr_idx, &run_opts,
             target_window_size, target_resolution_hz, max_freq_hz,
             static_cast<int>(cbands.size()),
             cbands.empty() ? nullptr : cbands.data());
         check(code, diag);
 
-        AcousticSpectra a;
+        MechResonancesSpectra a;
         a.freq_min_hz     = cs.freq_min_hz;
         a.freq_spacing_hz = cs.freq_spacing_hz;
         a.num_freq_bins   = cs.num_freq_bins;
@@ -391,8 +391,9 @@ public:
         assign_i(a.candidate_violations_gx, cs.candidate_violations_gx, cs.num_candidates_gx);
         assign_i(a.candidate_violations_gy, cs.candidate_violations_gy, cs.num_candidates_gy);
         assign_i(a.candidate_violations_gz, cs.candidate_violations_gz, cs.num_candidates_gz);
+        assign_f(a.candidate_grad_amps, cs.candidate_grad_amps, cs.num_candidates_gx);
 
-        pulseqlib_acoustic_spectra_free(&cs);
+        pulseqlib_mech_resonances_spectra_free(&cs);
         return a;
     }
 

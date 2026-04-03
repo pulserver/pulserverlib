@@ -7,7 +7,7 @@ def calc_acoustic_spectra(
     max_freq_hz: float = 0.0,
     forbidden_bands=None,
 ) -> dict:
-    """Compute acoustic spectra (gradient frequency content) for a TR.
+    """Compute mechanical resonances spectral data (gradient frequency content) for a TR.
 
     Uses sliding-window FFT to analyze gradient spectrum across time,
     identifying resonances and forbidden-band violations. Results are
@@ -29,16 +29,16 @@ def calc_acoustic_spectra(
         Maximum frequency for analysis (Hz). If 0, uses default (3000 Hz).
     forbidden_bands : list, optional
         List of ``(freq_min, freq_max, max_amplitude)`` tuples defining
-        acoustic forbidden bands. If ``None``, no bands are checked.
+        mechanical resonance forbidden bands. If ``None``, no bands are checked.
 
     Returns
     -------
     dict
-        Acoustic spectrum analysis results from C backend.
+        Mechanical resonances spectrum analysis results from C backend.
     """
     if forbidden_bands is None:
         forbidden_bands = []
-    return seq._cseq._calc_acoustic_spectra(
+    return seq._cseq._calc_mech_resonances(
         subsequence_idx,
         canonical_tr_idx,
         target_window_size,

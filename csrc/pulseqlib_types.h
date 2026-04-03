@@ -309,11 +309,11 @@ typedef struct pulseqlib_tr_waveforms {
 }
 
 /* ================================================================== */
-/*  Acoustic spectra (for plotting)                                   */
+/*  Mechanical resonances spectra (for plotting)                      */
 /* ================================================================== */
 
 /**
- * @brief Acoustic spectral data for wrapper-side plotting.
+ * @brief Mechanical resonances spectral data for wrapper-side plotting.
  *
  * Frequency axes are specified by (min, spacing, num_bins) so
  * the caller can reconstruct: freq[k] = freq_min_hz + k * freq_spacing_hz.
@@ -321,7 +321,7 @@ typedef struct pulseqlib_tr_waveforms {
  * Spectrograms are flat row-major arrays [num_windows * num_freq_bins].
  * Peak masks are binary (0 / 1) with the same layout.
  */
-typedef struct pulseqlib_acoustic_spectra {
+typedef struct pulseqlib_mech_resonances_spectra {
     /* -- sliding window -------------------------------------------- */
     float freq_min_hz;          /**< lowest frequency bin (Hz)         */
     float freq_spacing_hz;      /**< bin width (Hz)                    */
@@ -368,23 +368,34 @@ typedef struct pulseqlib_acoustic_spectra {
     int*   candidate_violations_gx; /**< 1 = violates a band           */
     int*   candidate_violations_gy;
     int*   candidate_violations_gz;
-} pulseqlib_acoustic_spectra;
+    float* candidate_grad_amps;  /**< max time-domain grad amp (Hz/m), shared across axes */
+} pulseqlib_mech_resonances_spectra;
 
-#define PULSEQLIB_ACOUSTIC_SPECTRA_INIT { \
-    0.0f, 0.0f, 0, 0,  NULL, NULL, NULL,  NULL, NULL, NULL, \
+#define PULSEQLIB_MECH_RESONANCES_SPECTRA_INIT { \
+    /* freq_min_hz, freq_spacing_hz, num_freq_bins, num_windows */ \
+    0.0f, 0.0f, 0, 0, \
+    /* spectrogram_gx/gy/gz, peaks_gx/gy/gz */ \
     NULL, NULL, NULL,  NULL, NULL, NULL, \
+    /* spectrum_full_gx/gy/gz, peaks_full_gx/gy/gz */ \
+    NULL, NULL, NULL,  NULL, NULL, NULL, \
+    /* freq_spacing_seq_hz, num_freq_bins_seq, spectrum_seq_gx/gy/gz, peaks_seq_gx/gy/gz */ \
     0.0f, 0,  NULL, NULL, NULL,  NULL, NULL, NULL, \
+    /* num_instances */ \
     0, \
+    /* num_candidates_gx/gy/gz */ \
     0, 0, 0, \
-    NULL, NULL, NULL,  NULL, NULL, NULL,  NULL, NULL, NULL \
+    /* candidate_freqs_gx/gy/gz, candidate_amps_gx/gy/gz, candidate_violations_gx/gy/gz */ \
+    NULL, NULL, NULL,  NULL, NULL, NULL,  NULL, NULL, NULL, \
+    /* candidate_grad_amps */ \
+    NULL \
 }
 
 /* ================================================================== */
-/*  Forbidden frequency band (for acoustic check)                     */
+/*  Forbidden frequency band (for mechanical resonance check)         */
 /* ================================================================== */
 
 /**
- * @brief A forbidden acoustic frequency band.
+ * @brief A forbidden mechanical resonance frequency band.
  *
  * @c max_amplitude_hz_per_m is the maximum allowed gradient spectral
  * amplitude (in Hz / m) within the band [freq_min_hz, freq_max_hz].
