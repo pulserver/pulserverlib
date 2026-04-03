@@ -229,17 +229,19 @@ struct MechResonancesSpectra {
 
     int                num_instances       = 0;
 
-    /* -- structural candidate frequencies -- */
-    std::vector<float> candidate_freqs_gx;
-    std::vector<float> candidate_freqs_gy;
-    std::vector<float> candidate_freqs_gz;
+    /* -- analytical structural spectrum (dense grid) -- */
+    std::vector<float> analytical_gx;
+    std::vector<float> analytical_gy;
+    std::vector<float> analytical_gz;
+
+    /* -- structural candidate frequencies (shared cross-axis) -- */
+    int                num_candidates = 0;
+    std::vector<float> candidate_freqs;
     std::vector<float> candidate_amps_gx;
     std::vector<float> candidate_amps_gy;
     std::vector<float> candidate_amps_gz;
-    std::vector<int>   candidate_violations_gx;
-    std::vector<int>   candidate_violations_gy;
-    std::vector<int>   candidate_violations_gz;
-    std::vector<float> candidate_grad_amps;  /* max time-domain grad amp (Hz/m), shared across axes */
+    std::vector<float> candidate_grad_amps;
+    std::vector<int>   candidate_violations;
 };
 
 // ── PNS result ──────────────────────────────────────────────────────

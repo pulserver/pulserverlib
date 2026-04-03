@@ -227,16 +227,16 @@ static py::dict _calc_mech_resonances(
     }
     out["num_instances"] = sp.num_instances;
 
-    out["candidate_freqs_gx"]      = sp.candidate_freqs_gx;
-    out["candidate_freqs_gy"]      = sp.candidate_freqs_gy;
-    out["candidate_freqs_gz"]      = sp.candidate_freqs_gz;
-    out["candidate_amps_gx"]       = sp.candidate_amps_gx;
-    out["candidate_amps_gy"]       = sp.candidate_amps_gy;
-    out["candidate_amps_gz"]       = sp.candidate_amps_gz;
-    out["candidate_violations_gx"] = sp.candidate_violations_gx;
-    out["candidate_violations_gy"] = sp.candidate_violations_gy;
-    out["candidate_violations_gz"] = sp.candidate_violations_gz;
-    out["candidate_grad_amps"]     = sp.candidate_grad_amps;
+    out["analytical_gx"]         = sp.analytical_gx;
+    out["analytical_gy"]         = sp.analytical_gy;
+    out["analytical_gz"]         = sp.analytical_gz;
+    out["num_candidates"]        = sp.num_candidates;
+    out["candidate_freqs"]       = sp.candidate_freqs;
+    out["candidate_amps_gx"]     = sp.candidate_amps_gx;
+    out["candidate_amps_gy"]     = sp.candidate_amps_gy;
+    out["candidate_amps_gz"]     = sp.candidate_amps_gz;
+    out["candidate_grad_amps"]   = sp.candidate_grad_amps;
+    out["candidate_violations"]  = sp.candidate_violations;
 
     return out;
 }

@@ -116,8 +116,8 @@ def test_calc_mech_resonances_returns_candidate_grad_amps(generated_seq_path):
     )
     assert 'candidate_grad_amps' in rd
     grad_amps = np.asarray(rd['candidate_grad_amps'], dtype=np.float32)
-    freqs_gx = np.asarray(rd.get('candidate_freqs_gx', []), dtype=np.float32)
-    assert len(grad_amps) == len(freqs_gx)
+    freqs = np.asarray(rd.get('candidate_freqs', []), dtype=np.float32)
+    assert len(grad_amps) == len(freqs)
     assert np.all(grad_amps >= 0.0)
 
 

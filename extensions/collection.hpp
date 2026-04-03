@@ -382,16 +382,16 @@ public:
 
         a.num_instances = cs.num_instances;
 
-        assign_f(a.candidate_freqs_gx, cs.candidate_freqs_gx, cs.num_candidates_gx);
-        assign_f(a.candidate_freqs_gy, cs.candidate_freqs_gy, cs.num_candidates_gy);
-        assign_f(a.candidate_freqs_gz, cs.candidate_freqs_gz, cs.num_candidates_gz);
-        assign_f(a.candidate_amps_gx,  cs.candidate_amps_gx,  cs.num_candidates_gx);
-        assign_f(a.candidate_amps_gy,  cs.candidate_amps_gy,  cs.num_candidates_gy);
-        assign_f(a.candidate_amps_gz,  cs.candidate_amps_gz,  cs.num_candidates_gz);
-        assign_i(a.candidate_violations_gx, cs.candidate_violations_gx, cs.num_candidates_gx);
-        assign_i(a.candidate_violations_gy, cs.candidate_violations_gy, cs.num_candidates_gy);
-        assign_i(a.candidate_violations_gz, cs.candidate_violations_gz, cs.num_candidates_gz);
-        assign_f(a.candidate_grad_amps, cs.candidate_grad_amps, cs.num_candidates_gx);
+        assign_f(a.analytical_gx, cs.analytical_gx, cs.num_freq_bins);
+        assign_f(a.analytical_gy, cs.analytical_gy, cs.num_freq_bins);
+        assign_f(a.analytical_gz, cs.analytical_gz, cs.num_freq_bins);
+        a.num_candidates = cs.num_candidates;
+        assign_f(a.candidate_freqs,      cs.candidate_freqs,      cs.num_candidates);
+        assign_f(a.candidate_amps_gx,    cs.candidate_amps_gx,    cs.num_candidates);
+        assign_f(a.candidate_amps_gy,    cs.candidate_amps_gy,    cs.num_candidates);
+        assign_f(a.candidate_amps_gz,    cs.candidate_amps_gz,    cs.num_candidates);
+        assign_f(a.candidate_grad_amps,  cs.candidate_grad_amps,  cs.num_candidates);
+        assign_i(a.candidate_violations, cs.candidate_violations, cs.num_candidates);
 
         pulseqlib_mech_resonances_spectra_free(&cs);
         return a;

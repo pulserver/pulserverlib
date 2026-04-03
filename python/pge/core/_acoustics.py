@@ -76,7 +76,15 @@ def _plot_grad_spectrum_single(
     title = f'[SS{subsequence_idx}, CTR{canonical_tr_idx}] Mechanical Resonances'
 
     # Candidate data (shared across axes)
+    cand_freqs = np.asarray(rd.get('candidate_freqs', []), dtype=np.float64)
+    cand_viols = np.asarray(rd.get('candidate_violations', []), dtype=np.int32)
     cand_grad_amps = np.asarray(rd.get('candidate_grad_amps', []), dtype=np.float64)
+
+    # Analytical structural spectrum (dense grid, one per axis)
+    analytical = {}
+    for ax_name in ('gx', 'gy', 'gz'):
+        raw = rd.get(f'analytical_{ax_name}', [])
+        analytical[ax_name] = np.asarray(raw, dtype=np.float32) if len(raw) > 0 else None
 
     fig, ax = plt.subplots(1, 1, figsize=(12, 5))
 
@@ -101,6 +109,15 @@ def _plot_grad_spectrum_single(
                 lw=0.6,
                 alpha=0.35,
                 linestyle=':',
+            )
+
+        if analytical.get(ax_name) is not None:
+            ax.plot(
+                frequencies,
+                analytical[ax_name],
+                color='k',
+                lw=0.7,
+                alpha=0.45,
             )
 
     # Forbidden bands — shaded with max-allowed label
@@ -128,13 +145,11 @@ def _plot_grad_spectrum_single(
         )
 
     # Candidate frequency lines with max grad-amp annotation
-    cand_freqs_gx = np.asarray(rd.get('candidate_freqs_gx', []), dtype=np.float64)
-    cand_viols_gx = np.asarray(rd.get('candidate_violations_gx', []), dtype=np.int32)
-    for ci in range(len(cand_freqs_gx)):
-        cf = cand_freqs_gx[ci]
+    for ci in range(len(cand_freqs)):
+        cf = cand_freqs[ci]
         if cf < freq_min or cf > freq_max:
             continue
-        is_viol = int(cand_viols_gx[ci]) if ci < len(cand_viols_gx) else 0
+        is_viol = int(cand_viols[ci]) if ci < len(cand_viols) else 0
         ax.axvline(
             cf,
             color='red' if is_viol else 'dimgray',

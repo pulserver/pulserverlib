@@ -788,16 +788,15 @@ void pulseqlib_mech_resonances_spectra_free(pulseqlib_mech_resonances_spectra* s
     if (s->peaks_seq_gy)     PULSEQLIB_FREE(s->peaks_seq_gy);
     if (s->peaks_seq_gz)     PULSEQLIB_FREE(s->peaks_seq_gz);
 
-    if (s->candidate_freqs_gx)      PULSEQLIB_FREE(s->candidate_freqs_gx);
-    if (s->candidate_freqs_gy)      PULSEQLIB_FREE(s->candidate_freqs_gy);
-    if (s->candidate_freqs_gz)      PULSEQLIB_FREE(s->candidate_freqs_gz);
-    if (s->candidate_amps_gx)       PULSEQLIB_FREE(s->candidate_amps_gx);
-    if (s->candidate_amps_gy)       PULSEQLIB_FREE(s->candidate_amps_gy);
-    if (s->candidate_amps_gz)       PULSEQLIB_FREE(s->candidate_amps_gz);
-    if (s->candidate_violations_gx) PULSEQLIB_FREE(s->candidate_violations_gx);
-    if (s->candidate_violations_gy) PULSEQLIB_FREE(s->candidate_violations_gy);
-    if (s->candidate_violations_gz) PULSEQLIB_FREE(s->candidate_violations_gz);
-    if (s->candidate_grad_amps)     PULSEQLIB_FREE(s->candidate_grad_amps);
+    if (s->analytical_gx)         PULSEQLIB_FREE(s->analytical_gx);
+    if (s->analytical_gy)         PULSEQLIB_FREE(s->analytical_gy);
+    if (s->analytical_gz)         PULSEQLIB_FREE(s->analytical_gz);
+    if (s->candidate_freqs)       PULSEQLIB_FREE(s->candidate_freqs);
+    if (s->candidate_amps_gx)     PULSEQLIB_FREE(s->candidate_amps_gx);
+    if (s->candidate_amps_gy)     PULSEQLIB_FREE(s->candidate_amps_gy);
+    if (s->candidate_amps_gz)     PULSEQLIB_FREE(s->candidate_amps_gz);
+    if (s->candidate_grad_amps)   PULSEQLIB_FREE(s->candidate_grad_amps);
+    if (s->candidate_violations)  PULSEQLIB_FREE(s->candidate_violations);
 
     memset(s, 0, sizeof(*s));
 }
@@ -1723,271 +1722,49 @@ static float sa_eval_axis_spectrum(
 }
 
 /* ================================================================== */
-/*  Structural acoustic analysis — peak finding and harmonics         */
-/* ================================================================== */
-
-/** A candidate frequency with its spectral amplitude and violation status. */
-typedef struct {
-    float freq_hz;
-    float amplitude;     /**< analytical spectral magnitude             */
-    float grad_amp;      /**< worst-case time-domain grad amp (Hz/m)    */
-    int   violation;     /**< 1 if inside a forbidden band and exceeds limit */
-} sa_candidate;
-
-/**
- * Find fundamental candidate frequencies from all axes' structural
- * analysis, expand harmonics, and check against forbidden bands.
- *
- * Strategy:
- * 1. For each axis, for each def, each run's spacing → candidate at 1/(2*T).
- *    Also add the TR fundamental 1/(2*TR).
- * 2. Deduplicate candidate fundamentals.
- * 3. Expand harmonics: k * f_c for k=1,2,... while k*f_c <= max_freq.
- * 4. For each expanded candidate, evaluate |S_axis(f)| on all 3 axes.
- * 5. Check each candidate against all forbidden bands from all axes.
- */
-static int sa_find_candidates_and_check(
-    sa_candidate** out_candidates, int* out_num,
-    const sa_structural_candidates* sc,
-    int num_instances, float tr_duration_us,
-    float max_freq_hz,
-    int num_forbidden_bands,
-    const pulseqlib_forbidden_band* forbidden_bands)
-{
-    int ax, d, r, k, i, j;
-    int num_fundamentals, fund_cap;
-    float* fundamentals;
-    float* grad_amps;     /* worst-case grad amplitude per fundamental */
-    int num_candidates, cand_cap;
-    sa_candidate* candidates;
-    float f_fund, tol;
-
-    *out_candidates = NULL;
-    *out_num = 0;
-
-    fund_cap = 64;
-    fundamentals = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
-    grad_amps = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
-    if (!fundamentals || !grad_amps) {
-        if (fundamentals) PULSEQLIB_FREE(fundamentals);
-        if (grad_amps) PULSEQLIB_FREE(grad_amps);
-        return PULSEQLIB_ERR_ALLOC_FAILED;
-    }
-    num_fundamentals = 0;
-
-    /* ------ Collect fundamental frequencies from all axes ------ */
-
-    /* TR fundamental (always present) */
-    if (tr_duration_us > 0.0f) {
-        float f_tr = (float)(0.5e6 / (double)tr_duration_us);
-        if (f_tr <= max_freq_hz && f_tr > 0.0f) {
-            fundamentals[0] = f_tr;
-            grad_amps[0] = 0.0f;  /* will be filled by axis scan */
-            num_fundamentals = 1;
-        }
-    }
-
-    /* Per-axis, per-def, per-run fundamentals */
-    for (ax = 0; ax < 3; ++ax) {
-        for (d = 0; d < sc->axes[ax].num_contributions; ++d) {
-            const sa_def_contribution* dc = &sc->axes[ax].contributions[d];
-            float amp = dc->amplitude;
-            for (r = 0; r < dc->num_runs; ++r) {
-                if (dc->runs[r].spacing_us <= 0.0f) continue;
-                f_fund = (float)(0.5e6 / (double)dc->runs[r].spacing_us);
-                if (f_fund <= 0.0f || f_fund > max_freq_hz) continue;
-
-                /* Deduplicate: check if already in list */
-                tol = f_fund * 0.01f;  /* 1% tolerance */
-                if (tol < 1.0f) tol = 1.0f;
-                for (j = 0; j < num_fundamentals; ++j) {
-                    if (fundamentals[j] > f_fund - tol &&
-                        fundamentals[j] < f_fund + tol) {
-                        if (amp > grad_amps[j]) grad_amps[j] = amp;
-                        break;
-                    }
-                }
-                if (j == num_fundamentals) {
-                    /* New fundamental */
-                    if (num_fundamentals >= fund_cap) {
-                        float *tmp_f, *tmp_a;
-                        fund_cap *= 2;
-                        tmp_f = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
-                        tmp_a = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
-                        if (!tmp_f || !tmp_a) {
-                            if (tmp_f) PULSEQLIB_FREE(tmp_f);
-                            if (tmp_a) PULSEQLIB_FREE(tmp_a);
-                            PULSEQLIB_FREE(fundamentals); PULSEQLIB_FREE(grad_amps);
-                            return PULSEQLIB_ERR_ALLOC_FAILED;
-                        }
-                        memcpy(tmp_f, fundamentals, (size_t)num_fundamentals * sizeof(float));
-                        memcpy(tmp_a, grad_amps, (size_t)num_fundamentals * sizeof(float));
-                        PULSEQLIB_FREE(fundamentals); PULSEQLIB_FREE(grad_amps);
-                        fundamentals = tmp_f;
-                        grad_amps = tmp_a;
-                    }
-                    fundamentals[num_fundamentals] = f_fund;
-                    grad_amps[num_fundamentals] = amp;
-                    num_fundamentals++;
-                }
-            }
-        }
-    }
-
-    /* Resonant frequencies from arbitrary waveform peak detection */
-    for (ax = 0; ax < 3; ++ax) {
-        for (d = 0; d < sc->axes[ax].num_contributions; ++d) {
-            const sa_def_contribution* dc = &sc->axes[ax].contributions[d];
-            float f_res = dc->resonant_freq_hz;
-            float amp = dc->amplitude;
-            if (f_res <= 0.0f || f_res > max_freq_hz) continue;
-
-            tol = f_res * 0.01f;
-            if (tol < 1.0f) tol = 1.0f;
-            for (j = 0; j < num_fundamentals; ++j) {
-                if (fundamentals[j] > f_res - tol &&
-                    fundamentals[j] < f_res + tol) {
-                    if (amp > grad_amps[j]) grad_amps[j] = amp;
-                    break;
-                }
-            }
-            if (j == num_fundamentals) {
-                if (num_fundamentals >= fund_cap) {
-                    float *tmp_f, *tmp_a;
-                    fund_cap *= 2;
-                    tmp_f = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
-                    tmp_a = (float*)PULSEQLIB_ALLOC((size_t)fund_cap * sizeof(float));
-                    if (!tmp_f || !tmp_a) {
-                        if (tmp_f) PULSEQLIB_FREE(tmp_f);
-                        if (tmp_a) PULSEQLIB_FREE(tmp_a);
-                        PULSEQLIB_FREE(fundamentals); PULSEQLIB_FREE(grad_amps);
-                        return PULSEQLIB_ERR_ALLOC_FAILED;
-                    }
-                    memcpy(tmp_f, fundamentals, (size_t)num_fundamentals * sizeof(float));
-                    memcpy(tmp_a, grad_amps, (size_t)num_fundamentals * sizeof(float));
-                    PULSEQLIB_FREE(fundamentals); PULSEQLIB_FREE(grad_amps);
-                    fundamentals = tmp_f;
-                    grad_amps = tmp_a;
-                }
-                fundamentals[num_fundamentals] = f_res;
-                grad_amps[num_fundamentals] = amp;
-                num_fundamentals++;
-            }
-        }
-    }
-
-    if (num_fundamentals == 0) {
-        PULSEQLIB_FREE(fundamentals);
-        PULSEQLIB_FREE(grad_amps);
-        return PULSEQLIB_SUCCESS;
-    }
-
-    /* ------ Expand harmonics ------ */
-    cand_cap = num_fundamentals * 16;
-    candidates = (sa_candidate*)PULSEQLIB_ALLOC((size_t)cand_cap * sizeof(sa_candidate));
-    if (!candidates) {
-        PULSEQLIB_FREE(fundamentals); PULSEQLIB_FREE(grad_amps);
-        return PULSEQLIB_ERR_ALLOC_FAILED;
-    }
-    num_candidates = 0;
-
-    for (i = 0; i < num_fundamentals; ++i) {
-        for (k = 1; ; ++k) {
-            float f_h = (float)k * fundamentals[i];
-            if (f_h > max_freq_hz) break;
-
-            if (num_candidates >= cand_cap) {
-                sa_candidate* tmp;
-                cand_cap *= 2;
-                tmp = (sa_candidate*)PULSEQLIB_ALLOC((size_t)cand_cap * sizeof(sa_candidate));
-                if (!tmp) {
-                    PULSEQLIB_FREE(candidates); PULSEQLIB_FREE(fundamentals);
-                    PULSEQLIB_FREE(grad_amps);
-                    return PULSEQLIB_ERR_ALLOC_FAILED;
-                }
-                memcpy(tmp, candidates, (size_t)num_candidates * sizeof(sa_candidate));
-                PULSEQLIB_FREE(candidates);
-                candidates = tmp;
-            }
-            candidates[num_candidates].freq_hz = f_h;
-            candidates[num_candidates].grad_amp = grad_amps[i];
-            candidates[num_candidates].amplitude = 0.0f;
-            candidates[num_candidates].violation = 0;
-            num_candidates++;
-        }
-    }
-
-    PULSEQLIB_FREE(fundamentals);
-    PULSEQLIB_FREE(grad_amps);
-
-    /* ------ Evaluate analytical amplitude (worst case across axes) ------ */
-    for (i = 0; i < num_candidates; ++i) {
-        float f = candidates[i].freq_hz;
-        float max_amp = 0.0f;
-
-        for (ax = 0; ax < 3; ++ax) {
-            float a = sa_eval_axis_spectrum(
-                f, &sc->axes[ax], num_instances, tr_duration_us);
-            if (a > max_amp) max_amp = a;
-        }
-        candidates[i].amplitude = max_amp;
-    }
-
-    /* ------ Check against forbidden bands (cross-axis) ------ */
-    for (i = 0; i < num_candidates; ++i) {
-        float f = candidates[i].freq_hz;
-        int b;
-        for (b = 0; b < num_forbidden_bands; ++b) {
-            if (f >= forbidden_bands[b].freq_min_hz &&
-                f <= forbidden_bands[b].freq_max_hz) {
-                /* Frequency falls in band — check amplitude */
-                if (candidates[i].grad_amp > forbidden_bands[b].max_amplitude_hz_per_m) {
-                    candidates[i].violation = 1;
-                }
-                break;
-            }
-        }
-    }
-
-    *out_candidates = candidates;
-    *out_num = num_candidates;
-    return PULSEQLIB_SUCCESS;
-}
-
-/* ================================================================== */
 /*  Structural acoustic analysis — top-level violation check          */
 /* ================================================================== */
 
 /**
- * Run full structural acoustic analysis and populate spectra candidates.
- * This replaces the amplitude check in check_acoustic_violations()
- * with physics-informed structural analysis.
+ * Run full structural acoustic analysis: evaluate S_axis(f) on the dense
+ * frequency grid, find peaks in the combined (cross-axis max) spectrum,
+ * attribute per-peak gradient amplitude, and check against forbidden bands.
  */
 static int sa_check_structural_violations(
     pulseqlib_mech_resonances_spectra* spectra,
     const struct pulseqlib_sequence_descriptor* desc,
     int start_block, int block_count,
     int num_instances, float tr_duration_us,
-    float max_freq_hz,
     int num_forbidden_bands,
     const pulseqlib_forbidden_band* forbidden_bands,
     float peak_log10_threshold, float peak_norm_scale,
     float peak_eps, float peak_prominence)
 {
     sa_structural_candidates sc;
-    sa_candidate* candidates;
-    int num_candidates, result;
-    int ax, i, n_ax[3];
-    float* ax_freqs[3];
-    float* ax_amps[3];
-    int*   ax_viol[3];
-    float* ax_grad_amps;
+    int result, ax, i, d, b, ci;
+    int nbins, num_candidates;
+    float f_hz, f_min, df, val;
+    float mx, max_ga;
+    float sum_re_ax, sum_im_ax, sum_mag, threshold;
+    float d_re, d_im, d_mag;
+    float* ana[3];
+    float* combined;
+    int*   peaks_combined;
+    float* cand_freqs;
+    float* cand_amps[3];
+    float* cand_grad_amps;
+    int*   cand_violations;
 
     memset(&sc, 0, sizeof(sc));
     for (ax = 0; ax < 3; ++ax) {
-        n_ax[ax] = 0; ax_freqs[ax] = NULL; ax_amps[ax] = NULL; ax_viol[ax] = NULL;
+        ana[ax] = NULL;
+        cand_amps[ax] = NULL;
     }
-    ax_grad_amps = NULL;
+    combined = NULL;
+    peaks_combined = NULL;
+    cand_freqs = NULL;
+    cand_grad_amps = NULL;
+    cand_violations = NULL;
 
     result = sa_build_structural_candidates(
         &sc, desc, start_block, block_count,
@@ -1998,76 +1775,181 @@ static int sa_check_structural_violations(
         peak_eps, peak_prominence);
     if (PULSEQLIB_FAILED(result)) return result;
 
-    candidates = NULL;
-    num_candidates = 0;
-    result = sa_find_candidates_and_check(
-        &candidates, &num_candidates,
-        &sc, num_instances, tr_duration_us,
-        max_freq_hz,
-        num_forbidden_bands, forbidden_bands);
-    if (PULSEQLIB_FAILED(result)) {
+    /* Read the frequency grid from the already-filled spectra struct */
+    nbins = spectra->num_freq_bins;
+    f_min = spectra->freq_min_hz;
+    df    = spectra->freq_spacing_hz;
+    if (nbins <= 0) {
         sa_free_structural_candidates(&sc);
-        return result;
+        return PULSEQLIB_SUCCESS;
     }
 
-    /* --- Assign candidates to per-axis outputs --- */
-    /* All candidates are cross-axis, so store the full list on each axis.
-     * But re-evaluate with per-axis amplitude for display. */
-    if (num_candidates > 0) {
-        ax_grad_amps = (float*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(float));
-        if (!ax_grad_amps) {
-            if (candidates) PULSEQLIB_FREE(candidates);
-            sa_free_structural_candidates(&sc);
-            return PULSEQLIB_ERR_ALLOC_FAILED;
-        }
-        for (i = 0; i < num_candidates; ++i)
-            ax_grad_amps[i] = candidates[i].grad_amp;
-    }
+    /* Allocate analytical spectrum arrays (3 axes + combined + peak mask) */
     for (ax = 0; ax < 3; ++ax) {
-        if (num_candidates > 0) {
-            ax_freqs[ax] = (float*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(float));
-            ax_amps[ax]  = (float*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(float));
-            ax_viol[ax]  = (int*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(int));
-            if (!ax_freqs[ax] || !ax_amps[ax] || !ax_viol[ax]) {
-                if (ax_grad_amps) PULSEQLIB_FREE(ax_grad_amps);
-                for (i = 0; i < 3; ++i) {
-                    if (ax_freqs[i]) PULSEQLIB_FREE(ax_freqs[i]);
-                    if (ax_amps[i]) PULSEQLIB_FREE(ax_amps[i]);
-                    if (ax_viol[i]) PULSEQLIB_FREE(ax_viol[i]);
+        ana[ax] = (float*)PULSEQLIB_ALLOC((size_t)nbins * sizeof(float));
+        if (!ana[ax]) goto alloc_fail;
+    }
+    combined = (float*)PULSEQLIB_ALLOC((size_t)nbins * sizeof(float));
+    peaks_combined = (int*)PULSEQLIB_ALLOC((size_t)nbins * sizeof(int));
+    if (!combined || !peaks_combined) goto alloc_fail;
+
+    /* Evaluate S_axis(f) on every frequency bin */
+    for (i = 0; i < nbins; ++i) {
+        f_hz = f_min + (float)i * df;
+        mx = 0.0f;
+        for (ax = 0; ax < 3; ++ax) {
+            val = sa_eval_axis_spectrum(
+                f_hz, &sc.axes[ax], num_instances, tr_duration_us);
+            ana[ax][i] = val;
+            if (val > mx) mx = val;
+        }
+        combined[i] = mx;
+    }
+
+    /* Find peaks in the analytical combined spectrum.
+     * Unlike FFT spectra, the analytical model is noise-free but has
+     * Dirichlet sidelobes, so the log-median detector is inappropriate.
+     * Use local maxima with a prominence filter: a peak must rise above
+     * both surrounding valleys by at least 10% of the global max.
+     * This keeps main Dirichlet lobes and rejects inter-lobe sidelobes. */
+    {
+        float comb_max = 0.0f;
+        float rel_thr, prom_thr;
+        float left_min, right_min, prom;
+        int j;
+
+        for (i = 0; i < nbins; ++i)
+            if (combined[i] > comb_max) comb_max = combined[i];
+        for (i = 0; i < nbins; ++i)
+            peaks_combined[i] = 0;
+        if (comb_max > 0.0f) {
+            rel_thr  = 0.01f * comb_max;
+            prom_thr = 0.20f * comb_max;
+            for (i = 1; i < nbins - 1; ++i) {
+                if (combined[i] > combined[i-1] &&
+                    combined[i] > combined[i+1] &&
+                    combined[i] > rel_thr) {
+                    /* Prominence: peak height above the deeper of the
+                     * two valleys flanking it.                         */
+                    left_min = combined[i];
+                    for (j = i - 1; j >= 0; --j) {
+                        if (combined[j] < left_min) left_min = combined[j];
+                        if (combined[j] > combined[i]) break;
+                    }
+                    right_min = combined[i];
+                    for (j = i + 1; j < nbins; ++j) {
+                        if (combined[j] < right_min) right_min = combined[j];
+                        if (combined[j] > combined[i]) break;
+                    }
+                    prom = combined[i] -
+                           (left_min > right_min ? left_min : right_min);
+                    if (prom >= prom_thr)
+                        peaks_combined[i] = 1;
                 }
-                if (candidates) PULSEQLIB_FREE(candidates);
-                sa_free_structural_candidates(&sc);
-                return PULSEQLIB_ERR_ALLOC_FAILED;
             }
-            for (i = 0; i < num_candidates; ++i) {
-                ax_freqs[ax][i] = candidates[i].freq_hz;
-                ax_amps[ax][i]  = sa_eval_axis_spectrum(
-                    candidates[i].freq_hz, &sc.axes[ax],
-                    num_instances, tr_duration_us);
-                ax_viol[ax][i]  = candidates[i].violation;
-            }
-            n_ax[ax] = num_candidates;
         }
     }
 
-    /* Assign to spectra struct */
-    spectra->num_candidates_gx = n_ax[0];
-    spectra->num_candidates_gy = n_ax[1];
-    spectra->num_candidates_gz = n_ax[2];
-    spectra->candidate_freqs_gx = ax_freqs[0];
-    spectra->candidate_freqs_gy = ax_freqs[1];
-    spectra->candidate_freqs_gz = ax_freqs[2];
-    spectra->candidate_amps_gx  = ax_amps[0];
-    spectra->candidate_amps_gy  = ax_amps[1];
-    spectra->candidate_amps_gz  = ax_amps[2];
-    spectra->candidate_violations_gx = ax_viol[0];
-    spectra->candidate_violations_gy = ax_viol[1];
-    spectra->candidate_violations_gz = ax_viol[2];
-    spectra->candidate_grad_amps     = ax_grad_amps;
+    /* Count candidates */
+    num_candidates = 0;
+    for (i = 0; i < nbins; ++i) {
+        if (peaks_combined[i]) num_candidates++;
+    }
 
-    if (candidates) PULSEQLIB_FREE(candidates);
+    if (num_candidates > 0) {
+        cand_freqs      = (float*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(float));
+        cand_grad_amps  = (float*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(float));
+        cand_violations = (int*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(int));
+        if (!cand_freqs || !cand_grad_amps || !cand_violations) goto alloc_fail;
+        for (ax = 0; ax < 3; ++ax) {
+            cand_amps[ax] = (float*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(float));
+            if (!cand_amps[ax]) goto alloc_fail;
+        }
+
+        ci = 0;
+        for (i = 0; i < nbins; ++i) {
+            if (!peaks_combined[i]) continue;
+            f_hz = f_min + (float)i * df;
+            cand_freqs[ci] = f_hz;
+
+            /* Store per-axis analytical amplitudes */
+            for (ax = 0; ax < 3; ++ax)
+                cand_amps[ax][ci] = ana[ax][i];
+
+            /* Find max grad_amp among contributing defs.
+             * A def contributes if |S_d(f)| > 1% of |sum_d S_d(f)|.
+             * The outer TR Dirichlet cancels in the ratio.        */
+            max_ga = 0.0f;
+            for (ax = 0; ax < 3; ++ax) {
+                sum_re_ax = 0.0f;
+                sum_im_ax = 0.0f;
+                for (d = 0; d < sc.axes[ax].num_contributions; ++d) {
+                    sa_eval_def_spectrum(f_hz, &sc.axes[ax].contributions[d],
+                                        &d_re, &d_im);
+                    sum_re_ax += d_re;
+                    sum_im_ax += d_im;
+                }
+                sum_mag = (float)sqrt((double)(sum_re_ax * sum_re_ax +
+                                               sum_im_ax * sum_im_ax));
+                threshold = 0.01f * sum_mag;
+
+                for (d = 0; d < sc.axes[ax].num_contributions; ++d) {
+                    sa_eval_def_spectrum(f_hz, &sc.axes[ax].contributions[d],
+                                        &d_re, &d_im);
+                    d_mag = (float)sqrt((double)(d_re * d_re + d_im * d_im));
+                    if (d_mag > threshold) {
+                        if (sc.axes[ax].contributions[d].amplitude > max_ga)
+                            max_ga = sc.axes[ax].contributions[d].amplitude;
+                    }
+                }
+            }
+            cand_grad_amps[ci] = max_ga;
+
+            /* Check against forbidden bands */
+            cand_violations[ci] = 0;
+            for (b = 0; b < num_forbidden_bands; ++b) {
+                if (f_hz >= forbidden_bands[b].freq_min_hz &&
+                    f_hz <= forbidden_bands[b].freq_max_hz) {
+                    if (max_ga > forbidden_bands[b].max_amplitude_hz_per_m)
+                        cand_violations[ci] = 1;
+                    break;
+                }
+            }
+            ci++;
+        }
+    }
+
+    /* Assign analytical spectra to output (ownership transfer) */
+    spectra->analytical_gx = ana[0]; ana[0] = NULL;
+    spectra->analytical_gy = ana[1]; ana[1] = NULL;
+    spectra->analytical_gz = ana[2]; ana[2] = NULL;
+
+    /* Assign candidates to output */
+    spectra->num_candidates       = num_candidates;
+    spectra->candidate_freqs      = cand_freqs;      cand_freqs = NULL;
+    spectra->candidate_amps_gx    = cand_amps[0];    cand_amps[0] = NULL;
+    spectra->candidate_amps_gy    = cand_amps[1];    cand_amps[1] = NULL;
+    spectra->candidate_amps_gz    = cand_amps[2];    cand_amps[2] = NULL;
+    spectra->candidate_grad_amps  = cand_grad_amps;  cand_grad_amps = NULL;
+    spectra->candidate_violations = cand_violations;  cand_violations = NULL;
+
+    if (combined) PULSEQLIB_FREE(combined);
+    if (peaks_combined) PULSEQLIB_FREE(peaks_combined);
     sa_free_structural_candidates(&sc);
     return PULSEQLIB_SUCCESS;
+
+alloc_fail:
+    for (ax = 0; ax < 3; ++ax) {
+        if (ana[ax]) PULSEQLIB_FREE(ana[ax]);
+        if (cand_amps[ax]) PULSEQLIB_FREE(cand_amps[ax]);
+    }
+    if (combined) PULSEQLIB_FREE(combined);
+    if (peaks_combined) PULSEQLIB_FREE(peaks_combined);
+    if (cand_freqs) PULSEQLIB_FREE(cand_freqs);
+    if (cand_grad_amps) PULSEQLIB_FREE(cand_grad_amps);
+    if (cand_violations) PULSEQLIB_FREE(cand_violations);
+    sa_free_structural_candidates(&sc);
+    return PULSEQLIB_ERR_ALLOC_FAILED;
 }
 
 /* ================================================================== */
@@ -2696,11 +2578,9 @@ static int calc_mech_resonances_from_uniform(
 
     /* ---- structural acoustic analysis ---- */
     if (desc && block_count > 0) {
-        float max_f = max_frequency_hz;
-        if (max_f <= 0.0f) max_f = (float)(5.0e5 / (double)waveforms->raster_us);
         result = sa_check_structural_violations(
             spectra, desc, start_block, block_count,
-            num_trs, tr_duration_us, max_f,
+            num_trs, tr_duration_us,
             num_forbidden_bands, forbidden_bands,
             peak_log10_threshold, peak_norm_scale,
             peak_eps, peak_prominence);
