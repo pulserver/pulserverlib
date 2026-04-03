@@ -1,17 +1,17 @@
-"""Gradient mechanical-resonances visualisation for SequenceCollection (plotting only, no pass/fail)."""
+"""Gradient spectrum (mechanical resonances) visualisation for SequenceCollection (plotting only, no pass/fail)."""
 
-__all__ = ['mechanical_resonances']
+__all__ = ['grad_spectrum']
 
 import warnings
 
 import numpy as np
 
-from ._extension._pulseqlib_wrapper import _calc_acoustic_spectra, _find_tr
+from ._extension._pulseqlib_wrapper import _calc_mech_resonances, _find_tr
 from ._helpers import _add_echo_spacing_axis
 from ._sequence import SequenceCollection
 
 
-def _plot_mechanical_resonances_single(
+def _plot_grad_spectrum_single(
     seq: SequenceCollection,
     *,
     subsequence_idx: int,
@@ -30,7 +30,7 @@ def _plot_mechanical_resonances_single(
     gamma_hz_per_t = float(seq.system.gamma)
     hz_per_m_to_mT_per_m = 1e3 / gamma_hz_per_t
 
-    rd = _calc_acoustic_spectra(
+    rd = _calc_mech_resonances(
         seq._cseq,
         subsequence_idx=subsequence_idx,
         canonical_tr_idx=canonical_tr_idx,
@@ -171,7 +171,7 @@ def _plot_mechanical_resonances_single(
         fig.tight_layout()
 
 
-def mechanical_resonances(
+def grad_spectrum(
     seq: SequenceCollection,
     *,
     sequence_idx: int | None = None,
@@ -184,7 +184,7 @@ def mechanical_resonances(
     peak_eps: float | None = None,
     peak_prominence: float | None = None,
 ) -> None:
-    """Plot mechanical resonance candidates for gradient waveforms in the canonical TR.
+    """Plot gradient spectrum (mechanical resonance candidates) for the canonical TR.
 
     Creates a single-panel figure with three overlaid spectra (Gx, Gy, Gz) showing
     surviving peak candidates as vertical lines, forbidden bands as shaded regions,
@@ -240,7 +240,7 @@ def mechanical_resonances(
         tr_info = _find_tr(seq._cseq, subsequence_idx=ss_idx)
         num_canonical = int(tr_info.get('num_canonical_trs', 1))
         for canonical_tr_idx in range(num_canonical):
-            _plot_mechanical_resonances_single(
+            _plot_grad_spectrum_single(
                 seq,
                 subsequence_idx=ss_idx,
                 canonical_tr_idx=canonical_tr_idx,
@@ -255,6 +255,6 @@ def mechanical_resonances(
             )
 
 
-# Backward-compatible alias
-grad_spectrum = mechanical_resonances
+# Alias
+mechanical_resonances = grad_spectrum
 

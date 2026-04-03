@@ -428,7 +428,7 @@ int pulseqlib_check_safety(
 /* ================================================================== */
 
 /**
- * @brief Compute acoustic spectral data for wrapper-side plotting.
+ * @brief Compute mechanical resonances spectral data for wrapper-side plotting.
  *
  * Independently extracts TR gradient waveforms (without segment
  * labels), interpolates them to uniform raster, and computes
@@ -437,7 +437,7 @@ int pulseqlib_check_safety(
  * in the wrapper.
  *
  * @param[out] spectra                  Receives spectral data (caller frees
- *                                       via pulseqlib_acoustic_spectra_free).
+ *                                       via pulseqlib_mech_resonances_spectra_free).
  * @param[out] diag                     Diagnostic on failure.
  * @param[in]  coll                     Loaded collection.
  * @param[in]  subseq_idx              Subsequence index.
@@ -451,9 +451,9 @@ int pulseqlib_check_safety(
  */
 
 /**
- * @brief Compute acoustic spectral data for a specific canonical TR of a subsequence.
+ * @brief Compute mechanical resonances spectral data for a specific canonical TR of a subsequence.
  *
- * @param[out] spectra                  Receives spectral data (caller frees via pulseqlib_acoustic_spectra_free).
+ * @param[out] spectra                  Receives spectral data (caller frees via pulseqlib_mech_resonances_spectra_free).
  * @param[out] diag                     Diagnostic on failure.
  * @param[in]  coll                     Loaded collection.
  * @param[in]  subseq_idx               Subsequence index.
@@ -466,8 +466,8 @@ int pulseqlib_check_safety(
  * @param[in]  forbidden_bands          Array of forbidden bands.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
-int pulseqlib_calc_acoustic_spectra(
-    pulseqlib_acoustic_spectra*    spectra,
+int pulseqlib_calc_mech_resonances(
+    pulseqlib_mech_resonances_spectra*    spectra,
     pulseqlib_diagnostic*          diag,
     const pulseqlib_collection*    coll,
     int                            subseq_idx,
@@ -479,8 +479,8 @@ int pulseqlib_calc_acoustic_spectra(
     int                            num_forbidden_bands,
     const pulseqlib_forbidden_band* forbidden_bands);
 
-/** @brief Free arrays inside a pulseqlib_acoustic_spectra. */
-void pulseqlib_acoustic_spectra_free(pulseqlib_acoustic_spectra* s);
+/** @brief Free arrays inside a pulseqlib_mech_resonances_spectra. */
+void pulseqlib_mech_resonances_spectra_free(pulseqlib_mech_resonances_spectra* s);
 
 /* ================================================================== */
 /*  PNS slew-rate computation (for wrapper-side plotting)             */

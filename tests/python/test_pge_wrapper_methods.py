@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from pge import Opts, SequenceCollection
-from pge.core._extension._pulseqlib_wrapper import _calc_acoustic_spectra
+from pge.core._extension._pulseqlib_wrapper import _calc_mech_resonances
 from pge.core._plot import plot as _plot_impl
 
 
@@ -65,11 +65,11 @@ def test_grad_spectrum_peak_tuning_kwargs_smoke(generated_seq_path):
     plt.close(fig)
 
 
-def test_calc_acoustic_spectra_peak_default_parity(generated_seq_path):
+def test_calc_mech_resonances_peak_default_parity(generated_seq_path):
     sc = SequenceCollection(str(generated_seq_path))
     forbidden = [(500.0, 600.0, 2000.0)]
 
-    rd_default = _calc_acoustic_spectra(
+    rd_default = _calc_mech_resonances(
         sc._cseq,
         subsequence_idx=0,
         target_window_size=5000,
@@ -78,7 +78,7 @@ def test_calc_acoustic_spectra_peak_default_parity(generated_seq_path):
         forbidden_bands=forbidden,
     )
 
-    rd_explicit = _calc_acoustic_spectra(
+    rd_explicit = _calc_mech_resonances(
         sc._cseq,
         subsequence_idx=0,
         target_window_size=5000,
@@ -104,9 +104,9 @@ def test_calc_acoustic_spectra_peak_default_parity(generated_seq_path):
         )
 
 
-def test_calc_acoustic_spectra_returns_candidate_grad_amps(generated_seq_path):
+def test_calc_mech_resonances_returns_candidate_grad_amps(generated_seq_path):
     sc = SequenceCollection(str(generated_seq_path))
-    rd = _calc_acoustic_spectra(
+    rd = _calc_mech_resonances(
         sc._cseq,
         subsequence_idx=0,
         target_window_size=5000,
@@ -121,10 +121,10 @@ def test_calc_acoustic_spectra_returns_candidate_grad_amps(generated_seq_path):
     assert np.all(grad_amps >= 0.0)
 
 
-def test_mechanical_resonances_single_panel(generated_seq_path):
+def test_grad_spectrum_single_panel(generated_seq_path):
     sc = SequenceCollection(str(generated_seq_path))
 
-    sc.mechanical_resonances(
+    sc.grad_spectrum(
         sequence_idx=0,
         forbidden_bands=[(500.0, 600.0, 2000.0)],
         max_frequency=1200.0,
@@ -139,21 +139,6 @@ def test_mechanical_resonances_single_panel(generated_seq_path):
         and 'Mechanical Resonances' in ax.get_title()
     ]
     assert len(resonance_axes) == 1
-    plt.close(fig)
-
-
-def test_calculate_mechanical_resonances_alias(generated_seq_path):
-    sc = SequenceCollection(str(generated_seq_path))
-
-    sc.calculate_mechanical_resonances(
-        sequence_idx=0,
-        forbidden_bands=[(500.0, 600.0, 2000.0)],
-        max_frequency=1200.0,
-    )
-
-    fig = plt.gcf()
-    assert fig is not None
-    assert len(fig.axes) >= 1
     plt.close(fig)
 
 
@@ -482,7 +467,7 @@ def test_grad_spectrum_uses_opts_forbidden_bands_default(simple_gre_seq, monkeyp
 
     import pge.core._acoustics as _ac_mod
 
-    monkeypatch.setattr(_ac_mod, "_calc_acoustic_spectra", _fake_calc_acoustic)
+    monkeypatch.setattr(_ac_mod, "_calc_mech_resonances", _fake_calc_acoustic)
 
     sc.grad_spectrum(sequence_idx=0)
 
@@ -538,7 +523,7 @@ def test_grad_spectrum_explicit_bands_override_opts(simple_gre_seq, monkeypatch)
 
     import pge.core._acoustics as _ac_mod
 
-    monkeypatch.setattr(_ac_mod, "_calc_acoustic_spectra", _fake_calc_acoustic)
+    monkeypatch.setattr(_ac_mod, "_calc_mech_resonances", _fake_calc_acoustic)
 
     explicit = [(250.0, 300.0, 1234.0)]
     sc.grad_spectrum(sequence_idx=0, forbidden_bands=explicit)
@@ -620,7 +605,7 @@ def test_grad_spectrum_iterates_all_subsequences_and_canonical_trs(
     import pge.core._acoustics as _ac_mod
 
     monkeypatch.setattr(_ac_mod, "_find_tr", _fake_find_tr)
-    monkeypatch.setattr(_ac_mod, "_calc_acoustic_spectra", _fake_calc_acoustic)
+    monkeypatch.setattr(_ac_mod, "_calc_mech_resonances", _fake_calc_acoustic)
 
     sc.grad_spectrum(forbidden_bands=[(250.0, 300.0, 1234.0)])
 

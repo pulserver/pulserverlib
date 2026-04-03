@@ -148,7 +148,7 @@ static py::dict _get_tr_waveforms(
     return out;
 }
 
-static py::dict _calc_acoustic_spectra(
+static py::dict _calc_mech_resonances(
     _PulseqCollection& pc,
     int subsequence_idx,
     int canonical_tr_idx,
@@ -183,7 +183,7 @@ static py::dict _calc_acoustic_spectra(
     float peak_eps_val = parse_optional_float(peak_eps);
     float peak_prominence_val = parse_optional_float(peak_prominence);
 
-    auto sp = pc.coll().calc_acoustic_spectra(
+    auto sp = pc.coll().calc_mech_resonances(
         subsequence_idx,
         canonical_tr_idx,
         target_window_size,
@@ -391,7 +391,7 @@ PYBIND11_MODULE(_pulseqlib_wrapper, m) {
             py::arg("collapse_delays") = false,
             py::arg("num_averages") = 0);
 
-        m.def("_calc_acoustic_spectra", &_calc_acoustic_spectra,
+        m.def("_calc_mech_resonances", &_calc_mech_resonances,
             py::arg("collection"),
             py::arg("subsequence_idx") = 0,
             py::arg("canonical_tr_idx") = 0,

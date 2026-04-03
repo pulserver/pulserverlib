@@ -121,11 +121,11 @@ static int pulseqlib__build_pass_expanded_block_order(
     return PULSEQLIB_SUCCESS;
 }
 
-/* pulseqlib_safety.c -- safety checks, acoustic analysis, PNS, segment timing
+/* pulseqlib_safety.c -- safety checks, mechanical resonance analysis, PNS, segment timing
  *
  * Public functions:
  *   pulseqlib_check_safety
- *   pulseqlib_calc_acoustic_spectra   / _free
+ *   pulseqlib_calc_mech_resonances   / _free
  *   pulseqlib_calc_pns               / _free
  *
  * Internal:
@@ -765,7 +765,7 @@ timing_fail:
 /*  Acoustic spectra free                                             */
 /* ================================================================== */
 
-void pulseqlib_acoustic_spectra_free(pulseqlib_acoustic_spectra* s)
+void pulseqlib_mech_resonances_spectra_free(pulseqlib_mech_resonances_spectra* s)
 {
     if (!s) return;
 
@@ -1964,7 +1964,7 @@ static int sa_find_candidates_and_check(
  * with physics-informed structural analysis.
  */
 static int sa_check_structural_violations(
-    pulseqlib_acoustic_spectra* spectra,
+    pulseqlib_mech_resonances_spectra* spectra,
     const struct pulseqlib_sequence_descriptor* desc,
     int start_block, int block_count,
     int num_instances, float tr_duration_us,
@@ -2401,8 +2401,8 @@ fail:
 /*  Acoustic spectra (static helper from uniform waveforms)           */
 /* ================================================================== */
 
-static int calc_acoustic_spectra_from_uniform(
-    pulseqlib_acoustic_spectra* spectra,
+static int calc_mech_resonances_from_uniform(
+    pulseqlib_mech_resonances_spectra* spectra,
     pulseqlib_diagnostic* diag,
     const pulseqlib__uniform_grad_waveforms* waveforms,
     int target_window_size,
@@ -2447,7 +2447,7 @@ static int calc_acoustic_spectra_from_uniform(
     memset(&sup, 0, sizeof(sup));
 
     max_samples = waveforms->num_samples;
-    if (max_samples <= 0) { diag->code = PULSEQLIB_ERR_ACOUSTIC_NO_WAVEFORM; return diag->code; }
+    if (max_samples <= 0) { diag->code = PULSEQLIB_ERR_MECH_RESONANCES_NO_WAVEFORM; return diag->code; }
 
     result = acoustic_support_init(&sup, max_samples, target_window_size,
                                    target_spectral_resolution_hz,
@@ -2471,7 +2471,7 @@ static int calc_acoustic_spectra_from_uniform(
 
     if (!spectra->spectrogram_gx || !spectra->spectrogram_gy || !spectra->spectrogram_gz ||
         !spectra->peaks_gx || !spectra->peaks_gy || !spectra->peaks_gz) {
-        pulseqlib_acoustic_spectra_free(spectra);
+        pulseqlib_mech_resonances_spectra_free(spectra);
         acoustic_support_free(&sup);
         diag->code = PULSEQLIB_ERR_ALLOC_FAILED; return diag->code;
     }
@@ -2497,7 +2497,7 @@ static int calc_acoustic_spectra_from_uniform(
             peak_log10_threshold, peak_norm_scale, peak_eps,
             peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
-            pulseqlib_acoustic_spectra_free(spectra);
+            pulseqlib_mech_resonances_spectra_free(spectra);
             acoustic_support_free(&sup);
             diag->code = result; return result;
         }
@@ -2512,7 +2512,7 @@ static int calc_acoustic_spectra_from_uniform(
             peak_log10_threshold, peak_norm_scale, peak_eps,
             peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
-            pulseqlib_acoustic_spectra_free(spectra);
+            pulseqlib_mech_resonances_spectra_free(spectra);
             acoustic_support_free(&sup);
             diag->code = result; return result;
         }
@@ -2527,7 +2527,7 @@ static int calc_acoustic_spectra_from_uniform(
             peak_log10_threshold, peak_norm_scale, peak_eps,
             peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
-            pulseqlib_acoustic_spectra_free(spectra);
+            pulseqlib_mech_resonances_spectra_free(spectra);
             acoustic_support_free(&sup);
             diag->code = result; return result;
         }
@@ -2556,7 +2556,7 @@ static int calc_acoustic_spectra_from_uniform(
             peak_log10_threshold, peak_norm_scale, peak_eps,
             peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
-            pulseqlib_acoustic_spectra_free(spectra);
+            pulseqlib_mech_resonances_spectra_free(spectra);
             diag->code = result; return result;
         }
     } else {
@@ -2569,7 +2569,7 @@ static int calc_acoustic_spectra_from_uniform(
             peak_log10_threshold, peak_norm_scale, peak_eps,
             peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
-            pulseqlib_acoustic_spectra_free(spectra);
+            pulseqlib_mech_resonances_spectra_free(spectra);
             diag->code = result; return result;
         }
     }
@@ -2581,7 +2581,7 @@ static int calc_acoustic_spectra_from_uniform(
     if (!spectra->spectrum_full_gx || !spectra->spectrum_full_gy || !spectra->spectrum_full_gz) {
         if (seq_spec_gx) PULSEQLIB_FREE(seq_spec_gx);
         if (seq_freqs)   PULSEQLIB_FREE(seq_freqs);
-        pulseqlib_acoustic_spectra_free(spectra);
+        pulseqlib_mech_resonances_spectra_free(spectra);
         diag->code = PULSEQLIB_ERR_ALLOC_FAILED; return diag->code;
     }
 
@@ -2594,7 +2594,7 @@ static int calc_acoustic_spectra_from_uniform(
         if (!spectra->spectrum_seq_gx || !spectra->spectrum_seq_gy || !spectra->spectrum_seq_gz) {
             if (seq_spec_gx) PULSEQLIB_FREE(seq_spec_gx);
             if (seq_freqs)   PULSEQLIB_FREE(seq_freqs);
-            pulseqlib_acoustic_spectra_free(spectra);
+            pulseqlib_mech_resonances_spectra_free(spectra);
             diag->code = PULSEQLIB_ERR_ALLOC_FAILED; return diag->code;
         }
         if (seq_spec_gx && waveforms->num_samples > 0) {
@@ -2619,7 +2619,7 @@ static int calc_acoustic_spectra_from_uniform(
             peak_log10_threshold, peak_norm_scale, peak_eps,
             peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
-            pulseqlib_acoustic_spectra_free(spectra);
+            pulseqlib_mech_resonances_spectra_free(spectra);
             diag->code = result; return result;
         }
     } else {
@@ -2640,7 +2640,7 @@ static int calc_acoustic_spectra_from_uniform(
             peak_log10_threshold, peak_norm_scale, peak_eps,
             peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
-            pulseqlib_acoustic_spectra_free(spectra);
+            pulseqlib_mech_resonances_spectra_free(spectra);
             diag->code = result; return result;
         }
         if (seq_spec_gy && spectra->spectrum_seq_gy) {
@@ -2669,7 +2669,7 @@ static int calc_acoustic_spectra_from_uniform(
             peak_log10_threshold, peak_norm_scale, peak_eps,
             peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
-            pulseqlib_acoustic_spectra_free(spectra);
+            pulseqlib_mech_resonances_spectra_free(spectra);
             diag->code = result; return result;
         }
         if (seq_spec_gz && spectra->spectrum_seq_gz) {
@@ -2705,7 +2705,7 @@ static int calc_acoustic_spectra_from_uniform(
             peak_log10_threshold, peak_norm_scale,
             peak_eps, peak_prominence);
         if (PULSEQLIB_FAILED(result)) {
-            pulseqlib_acoustic_spectra_free(spectra);
+            pulseqlib_mech_resonances_spectra_free(spectra);
             diag->code = result; return result;
         }
     }
@@ -2884,8 +2884,8 @@ int pulseqlib__find_unique_shot_passes(
 /*  Acoustic spectra (public wrapper)                                 */
 /* ================================================================== */
 
-int pulseqlib_calc_acoustic_spectra(
-    pulseqlib_acoustic_spectra* spectra,
+int pulseqlib_calc_mech_resonances(
+    pulseqlib_mech_resonances_spectra* spectra,
     pulseqlib_diagnostic* diag,
     const pulseqlib_collection* coll,
     int subseq_idx,
@@ -2977,7 +2977,7 @@ int pulseqlib_calc_acoustic_spectra(
         if (block_order) PULSEQLIB_FREE(block_order);
         return rc;
     }
-    rc = calc_acoustic_spectra_from_uniform(spectra, diag, &uw,
+    rc = calc_mech_resonances_from_uniform(spectra, diag, &uw,
         target_window_size, target_resolution_hz, max_freq_hz,
         num_instances,
         tr_duration_us,
@@ -3620,7 +3620,7 @@ int pulseqlib_check_safety(
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_descriptor* trd;
     pulseqlib__uniform_grad_waveforms uw;
-    pulseqlib_acoustic_spectra spectra;
+    pulseqlib_mech_resonances_spectra spectra;
     pulseqlib_pns_result pns_result;
     int start_block, block_count, amplitude_mode, num_instances;
     int sa_start_block, sa_block_count;
@@ -3712,7 +3712,7 @@ int pulseqlib_check_safety(
 
             if (num_forbidden_bands > 0) {
                 memset(&spectra, 0, sizeof(spectra));
-                rc = calc_acoustic_spectra_from_uniform(
+                rc = calc_mech_resonances_from_uniform(
                     &spectra, diag, &uw,
                     0, 0.0f, 0.0f,
                     num_instances,
@@ -3723,7 +3723,7 @@ int pulseqlib_check_safety(
                     opts->peak_eps,
                     opts->peak_prominence,
                     desc, sa_start_block, sa_block_count);
-                pulseqlib_acoustic_spectra_free(&spectra);
+                pulseqlib_mech_resonances_spectra_free(&spectra);
                 if (PULSEQLIB_FAILED(rc)) {
                     pulseqlib__uniform_grad_waveforms_free(&uw);
                     if (unique_tr_indices) PULSEQLIB_FREE(unique_tr_indices);

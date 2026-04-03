@@ -2,7 +2,7 @@
 
 This module defines :class:`Opts`, a GE-oriented subclass of
 ``pypulseq.Opts`` that adds vendor timing metadata, PNS model fields,
-and acoustic forbidden-band helpers.
+and mechanical resonance forbidden-band helpers.
 """
 
 from __future__ import annotations
@@ -136,7 +136,7 @@ def _esp_us_to_band_hz(esp_min_us: float, esp_max_us: float) -> tuple[float, flo
 
 
 class Opts(pp.Opts):
-    """GE-focused ``pypulseq.Opts`` subclass with PNS and acoustic metadata.
+    """GE-focused ``pypulseq.Opts`` subclass with PNS and mechanical resonance metadata.
 
     Parameters
     ----------

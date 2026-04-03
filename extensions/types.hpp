@@ -39,7 +39,7 @@ struct Opts {
     }
 };
 
-// ── Forbidden acoustic band ─────────────────────────────────────────
+// ── Forbidden mechanical resonance band ─────────────────────────────────────────
 
 struct ForbiddenBand {
     float freq_min_hz            = 0.0f;
@@ -196,9 +196,9 @@ struct TrWaveforms {
     float total_duration_us = 0.0f;
 };
 
-// ── Acoustic spectra ────────────────────────────────────────────────
+// ── Mechanical resonances spectra ────────────────────────────────────────────────
 
-struct AcousticSpectra {
+struct MechResonancesSpectra {
     float freq_min_hz       = 0.0f;
     float freq_spacing_hz   = 0.0f;
     int   num_freq_bins     = 0;

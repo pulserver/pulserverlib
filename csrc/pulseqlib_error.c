@@ -124,8 +124,8 @@ const char* pulseqlib_get_error_message(int code)
         case PULSEQLIB_ERR_SEG_NONZERO_START_GRAD:    return "TR does not start with zero gradient amplitude";
         case PULSEQLIB_ERR_SEG_NONZERO_END_GRAD:      return "TR does not end with zero gradient amplitude";
         case PULSEQLIB_ERR_SEG_NO_SEGMENTS_FOUND:     return "No segment boundaries could be identified in TR";
-        case PULSEQLIB_ERR_ACOUSTIC_NO_WAVEFORM:      return "No waveform data for acoustic analysis";
-        case PULSEQLIB_ERR_ACOUSTIC_VIOLATION:        return "Acoustic resonance violation detected";
+        case PULSEQLIB_ERR_MECH_RESONANCES_NO_WAVEFORM: return "No waveform data for mechanical resonance analysis";
+        case PULSEQLIB_ERR_MECH_RESONANCES_VIOLATION:   return "Mechanical resonance violation detected";
         case PULSEQLIB_ERR_PNS_INVALID_PARAMS:        return "Invalid PNS parameters";
         case PULSEQLIB_ERR_PNS_INVALID_CHRONAXIE:     return "Invalid chronaxie value for PNS";
         case PULSEQLIB_ERR_PNS_INVALID_RHEOBASE:      return "Invalid rheobase value for PNS (GE model)";

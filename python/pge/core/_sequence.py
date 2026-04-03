@@ -635,10 +635,10 @@ class SequenceCollection(pp.Sequence):
             PNS decay constant / chronaxie in microseconds. Set > 0 together
             with *stim_threshold* to enable PNS checking.
         forbidden_bands : list of (freq_min, freq_max, max_amplitude), optional
-            Acoustic forbidden-band specifications for gradient spectrum analysis.
+            Mechanical resonance forbidden-band specifications for gradient spectrum analysis.
             Each tuple gives ``(freq_min_Hz, freq_max_Hz, max_allowed_amplitude_Hz_per_m)``.
             If ``None``, use defaults from ``self.system`` when available
-            (e.g., :class:`pge.Opts`); otherwise no acoustic checks are performed.
+            (e.g., :class:`pge.Opts`); otherwise no mechanical resonance checks are performed.
         pns_threshold_percent : float, default 80.0
             PNS threshold as a percentage of maximum stimulation (100.0 = 100 %).
             Used only if both *stim_threshold* and *decay_constant_us* are > 0.
@@ -672,7 +672,7 @@ class SequenceCollection(pp.Sequence):
         ...     pns_threshold_percent=80.0,
         ... )
 
-        Check with forbidden acoustic bands:
+        Check with forbidden mechanical resonance bands:
 
         >>> bands = [
         ...     (100, 500, 1.0),    # Band 1: 100-500 Hz, max 1.0 Hz/m
@@ -684,7 +684,7 @@ class SequenceCollection(pp.Sequence):
         --------
         validate : Validate waveforms against reference implementation.
         pns : Plot PNS waveforms (visualization only, no pass/fail).
-        grad_spectrum : Plot acoustic spectra (visualization only, no pass/fail).
+        grad_spectrum : Plot gradient spectrum (visualization only, no pass/fail).
         """
         _check_consistency(self._cseq)
 
@@ -775,7 +775,7 @@ class SequenceCollection(pp.Sequence):
         See Also
         --------
         check : Run safety checks including PNS validation.
-        grad_spectrum : Plot acoustic spectra (gradient-based).
+        grad_spectrum : Plot gradient spectrum (gradient-based).
         """
         from ._pns import pns as _pns_impl
 
@@ -803,7 +803,7 @@ class SequenceCollection(pp.Sequence):
         """Alias for :meth:`pns`."""
         self.pns(**kwargs)
 
-    def mechanical_resonances(
+    def grad_spectrum(
         self,
         *,
         sequence_idx: int | None = None,
@@ -816,7 +816,7 @@ class SequenceCollection(pp.Sequence):
         peak_eps: float | None = None,
         peak_prominence: float | None = None,
     ) -> None:
-        """Plot mechanical resonance candidates for gradient waveforms in the canonical TR.
+        """Plot gradient spectrum (mechanical resonance candidates) in the canonical TR.
 
         Creates a single-panel figure with three overlaid spectra (Gx, Gy, Gz) showing
         surviving peak candidates as vertical lines, forbidden bands as shaded regions
@@ -869,26 +869,26 @@ class SequenceCollection(pp.Sequence):
 
         Examples
         --------
-        Plot mechanical resonance candidates with forbidden bands:
+        Plot gradient spectrum with forbidden bands:
 
         >>> sc = SequenceCollection('path/to/sequence.seq')
         >>> bands = [
         ...     (100, 500, 1.0),    # 100-500 Hz: max 1.0 Hz/m
         ...     (2000, 3000, 0.5),  # 2-3 kHz: max 0.5 Hz/m
         ... ]
-        >>> sc.mechanical_resonances(forbidden_bands=bands)
+        >>> sc.grad_spectrum(forbidden_bands=bands)
 
         See Also
         --------
         check : Run mechanical-resonance safety checks.
         pns : Plot peripheral nerve stimulation waveforms.
         """
-        from ._acoustics import mechanical_resonances as _mr_impl
+        from ._acoustics import grad_spectrum as _gs_impl
 
         if forbidden_bands is None:
             forbidden_bands = self._default_forbidden_bands_hz_per_m()
 
-        _mr_impl(
+        _gs_impl(
             self,
             sequence_idx=sequence_idx,
             forbidden_bands=forbidden_bands,
@@ -901,19 +901,9 @@ class SequenceCollection(pp.Sequence):
             peak_prominence=peak_prominence,
         )
 
-    def grad_spectrum(self, **kwargs) -> None:
-        """Alias for :meth:`mechanical_resonances` (backward compatible)."""
-        # Drop threshold_percent — removed in mechanical_resonances
-        kwargs.pop('threshold_percent', None)
-        self.mechanical_resonances(**kwargs)
-
     def calculate_gradient_spectrum(self, **kwargs) -> None:
-        """Alias for :meth:`mechanical_resonances` (backward compatible)."""
+        """Alias for :meth:`grad_spectrum`."""
         self.grad_spectrum(**kwargs)
-
-    def calculate_mechanical_resonances(self, **kwargs) -> None:
-        """Alias for :meth:`mechanical_resonances`."""
-        self.mechanical_resonances(**kwargs)
 
     def plot(
         self,

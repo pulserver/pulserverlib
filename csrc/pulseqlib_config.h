@@ -49,7 +49,7 @@
 #endif
 
 /* ------------------------------------------------------------------ */
-/*  Structural acoustic analysis defaults                             */
+/*  Structural mechanical resonance analysis defaults                  */
 /* ------------------------------------------------------------------ */
 
 /** Absolute tolerance for clustering consecutive spacings (us). */
