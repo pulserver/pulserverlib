@@ -1202,6 +1202,15 @@ static int sa_extract_def_occurrences(
         if (grad_table_idx >= 0) {
             const struct pulseqlib_grad_table_element* gte =
                 &desc->grad_table[grad_table_idx];
+            const struct pulseqlib_grad_definition* gdef =
+                &desc->grad_definitions[gte->id];
+            /* Use sign(gte->amplitude) × max positional amplitude — consistent
+             * with PULSEQLIB_AMP_MAX_POS canonical TR waveforms.  The sign
+             * distinguishes positive/negative lobes (EPI readout); the magnitude
+             * is the worst-case over all positional instances of this def. */
+            float sign    = (gte->amplitude >= 0.0f) ? 1.0f : -1.0f;
+            float max_abs = gdef->max_amplitude[gte->shot_index];
+            if (max_abs < 0.0f) max_abs = -max_abs;
 
             if (n >= cap) {
                 sa_occurrence* tmp;
@@ -1215,7 +1224,7 @@ static int sa_extract_def_occurrences(
             occ[n].def_id        = gte->id;
             occ[n].def_index     = gte->id;
             occ[n].start_time_us = time_us;
-            occ[n].amplitude     = gte->amplitude; /* signed Hz/m amplitude */
+            occ[n].amplitude     = sign * max_abs; /* signed worst-case Hz/m */
             ++n;
         }
 
