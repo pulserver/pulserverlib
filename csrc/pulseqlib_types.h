@@ -372,12 +372,21 @@ typedef struct pulseqlib_acoustic_spectra {
 } pulseqlib_acoustic_spectra;
 
 #define PULSEQLIB_ACOUSTIC_SPECTRA_INIT { \
-    0.0f, 0.0f, 0, 0,  NULL, NULL, NULL,  NULL, NULL, NULL, \
+    /* freq_min_hz, freq_spacing_hz, num_freq_bins, num_windows */ \
+    0.0f, 0.0f, 0, 0, \
+    /* spectrogram_gx/gy/gz, peaks_gx/gy/gz */ \
     NULL, NULL, NULL,  NULL, NULL, NULL, \
+    /* spectrum_full_gx/gy/gz, peaks_full_gx/gy/gz */ \
+    NULL, NULL, NULL,  NULL, NULL, NULL, \
+    /* freq_spacing_seq_hz, num_freq_bins_seq, spectrum_seq_gx/gy/gz, peaks_seq_gx/gy/gz */ \
     0.0f, 0,  NULL, NULL, NULL,  NULL, NULL, NULL, \
+    /* num_instances */ \
     0, \
+    /* num_candidates_gx/gy/gz */ \
     0, 0, 0, \
+    /* candidate_freqs_gx/gy/gz, candidate_amps_gx/gy/gz, candidate_violations_gx/gy/gz */ \
     NULL, NULL, NULL,  NULL, NULL, NULL,  NULL, NULL, NULL, \
+    /* candidate_grad_amps */ \
     NULL \
 }
 

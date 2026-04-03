@@ -63,6 +63,7 @@ def _plot_mechanical_resonances_single(
         arg = np.pi * frequencies / f0
         with np.errstate(divide='ignore', invalid='ignore'):
             dkern = np.abs(np.sin(N * arg) / (N * np.sin(arg)))
+        # Replace 0/0 at exact multiples of f0 with the correct limit (1.0)
         dkern[~np.isfinite(dkern)] = 1.0
         for ax_name in ('gx', 'gy', 'gz'):
             dirichlet_env[ax_name] = spectrum_full[ax_name] * dkern
