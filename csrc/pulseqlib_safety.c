@@ -1445,8 +1445,8 @@ static int sa_build_axis_contributions(
             wf_params.pwl_num_vertices = 4;
             wf_params.pwl_times_us[0] = 0.0f;
             wf_params.pwl_values[0]   = 0.0f;
-            ac->contributions[c].pwl_times_us[1] = tr;
-            ac->contributions[c].pwl_values[1]   = 1.0f;
+            wf_params.pwl_times_us[1] = tr;
+            wf_params.pwl_values[1]   = 1.0f;
             wf_params.pwl_times_us[2] = tr + tf;
             wf_params.pwl_values[2]   = 1.0f;
             wf_params.pwl_times_us[3] = tr + tf + td;
