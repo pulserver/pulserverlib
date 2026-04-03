@@ -84,23 +84,30 @@ def _plot_grad_spectrum_single(
     analytical = {}
     for ax_name in ('gx', 'gy', 'gz'):
         raw = rd.get(f'analytical_{ax_name}', [])
-        analytical[ax_name] = np.asarray(raw, dtype=np.float32) if len(raw) > 0 else None
+        analytical[ax_name] = (
+            np.asarray(raw, dtype=np.float32) if len(raw) > 0 else None
+        )
 
-    fig, ax = plt.subplots(1, 1, figsize=(12, 5))
+    fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
 
-    for ax_name in ('gx', 'gy', 'gz'):
+    axis_names = ('gx', 'gy', 'gz')
+    axis_labels = {'gx': 'Gx', 'gy': 'Gy', 'gz': 'Gz'}
+    colors = {'gx': 'C0', 'gy': 'C1', 'gz': 'C2'}
+
+    for panel_idx, ax_name in enumerate(axis_names):
+        ax = axes[panel_idx]
         color = colors[ax_name]
-        label = axis_labels[ax_name]
 
+        # FFT spectrum
         ax.plot(
             frequencies,
             spectrum_full[ax_name],
             color=color,
             lw=0.8,
             alpha=0.5,
-            label=label,
         )
 
+        # Dirichlet kernel envelope
         if ax_name in dirichlet_env:
             ax.plot(
                 frequencies,
@@ -111,6 +118,7 @@ def _plot_grad_spectrum_single(
                 linestyle=':',
             )
 
+        # Analytical structural spectrum overlay
         if analytical.get(ax_name) is not None:
             ax.plot(
                 frequencies,
@@ -120,66 +128,88 @@ def _plot_grad_spectrum_single(
                 alpha=0.45,
             )
 
-    # Forbidden bands — shaded with max-allowed label
-    y_top = ax.get_ylim()[1]
-    for band in forbidden_bands:
-        ax.axvspan(
-            band[0],
-            band[1],
-            alpha=0.15,
-            color='red',
-            zorder=0,
-        )
-        max_allowed_mT = band[2] * hz_per_m_to_mT_per_m
-        band_center = 0.5 * (band[0] + band[1])
-        ax.annotate(
-            f'{max_allowed_mT:.2f} mT/m',
-            xy=(band_center, 1.0),
-            xycoords=('data', 'axes fraction'),
-            ha='center',
-            va='bottom',
-            fontsize=7,
-            color='red',
-            alpha=0.85,
-            rotation=90,
-        )
+        # Forbidden bands — shaded regions
+        for band in forbidden_bands:
+            ax.axvspan(band[0], band[1], alpha=0.15, color='red', zorder=0)
 
-    # Candidate frequency lines with max grad-amp annotation
+        # Candidate frequency lines
+        for ci in range(len(cand_freqs)):
+            cf = cand_freqs[ci]
+            if cf < freq_min or cf > freq_max:
+                continue
+            is_viol = int(cand_viols[ci]) if ci < len(cand_viols) else 0
+            ax.axvline(
+                cf,
+                color='red' if is_viol else 'dimgray',
+                linestyle='-' if is_viol else '--',
+                linewidth=1.0 if is_viol else 0.6,
+                alpha=0.7 if is_viol else 0.4,
+                zorder=1,
+            )
+
+        ax.set_xlim(freq_min, freq_max)
+        ax.set_ylabel(f'{axis_labels[ax_name]} (a.u.)')
+        ax.grid(True, alpha=0.3)
+
+    # --- Annotations on top panel only ---
+
+    # Per-candidate grad-amp labels (horizontal, mT/m, on top panel)
+    ax_top = axes[0]
     for ci in range(len(cand_freqs)):
         cf = cand_freqs[ci]
         if cf < freq_min or cf > freq_max:
             continue
-        is_viol = int(cand_viols[ci]) if ci < len(cand_viols) else 0
-        ax.axvline(
-            cf,
-            color='red' if is_viol else 'dimgray',
-            linestyle='-' if is_viol else '--',
-            linewidth=1.0 if is_viol else 0.6,
-            alpha=0.7 if is_viol else 0.4,
-            zorder=1,
-        )
         if ci < len(cand_grad_amps) and cand_grad_amps[ci] > 0.0:
+            is_viol = int(cand_viols[ci]) if ci < len(cand_viols) else 0
             gamp_mT = float(cand_grad_amps[ci]) * hz_per_m_to_mT_per_m
-            ax.annotate(
-                f'{gamp_mT:.2f}',
-                xy=(cf, 1.0),
+            ax_top.annotate(
+                f'{gamp_mT:.1f}',
+                xy=(cf, 1.02),
                 xycoords=('data', 'axes fraction'),
-                ha='left',
-                va='top',
-                fontsize=6,
+                ha='center',
+                va='bottom',
+                fontsize=7,
+                fontweight='bold' if is_viol else 'normal',
                 color='red' if is_viol else 'dimgray',
                 alpha=0.9,
-                rotation=90,
-                clip_on=True,
+                clip_on=False,
             )
 
-    ax.set_xlim(freq_min, freq_max)
-    ax.set_xlabel('Frequency (Hz)')
-    ax.set_ylabel('Magnitude (a.u.)')
-    ax.set_title(title)
-    ax.legend(fontsize=8, loc='upper right')
-    ax.grid(True, alpha=0.3)
-    _add_echo_spacing_axis(ax, freq_min, freq_max)
+    # Per-forbidden-band: max candidate amplitude within band (mT/m)
+    for band in forbidden_bands:
+        band_lo, band_hi, band_limit = band[0], band[1], band[2]
+        band_limit_mT = band_limit * hz_per_m_to_mT_per_m
+        # Find max candidate grad_amp within this band
+        max_cand_mT = 0.0
+        for ci in range(len(cand_freqs)):
+            cf = cand_freqs[ci]
+            if band_lo <= cf <= band_hi and ci < len(cand_grad_amps):
+                val = float(cand_grad_amps[ci]) * hz_per_m_to_mT_per_m
+                if val > max_cand_mT:
+                    max_cand_mT = val
+
+        band_center = 0.5 * (band_lo + band_hi)
+        label = f'limit: {band_limit_mT:.1f} mT/m'
+        if max_cand_mT > 0.0:
+            label += f'\nmax: {max_cand_mT:.1f} mT/m'
+        ax_top.annotate(
+            label,
+            xy=(band_center, 0.95),
+            xycoords=('data', 'axes fraction'),
+            ha='center',
+            va='top',
+            fontsize=7,
+            color='red',
+            alpha=0.85,
+            bbox={'boxstyle': 'round,pad=0.2', 'fc': 'white', 'ec': 'red', 'alpha': 0.6},
+        )
+
+    # Title and axis labels
+    axes[0].set_title(title)
+    axes[2].set_xlabel('Frequency (Hz)')
+
+    # Echo spacing secondary axis on top panel only
+    _add_echo_spacing_axis(axes[0], freq_min, freq_max)
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
@@ -272,4 +302,3 @@ def grad_spectrum(
 
 # Alias
 mechanical_resonances = grad_spectrum
-

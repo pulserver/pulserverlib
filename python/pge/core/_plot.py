@@ -791,9 +791,7 @@ def _overlay_xml(handle, xml_path, *, t_scale, label):
     """Overlay waveforms from an XML file onto an existing plot."""
     import xml.etree.ElementTree as ET
 
-    tree = ET.parse(
-        str(xml_path)
-    )
+    tree = ET.parse(str(xml_path))
     root = tree.getroot()
 
     # G/cm -> mT/m: 1 G/cm = 10 mT/m

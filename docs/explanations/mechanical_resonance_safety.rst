@@ -142,66 +142,118 @@ This is conservative: a forbidden-band violation on any axis is detected.
 Waveform response :math:`H_d(f)`
 ---------------------------------
 
-Trapezoid and sinc gradients
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The intra-pulse waveform response :math:`H_d(f)` captures the spectral
+content of a single gradient pulse.  It is normalised so that
+:math:`H_d(0) = 1` and characterises how rapidly acoustic energy decays
+at higher frequencies.  Four cases are handled:
 
-For standard pulse shapes (trapezoid, sinc, etc.) the intra-pulse
-spectral content is broad relative to the spacing-comb structure.  We
-approximate:
+Case 1: Trapezoid gradients — piecewise-linear analytical FT
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A trapezoid gradient with rise time :math:`\tau_r`, flat time
+:math:`\tau_f`, and fall time :math:`\tau_d` is a piecewise-linear
+waveform with four vertices:
 
 .. math::
 
-   H_d(f) = 1 \qquad \text{(broadband)}
+   (0,\,0) \;\to\; (\tau_r,\,1) \;\to\; (\tau_r + \tau_f,\,1)
+   \;\to\; (\tau_r + \tau_f + \tau_d,\,0)
 
+The Fourier transform of any piecewise-linear waveform
+:math:`g(t)` defined by :math:`n` vertices :math:`\{(t_k, v_k)\}` is:
 
-Arbitrary waveforms
-~~~~~~~~~~~~~~~~~~~
+.. math::
 
-For arbitrary (free-form) gradient waveforms, such as spiral readout
-lobes or oscillating diffusion gradients, the intra-pulse spectrum may
-have a dominant oscillation frequency :math:`f_\mathrm{peak}` that
-concentrates acoustic energy near multiples of that frequency.
+   G(f) = \sum_{k=0}^{n-2}
+            e^{-j\omega t_k}
+            \bigl[a_k \, I_0(\omega, T_k) + b_k \, I_1(\omega, T_k)\bigr]
 
-**Detection.**
-The waveform samples :math:`\{g_s\}_{s=0}^{N_\mathrm{wf}-1}` are
-processed as follows:
+where :math:`\omega = 2\pi f`, :math:`T_k = t_{k+1} - t_k`,
+:math:`a_k = v_k`, :math:`b_k = (v_{k+1} - v_k)/T_k`, and:
 
-1. Remove the DC component: :math:`g_s \leftarrow g_s - \bar{g}`.
-2. Apply a Hann taper:
+.. math::
+
+   I_0(\omega, T) &= \frac{1 - e^{-j\omega T}}{j\omega} \\[4pt]
+   I_1(\omega, T) &= \frac{I_0(\omega, T) - T\,e^{-j\omega T}}{j\omega}
+
+The normalised response is:
+
+.. math::
+
+   H_d(f) = \frac{|G(f)|}{|G(0)|}
+
+Because :math:`g(t)` is continuous and starts and ends at zero, the
+leading-order behaviour at high frequency is:
+
+.. math::
+
+   H_d(f) \;\sim\; \frac{1}{(2\pi f)^2}
+   \qquad (f \to \infty)
+
+This :math:`1/f^2` decay correctly attenuates high-order harmonics and
+avoids the generation of spurious high-frequency candidates.
+
+Case 2: Arbitrary waveforms with many samples and uniform time
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For arbitrary (free-form) gradient waveforms with at least 10 samples on
+a uniform time raster, the spectral content is determined via FFT-based
+peak detection:
+
+1. Decompress the shape samples from the sequence file.
+2. Remove the DC component: :math:`g_s \leftarrow g_s - \bar{g}`.
+3. Apply a Hann taper:
    :math:`w_s = \tfrac{1}{2}\bigl(1 - \cos\!\bigl(\tfrac{2\pi(s+1)}{N_\mathrm{wf}}\bigr)\bigr)`.
-3. Zero-pad to the next power of two and compute the FFT.
-4. Run the resonance peak detector on the magnitude spectrum.
+4. Zero-pad to the next power of two and compute the real FFT.
+5. Run the resonance peak detector on the magnitude spectrum.
 
-If any peak survives,:math:`f_\mathrm{peak}` is assigned to the frequency
-of the absolute spectral maximum and the effective number of cycles is:
-
-.. math::
-
-   N_\mathrm{eff}
-   \;=\;
-   \mathrm{round}\!\bigl(T_\mathrm{wf} \times f_\mathrm{peak}\bigr)
-
-where :math:`T_\mathrm{wf}` is the waveform duration in seconds.
-
-If no peak is detected, the waveform is classified as broadband
-(:math:`H_d(f) = 1`).
-
-**Analytical model.**
-For a resonant arbitrary waveform with detected peak frequency
-:math:`f_\mathrm{peak}` and :math:`N_\mathrm{eff}` cycles:
+If a peak is detected, the waveform is classified as *resonant* at
+:math:`f_\mathrm{peak}` (the frequency of the absolute spectral maximum)
+with effective cycle count:
 
 .. math::
 
-   H_d(f)
-   \;=\;
-   \frac{1}{N_\mathrm{eff}}
-   \;\Bigl|\,
-      D_{N_\mathrm{eff}}\!\Bigl(\frac{f}{f_\mathrm{peak}}\Bigr)
-   \,\Bigr|
+   N_\mathrm{eff} = \mathrm{round}(T_\mathrm{wf} \times f_\mathrm{peak})
 
-This is a normalised Dirichlet kernel that equals unity at integer
-multiples of :math:`f_\mathrm{peak}` and has mainlobe width
-:math:`\sim f_\mathrm{peak}/N_\mathrm{eff}`.
+The response is a normalised Dirichlet kernel:
+
+.. math::
+
+   H_d(f) = \frac{1}{N_\mathrm{eff}}
+   \;\Bigl|\, D_{N_\mathrm{eff}}\!\Bigl(\frac{f}{f_\mathrm{peak}}\Bigr) \,\Bigr|
+
+If no peak is detected, the waveform is classified as broadband:
+:math:`H_d(f) = 1`.
+
+Case 3: Arbitrary waveforms with non-uniform time shape
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Some Pulseq arbitrary gradients carry an explicit non-uniform time
+array (``time_shape_id > 0``).  In this case the waveform samples are
+not on a regular raster and cannot be directly FFT'd.
+
+The procedure is:
+
+1. Decompress both the amplitude shape (scale = 1.0) and the time shape
+   (scale = ``grad_raster_us``) to obtain the non-uniform
+   :math:`(t_i, g_i)` pairs.
+2. Linearly interpolate onto a uniform grid at the gradient raster
+   interval.
+3. Apply the same FFT-based resonance detection as Case 2.
+
+Case 4: Arbitrary waveforms with few samples (< 10)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Arbitrary waveforms with fewer than 10 samples typically represent
+simple piecewise-linear shapes (ramps, flat-top segments, spoiler
+gradients) stored in the Pulseq arbitrary format rather than as a
+trapezoid.  Using FFT on so few points would be numerically unstable.
+
+Instead, these are treated identically to trapezoids: the sample
+values and their time coordinates (from the time shape or uniform raster)
+define a piecewise-linear waveform whose Fourier transform is computed
+analytically via the same :math:`I_0 / I_1` formulation.  This produces
+the correct :math:`\sim 1/f^2` decay.
 
 
 Hierarchical spacing extraction
@@ -410,24 +462,28 @@ The analysis produces the following outputs:
 Discussion
 ----------
 
-Harmonics and the Dirichlet kernel
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Harmonics and spectral decay
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 For a sequence with :math:`K` identical TR repetitions, the outer
 Dirichlet kernel :math:`D_K(f \, T_\mathrm{TR})` produces peaks at every
-integer multiple of :math:`1/T_\mathrm{TR}`.  All harmonics have equal
-amplitude (:math:`|D_K| = K` at exact multiples), which is physically
-correct: a perfectly periodic gradient waveform is a Fourier series, and
-the magnitude of each harmonic is determined by the intra-TR structure
-rather than by the harmonic order.
+integer multiple of :math:`1/T_\mathrm{TR}`.  At exact multiples,
+:math:`|D_K| = K` regardless of harmonic order.  The *envelope* across
+harmonics is then determined by the intra-TR spectral content, which is
+the product :math:`H_d(f) \cdot |\sum_r D_{N_r}(f\,T_r)|`.
 
-For trapezoid gradients, the broadband approximation :math:`H_d(f) = 1`
-does not capture the spectral roll-off of the actual pulse shape (which
-decays as :math:`\sim \mathrm{sinc}^2` for a trapezoid).  This is
-conservative: it never underestimates high-frequency content.  The
-assumption is acceptable because the forbidden-band check is the safety
-gate and forbidden bands are typically defined only over a limited
-frequency range.
+For trapezoid and piecewise-linear waveforms, :math:`H_d(f) \sim 1/f^2`
+(since the waveform is continuous with piecewise-constant derivative),
+so the harmonic amplitudes decay quadratically.  A 10× higher harmonic
+thus has :math:`\sim 1\%` of the fundamental's amplitude.  This is
+important in practice: a GRE with :math:`T_\mathrm{TR} = 7` ms
+produces ~20 harmonics below 3 kHz, but only the lowest ~7 survive the
+envelope decay and the prominence filter.
+
+For oscillating arbitrary waveforms (e.g.\ spiral readouts), the
+Dirichlet-kernel model for :math:`H_d(f)` concentrates energy near
+multiples of the oscillation frequency :math:`f_\mathrm{peak}`, which
+may amplify certain harmonics and suppress others.
 
 Coherent summation and interference
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

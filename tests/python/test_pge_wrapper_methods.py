@@ -39,8 +39,7 @@ def test_grad_spectrum_threshold_percent_variants(
     resonance_axes = [
         ax
         for ax in fig.axes
-        if isinstance(ax.get_title(), str)
-        and 'Mechanical Resonances' in ax.get_title()
+        if isinstance(ax.get_title(), str) and "Mechanical Resonances" in ax.get_title()
     ]
     assert len(resonance_axes) == 1
 
@@ -114,9 +113,9 @@ def test_calc_mech_resonances_returns_candidate_grad_amps(generated_seq_path):
         max_freq_hz=1200.0,
         forbidden_bands=[(500.0, 600.0, 2000.0)],
     )
-    assert 'candidate_grad_amps' in rd
-    grad_amps = np.asarray(rd['candidate_grad_amps'], dtype=np.float32)
-    freqs = np.asarray(rd.get('candidate_freqs', []), dtype=np.float32)
+    assert "candidate_grad_amps" in rd
+    grad_amps = np.asarray(rd["candidate_grad_amps"], dtype=np.float32)
+    freqs = np.asarray(rd.get("candidate_freqs", []), dtype=np.float32)
     assert len(grad_amps) == len(freqs)
     assert np.all(grad_amps >= 0.0)
 
@@ -135,8 +134,7 @@ def test_grad_spectrum_single_panel(generated_seq_path):
     resonance_axes = [
         ax
         for ax in fig.axes
-        if isinstance(ax.get_title(), str)
-        and 'Mechanical Resonances' in ax.get_title()
+        if isinstance(ax.get_title(), str) and "Mechanical Resonances" in ax.get_title()
     ]
     assert len(resonance_axes) == 1
     plt.close(fig)

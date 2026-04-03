@@ -1116,6 +1116,9 @@ typedef struct {
     float run_start_us;     /**< start time of first occurrence (us)   */
 } sa_spacing_run;
 
+/** Max vertices in piecewise-linear waveform envelope. */
+#define SA_MAX_PWL_VERTICES 16
+
 /** Per grad-def spectral contribution. */
 typedef struct {
     int   def_id;
@@ -1124,6 +1127,9 @@ typedef struct {
     sa_spacing_run* runs;   /**< allocated array [num_runs]             */
     float resonant_freq_hz; /**< >0 if intra-waveform has spectral peak; 0 = broadband */
     int   resonant_num_cycles; /**< effective oscillation count for Dirichlet H_d(f) */
+    int   pwl_num_vertices; /**< >0 → use piecewise-linear H_d(f)      */
+    float pwl_times_us[SA_MAX_PWL_VERTICES];  /**< vertex times (µs relative to pulse start) */
+    float pwl_values[SA_MAX_PWL_VERTICES];    /**< vertex amplitudes (normalised to ±1)      */
 } sa_def_contribution;
 
 /** Structural analysis results per axis. */
@@ -1423,6 +1429,7 @@ static int sa_build_axis_contributions(
         ac->contributions[c].amplitude = max_amp;
         ac->contributions[c].resonant_freq_hz = 0.0f;
         ac->contributions[c].resonant_num_cycles = 0;
+        ac->contributions[c].pwl_num_vertices = 0;
 
         /* Cluster spacings */
         {
@@ -1437,106 +1444,274 @@ static int sa_build_axis_contributions(
             ac->contributions[c].num_runs = num_runs;
         }
 
-        /* Intra-waveform FFT for arbitrary grads with enough samples.
-         * If the spectrum has any peaks (via detect_resonances), the waveform
-         * is resonant at the frequency of the absolute max; otherwise broadband. */
-        if (gdef && gdef->type == 1) {
-            int nsamp = gdef->fall_time_or_num_uncompressed_samples;
-            if (nsamp >= min_arb_samples) {
-                int shape_id = gdef->shot_shape_ids[0];
-                if (shape_id >= 0 && shape_id < desc->num_shapes &&
-                    desc->shapes[shape_id].num_samples >= min_arb_samples)
+        /* ---- Intra-pulse waveform response H_d(f) ---- */
+
+        if (gdef && gdef->type == 0) {
+            /* Case 1: Trapezoid — build 4-vertex PWL from rise/flat/fall.
+             * Vertices: (0,0) → (rise,1) → (rise+flat,1) → (rise+flat+fall,0)
+             * Gives the correct ~1/f^2 spectral roll-off. */
+            float tr = (float)gdef->rise_time_or_unused;
+            float tf = (float)gdef->flat_time_or_unused;
+            float td = (float)gdef->fall_time_or_num_uncompressed_samples;
+            ac->contributions[c].pwl_num_vertices = 4;
+            ac->contributions[c].pwl_times_us[0] = 0.0f;
+            ac->contributions[c].pwl_values[0]   = 0.0f;
+            ac->contributions[c].pwl_times_us[1] = tr;
+            ac->contributions[c].pwl_values[1]   = 1.0f;
+            ac->contributions[c].pwl_times_us[2] = tr + tf;
+            ac->contributions[c].pwl_values[2]   = 1.0f;
+            ac->contributions[c].pwl_times_us[3] = tr + tf + td;
+            ac->contributions[c].pwl_values[3]   = 0.0f;
+        }
+        else if (gdef && gdef->type == 1) {
+            /* Arbitrary waveform — decompress shape, then decide path. */
+            int shape_id = gdef->shot_shape_ids[0];
+            int time_shape_id = gdef->unused_or_time_shape_id;
+            float raster = desc->grad_raster_us;
+
+            if (shape_id > 0 && shape_id <= desc->num_shapes) {
+                pulseqlib_shape_arbitrary decomp_wave;
+                decomp_wave.samples = NULL;
+                decomp_wave.num_samples = 0;
+                decomp_wave.num_uncompressed_samples = 0;
+
+                if (pulseqlib__decompress_shape(&decomp_wave,
+                        &desc->shapes[shape_id - 1], 1.0f)
+                    && decomp_wave.num_uncompressed_samples > 0)
                 {
-                    int nfft_arb, nfreq_arb, s_idx;
-                    float* work;
-                    kiss_fft_cpx* fft_out;
-                    kiss_fftr_cfg cfg;
-                    float arb_norm, freq_res_arb;
-                    int num_shape_samp = desc->shapes[shape_id].num_samples;
-                    float raster = desc->grad_raster_us;
+                    int num_samp = decomp_wave.num_uncompressed_samples;
+                    float* wave_samp = decomp_wave.samples;
 
-                    nfft_arb = (int)pulseqlib__next_pow2((size_t)num_shape_samp);
-                    if (nfft_arb < 16) nfft_arb = 16;
-                    nfreq_arb = nfft_arb / 2 + 1;
-                    work = (float*)PULSEQLIB_ALLOC((size_t)nfft_arb * sizeof(float));
-                    fft_out = (kiss_fft_cpx*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(kiss_fft_cpx));
-                    cfg = kiss_fftr_alloc(nfft_arb, 0, NULL, NULL);
-                    if (work && fft_out && cfg) {
-                        float mean = 0.0f;
-                        float* mag_buf;
+                    /* Decompress time shape if present */
+                    pulseqlib_shape_arbitrary decomp_time;
+                    float* time_us = NULL;
+                    int has_time = 0;
+                    decomp_time.samples = NULL;
+                    decomp_time.num_samples = 0;
+                    decomp_time.num_uncompressed_samples = 0;
 
-                        /* Copy samples, remove mean */
-                        for (s_idx = 0; s_idx < num_shape_samp; ++s_idx) {
-                            work[s_idx] = desc->shapes[shape_id].samples[s_idx];
-                            mean += work[s_idx];
-                        }
-                        mean /= (float)num_shape_samp;
-                        for (s_idx = 0; s_idx < num_shape_samp; ++s_idx)
-                            work[s_idx] -= mean;
-
-                        /* Cosine (Hann) taper */
-                        for (s_idx = 0; s_idx < num_shape_samp; ++s_idx) {
-                            float w = 0.5f * (1.0f - (float)cos(
-                                2.0 * M_PI * (double)(s_idx + 1) / (double)num_shape_samp));
-                            work[s_idx] *= w;
-                        }
-
-                        /* Zero-pad */
-                        for (s_idx = num_shape_samp; s_idx < nfft_arb; ++s_idx)
-                            work[s_idx] = 0.0f;
-
-                        kiss_fftr(cfg, work, fft_out);
-                        arb_norm = 1.0f / (float)nfft_arb;
-                        freq_res_arb = (float)(1.0e6 / ((double)raster * (double)nfft_arb));
-
-                        /* Compute magnitude spectrum, detect peaks */
-                        mag_buf = (float*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(float));
-                        if (mag_buf) {
-                            int* wf_peaks;
-                            for (s_idx = 0; s_idx < nfreq_arb; ++s_idx) {
-                                float re = fft_out[s_idx].r * arb_norm;
-                                float im = fft_out[s_idx].i * arb_norm;
-                                mag_buf[s_idx] = (float)sqrt((double)(re * re + im * im));
-                            }
-                            wf_peaks = (int*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(int));
-                            if (wf_peaks) {
-                                int has_peak = 0;
-                                detect_resonances(wf_peaks, mag_buf, nfreq_arb,
-                                    peak_log10_threshold, peak_norm_scale,
-                                    peak_eps, peak_prominence);
-                                for (s_idx = 0; s_idx < nfreq_arb; ++s_idx) {
-                                    if (wf_peaks[s_idx]) { has_peak = 1; break; }
-                                }
-                                if (has_peak) {
-                                    /* Resonant: frequency of absolute max (skip DC bin) */
-                                    float peak_max = 0.0f;
-                                    int peak_idx = 1;
-                                    float f_pk, t_wf;
-                                    int n_eff;
-                                    for (s_idx = 1; s_idx < nfreq_arb; ++s_idx) {
-                                        if (mag_buf[s_idx] > peak_max) {
-                                            peak_max = mag_buf[s_idx];
-                                            peak_idx = s_idx;
-                                        }
-                                    }
-                                    f_pk = (float)peak_idx * freq_res_arb;
-                                    ac->contributions[c].resonant_freq_hz = f_pk;
-
-                                    /* N_eff = round(T_wf * f_peak) */
-                                    t_wf = (float)num_shape_samp * raster * 1.0e-6f;
-                                    n_eff = (int)(t_wf * f_pk + 0.5f);
-                                    if (n_eff < 1) n_eff = 1;
-                                    ac->contributions[c].resonant_num_cycles = n_eff;
-                                }
-                                PULSEQLIB_FREE(wf_peaks);
-                            }
-                            PULSEQLIB_FREE(mag_buf);
+                    if (time_shape_id > 0 && time_shape_id <= desc->num_shapes) {
+                        if (pulseqlib__decompress_shape(&decomp_time,
+                                &desc->shapes[time_shape_id - 1], raster)
+                            && decomp_time.num_uncompressed_samples > 0)
+                        {
+                            has_time = 1;
+                            time_us = decomp_time.samples;
                         }
                     }
-                    if (work) PULSEQLIB_FREE(work);
-                    if (fft_out) PULSEQLIB_FREE(fft_out);
-                    if (cfg) kiss_fftr_free(cfg);
+
+                    if (num_samp < min_arb_samples) {
+                        /* Case 4: Few-sample arb — build PWL from vertices.
+                         * These are typically ramps or simple corners;
+                         * the analytical FT gives correct ~1/f^2 decay. */
+                        int nv = num_samp;
+                        int s_idx;
+                        if (nv > SA_MAX_PWL_VERTICES) nv = SA_MAX_PWL_VERTICES;
+                        ac->contributions[c].pwl_num_vertices = nv;
+                        for (s_idx = 0; s_idx < nv; ++s_idx) {
+                            if (has_time && time_us)
+                                ac->contributions[c].pwl_times_us[s_idx] = time_us[s_idx];
+                            else
+                                ac->contributions[c].pwl_times_us[s_idx] =
+                                    0.5f * raster + (float)s_idx * raster;
+                            ac->contributions[c].pwl_values[s_idx] = wave_samp[s_idx];
+                        }
+                    }
+                    else if (has_time && time_us) {
+                        /* Case 3: Many-sample arb with non-uniform time shape.
+                         * Linearly interpolate to uniform raster, then FFT. */
+                        float t_max = time_us[num_samp - 1];
+                        int n_uniform = (int)(t_max / raster) + 1;
+                        float* uniform_buf;
+                        if (n_uniform < 2) n_uniform = 2;
+
+                        uniform_buf = (float*)PULSEQLIB_ALLOC((size_t)n_uniform * sizeof(float));
+                        if (uniform_buf) {
+                            int ui, si_lo;
+                            float t_u, frac;
+
+                            /* Linear interpolation from non-uniform to uniform grid */
+                            si_lo = 0;
+                            for (ui = 0; ui < n_uniform; ++ui) {
+                                t_u = (float)ui * raster;
+                                /* Advance to the bracket */
+                                while (si_lo < num_samp - 2 && time_us[si_lo + 1] < t_u)
+                                    ++si_lo;
+                                if (t_u <= time_us[0])
+                                    uniform_buf[ui] = wave_samp[0];
+                                else if (t_u >= time_us[num_samp - 1])
+                                    uniform_buf[ui] = wave_samp[num_samp - 1];
+                                else {
+                                    float dt_seg = time_us[si_lo + 1] - time_us[si_lo];
+                                    frac = (dt_seg > 1e-12f) ? (t_u - time_us[si_lo]) / dt_seg : 0.0f;
+                                    uniform_buf[ui] = wave_samp[si_lo] * (1.0f - frac)
+                                                    + wave_samp[si_lo + 1] * frac;
+                                }
+                            }
+
+                            /* Now run standard FFT resonance detection on uniform_buf */
+                            {
+                                int nfft_arb = (int)pulseqlib__next_pow2((size_t)n_uniform);
+                                int nfreq_arb, s_idx;
+                                float* work;
+                                kiss_fft_cpx* fft_out;
+                                kiss_fftr_cfg cfg;
+
+                                if (nfft_arb < 16) nfft_arb = 16;
+                                nfreq_arb = nfft_arb / 2 + 1;
+                                work = (float*)PULSEQLIB_ALLOC((size_t)nfft_arb * sizeof(float));
+                                fft_out = (kiss_fft_cpx*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(kiss_fft_cpx));
+                                cfg = kiss_fftr_alloc(nfft_arb, 0, NULL, NULL);
+                                if (work && fft_out && cfg) {
+                                    float mean = 0.0f;
+                                    float* mag_buf;
+                                    float arb_norm, freq_res_arb;
+                                    for (s_idx = 0; s_idx < n_uniform; ++s_idx) {
+                                        work[s_idx] = uniform_buf[s_idx];
+                                        mean += work[s_idx];
+                                    }
+                                    mean /= (float)n_uniform;
+                                    for (s_idx = 0; s_idx < n_uniform; ++s_idx)
+                                        work[s_idx] -= mean;
+                                    for (s_idx = 0; s_idx < n_uniform; ++s_idx) {
+                                        float w = 0.5f * (1.0f - (float)cos(
+                                            2.0 * M_PI * (double)(s_idx + 1) / (double)n_uniform));
+                                        work[s_idx] *= w;
+                                    }
+                                    for (s_idx = n_uniform; s_idx < nfft_arb; ++s_idx)
+                                        work[s_idx] = 0.0f;
+
+                                    kiss_fftr(cfg, work, fft_out);
+                                    arb_norm = 1.0f / (float)nfft_arb;
+                                    freq_res_arb = (float)(1.0e6 / ((double)raster * (double)nfft_arb));
+
+                                    mag_buf = (float*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(float));
+                                    if (mag_buf) {
+                                        int* wf_peaks;
+                                        for (s_idx = 0; s_idx < nfreq_arb; ++s_idx) {
+                                            float re = fft_out[s_idx].r * arb_norm;
+                                            float im = fft_out[s_idx].i * arb_norm;
+                                            mag_buf[s_idx] = (float)sqrt((double)(re * re + im * im));
+                                        }
+                                        wf_peaks = (int*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(int));
+                                        if (wf_peaks) {
+                                            int has_peak = 0;
+                                            detect_resonances(wf_peaks, mag_buf, nfreq_arb,
+                                                peak_log10_threshold, peak_norm_scale,
+                                                peak_eps, peak_prominence);
+                                            for (s_idx = 0; s_idx < nfreq_arb; ++s_idx)
+                                                if (wf_peaks[s_idx]) { has_peak = 1; break; }
+                                            if (has_peak) {
+                                                float peak_max = 0.0f;
+                                                int peak_idx = 1;
+                                                float f_pk, t_wf;
+                                                int n_eff;
+                                                for (s_idx = 1; s_idx < nfreq_arb; ++s_idx)
+                                                    if (mag_buf[s_idx] > peak_max) {
+                                                        peak_max = mag_buf[s_idx]; peak_idx = s_idx;
+                                                    }
+                                                f_pk = (float)peak_idx * freq_res_arb;
+                                                ac->contributions[c].resonant_freq_hz = f_pk;
+                                                t_wf = (float)n_uniform * raster * 1.0e-6f;
+                                                n_eff = (int)(t_wf * f_pk + 0.5f);
+                                                if (n_eff < 1) n_eff = 1;
+                                                ac->contributions[c].resonant_num_cycles = n_eff;
+                                            }
+                                            PULSEQLIB_FREE(wf_peaks);
+                                        }
+                                        PULSEQLIB_FREE(mag_buf);
+                                    }
+                                }
+                                if (work) PULSEQLIB_FREE(work);
+                                if (fft_out) PULSEQLIB_FREE(fft_out);
+                                if (cfg) kiss_fftr_free(cfg);
+                            }
+                            PULSEQLIB_FREE(uniform_buf);
+                        }
+                    }
+                    else {
+                        /* Case 2: Many-sample arb with uniform time — FFT
+                         * on decompressed samples (existing approach, fixed). */
+                        int nfft_arb = (int)pulseqlib__next_pow2((size_t)num_samp);
+                        int nfreq_arb, s_idx;
+                        float* work;
+                        kiss_fft_cpx* fft_out;
+                        kiss_fftr_cfg cfg;
+
+                        if (nfft_arb < 16) nfft_arb = 16;
+                        nfreq_arb = nfft_arb / 2 + 1;
+                        work = (float*)PULSEQLIB_ALLOC((size_t)nfft_arb * sizeof(float));
+                        fft_out = (kiss_fft_cpx*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(kiss_fft_cpx));
+                        cfg = kiss_fftr_alloc(nfft_arb, 0, NULL, NULL);
+                        if (work && fft_out && cfg) {
+                            float mean = 0.0f;
+                            float* mag_buf;
+                            float arb_norm, freq_res_arb;
+
+                            for (s_idx = 0; s_idx < num_samp; ++s_idx) {
+                                work[s_idx] = wave_samp[s_idx];
+                                mean += work[s_idx];
+                            }
+                            mean /= (float)num_samp;
+                            for (s_idx = 0; s_idx < num_samp; ++s_idx)
+                                work[s_idx] -= mean;
+                            for (s_idx = 0; s_idx < num_samp; ++s_idx) {
+                                float w = 0.5f * (1.0f - (float)cos(
+                                    2.0 * M_PI * (double)(s_idx + 1) / (double)num_samp));
+                                work[s_idx] *= w;
+                            }
+                            for (s_idx = num_samp; s_idx < nfft_arb; ++s_idx)
+                                work[s_idx] = 0.0f;
+
+                            kiss_fftr(cfg, work, fft_out);
+                            arb_norm = 1.0f / (float)nfft_arb;
+                            freq_res_arb = (float)(1.0e6 / ((double)raster * (double)nfft_arb));
+
+                            mag_buf = (float*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(float));
+                            if (mag_buf) {
+                                int* wf_peaks;
+                                for (s_idx = 0; s_idx < nfreq_arb; ++s_idx) {
+                                    float re = fft_out[s_idx].r * arb_norm;
+                                    float im = fft_out[s_idx].i * arb_norm;
+                                    mag_buf[s_idx] = (float)sqrt((double)(re * re + im * im));
+                                }
+                                wf_peaks = (int*)PULSEQLIB_ALLOC((size_t)nfreq_arb * sizeof(int));
+                                if (wf_peaks) {
+                                    int has_peak = 0;
+                                    detect_resonances(wf_peaks, mag_buf, nfreq_arb,
+                                        peak_log10_threshold, peak_norm_scale,
+                                        peak_eps, peak_prominence);
+                                    for (s_idx = 0; s_idx < nfreq_arb; ++s_idx)
+                                        if (wf_peaks[s_idx]) { has_peak = 1; break; }
+                                    if (has_peak) {
+                                        float peak_max = 0.0f;
+                                        int peak_idx = 1;
+                                        float f_pk, t_wf;
+                                        int n_eff;
+                                        for (s_idx = 1; s_idx < nfreq_arb; ++s_idx)
+                                            if (mag_buf[s_idx] > peak_max) {
+                                                peak_max = mag_buf[s_idx]; peak_idx = s_idx;
+                                            }
+                                        f_pk = (float)peak_idx * freq_res_arb;
+                                        ac->contributions[c].resonant_freq_hz = f_pk;
+                                        t_wf = (float)num_samp * raster * 1.0e-6f;
+                                        n_eff = (int)(t_wf * f_pk + 0.5f);
+                                        if (n_eff < 1) n_eff = 1;
+                                        ac->contributions[c].resonant_num_cycles = n_eff;
+                                    }
+                                    PULSEQLIB_FREE(wf_peaks);
+                                }
+                                PULSEQLIB_FREE(mag_buf);
+                            }
+                        }
+                        if (work) PULSEQLIB_FREE(work);
+                        if (fft_out) PULSEQLIB_FREE(fft_out);
+                        if (cfg) kiss_fftr_free(cfg);
+                    }
+
+                    if (decomp_time.samples) PULSEQLIB_FREE(decomp_time.samples);
                 }
+                if (decomp_wave.samples) PULSEQLIB_FREE(decomp_wave.samples);
             }
         }
         ++c;
@@ -1620,17 +1795,116 @@ static void sa_eval_dirichlet(
 }
 
 /**
+ * Evaluate |G(f)| / |G(0)| for a piecewise-linear waveform defined by
+ * n_vtx vertices (t_us[i], v[i]).  Times are in microseconds.
+ *
+ * For each linear segment [t_k, t_{k+1}] with values [v_k, v_{k+1}]:
+ *
+ *   G_k(f) = e^{-j*omega*t_k} * [a*I_0 + b*I_1]
+ *
+ * where a = v_k, b = (v_{k+1}-v_k)/T_k, omega = 2*pi*f,
+ *
+ *   I_0 = integral_0^T e^{-j*omega*tau} dtau
+ *   I_1 = integral_0^T tau * e^{-j*omega*tau} dtau
+ *
+ * The total G(f) = sum_k G_k(f).  Returns |G(f)| / |G(0)|.
+ * Decays as ~1/f^2 for waveforms starting and ending at zero.
+ */
+static float sa_eval_pwl_response(
+    float f_hz, const float* t_us, const float* v, int n_vtx)
+{
+    double omega, g0, g_re, g_im, mag;
+    int k;
+
+    if (n_vtx < 2) return 1.0f;
+
+    /* G(0) = area = sum of trapezoidal areas */
+    g0 = 0.0;
+    for (k = 0; k < n_vtx - 1; ++k) {
+        double dt = (double)(t_us[k + 1] - t_us[k]);
+        g0 += 0.5 * ((double)v[k] + (double)v[k + 1]) * dt;
+    }
+    if (g0 < 1.0e-30 && g0 > -1.0e-30) return 1.0f;
+    g0 = fabs(g0);
+
+    omega = 2.0 * M_PI * (double)f_hz * 1.0e-6; /* convert µs to s */
+    if (omega < 1.0e-12 && omega > -1.0e-12) return 1.0f;
+
+    g_re = 0.0;
+    g_im = 0.0;
+
+    for (k = 0; k < n_vtx - 1; ++k) {
+        double tk  = (double)t_us[k];
+        double Tk  = (double)(t_us[k + 1] - t_us[k]);
+        double ak  = (double)v[k];
+        double bk  = ((double)v[k + 1] - ak) / Tk;
+        double wTk = omega * Tk;
+        double cos_wTk = cos(wTk);
+        double sin_wTk = sin(wTk);
+        double cos_ph  = cos(omega * tk);
+        double sin_ph  = sin(omega * tk);
+        double c0_re, c0_im, c1_re, c1_im;
+        double x_re, x_im, seg_re, seg_im;
+
+        if (Tk < 1.0e-12) continue;
+
+        /* I_0 = (1 - e^{-j*wTk}) / (j*omega) */
+        c0_re = sin_wTk / omega;                  /* Im{e^0 - e^{-jwT}} / omega */
+        c0_im = (cos_wTk - 1.0) / omega;          /* -Re{1 - e^{-jwT}} / omega  */
+
+        /* I_1 = (I_0 - Tk * e^{-j*wTk}) / (j*omega)
+         *     = [I_0_re - Tk*cos_wTk, I_0_im + Tk*sin_wTk] / (j*omega)
+         * Dividing (X_re + j*X_im) by (j*omega):
+         *   = (X_im + j*(-X_re)) / omega        */
+        {
+            double I0mT_re = c0_re - Tk * cos_wTk;
+            double I0mT_im = c0_im + Tk * sin_wTk;
+            c1_re =  I0mT_im / omega;
+            c1_im = -I0mT_re / omega;
+        }
+
+        /* Segment value before phase rotation: a*I_0 + b*I_1 */
+        x_re = ak * c0_re + bk * c1_re;
+        x_im = ak * c0_im + bk * c1_im;
+
+        /* Multiply by e^{-j*omega*tk} = cos_ph - j*sin_ph */
+        seg_re = x_re * cos_ph - x_im * (-sin_ph);
+        seg_im = x_re * (-sin_ph) + x_im * cos_ph;
+        /* Correction: e^{-j*phi} = cos(phi) - j*sin(phi)
+         * (X_re + j*X_im)(cos_ph - j*sin_ph)
+         *   = X_re*cos_ph + X_im*sin_ph + j*(X_im*cos_ph - X_re*sin_ph) */
+        seg_re = x_re * cos_ph + x_im * sin_ph;
+        seg_im = x_im * cos_ph - x_re * sin_ph;
+
+        g_re += seg_re;
+        g_im += seg_im;
+    }
+
+    mag = sqrt(g_re * g_re + g_im * g_im);
+    return (float)(mag / g0);
+}
+
+/**
  * Evaluate H_d(f) for one contribution.
- * Broadband (traps or no detected peak): returns 1.0.
- * Resonant arbitrary waveform: returns |D_{N_eff}(f / f_peak)| / N_eff,
- * a Dirichlet kernel that peaks at 1.0 at multiples of f_peak with
- * width ~ f_peak / N_eff.
+ *
+ * Priority:
+ *   1. Piecewise-linear envelope (pwl_num_vertices > 0): analytical FT
+ *      of trap / few-sample arb.  Decays as ~1/f^2.
+ *   2. Resonant arbitrary waveform (resonant_freq_hz > 0): Dirichlet
+ *      kernel |D_{N_eff}(f/f_peak)| / N_eff.
+ *   3. Broadband fallback: H_d(f) = 1.0.
  */
 static float sa_eval_waveform_response(const sa_def_contribution* dc, float f_hz)
 {
     double x, numer, denom, d_val;
     int n_eff;
 
+    /* Case 1: piecewise-linear envelope */
+    if (dc->pwl_num_vertices >= 2)
+        return sa_eval_pwl_response(f_hz, dc->pwl_times_us, dc->pwl_values,
+                                    dc->pwl_num_vertices);
+
+    /* Case 2: resonant arbitrary waveform */
     if (dc->resonant_freq_hz <= 0.0f || dc->resonant_num_cycles <= 0)
         return 1.0f;
 

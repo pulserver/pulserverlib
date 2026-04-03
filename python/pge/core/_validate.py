@@ -667,9 +667,7 @@ def _xml_reference(xml_path):
     """
     import xml.etree.ElementTree as ET
 
-    tree = ET.parse(
-        str(xml_path)
-    )
+    tree = ET.parse(str(xml_path))
     root = tree.getroot()
 
     g_per_cm_to_mT_per_m = 10.0
