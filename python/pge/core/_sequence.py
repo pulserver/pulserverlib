@@ -803,7 +803,7 @@ class SequenceCollection(pp.Sequence):
         """Alias for :meth:`pns`."""
         self.pns(**kwargs)
 
-    def grad_spectrum(
+    def mechanical_resonances(
         self,
         *,
         sequence_idx: int | None = None,
@@ -811,17 +811,20 @@ class SequenceCollection(pp.Sequence):
         window_duration: float = 25.0e-3,
         spectral_resolution: float = 5.0,
         max_frequency: float = 3000.0,
-        threshold_percent: float | list[float] | tuple[float, ...] | None = None,
         peak_log10_threshold: float | None = None,
         peak_norm_scale: float | None = None,
         peak_eps: float | None = None,
         peak_prominence: float | None = None,
     ) -> None:
-        """Plot acoustic spectra for gradient waveforms in a TR.
+        """Plot mechanical resonance candidates for gradient waveforms in the canonical TR.
 
-        Creates a two-row figure: spectrograms (top) and harmonic spectrum
-        with forbidden-band overlays (bottom). Useful for identifying acoustic
-        resonance issues and validating against site-specific constraints.
+        Creates a single-panel figure with three overlaid spectra (Gx, Gy, Gz) showing
+        surviving peak candidates as vertical lines, forbidden bands as shaded regions
+        with max-allowed amplitude labels (mT/m), and per-candidate max gradient
+        amplitude annotations (mT/m). Two frequency axes are shown: frequency in Hz
+        (bottom) and the corresponding echo spacing in ms (top). The vertical axis
+        is in arbitrary units (a.u.).
+
         No pass/fail check is performed — use :meth:`check` for that.
 
         Canonical-TR selection follows the C-backend logic per subsequence.
@@ -833,96 +836,84 @@ class SequenceCollection(pp.Sequence):
             Subsequence index (0-based) to analyze. If ``None`` (default),
             all subsequences are analyzed.
         forbidden_bands : list of (freq_min, freq_max, max_amplitude), optional
-            Acoustic forbidden-band specifications for gradient spectrum analysis.
-            Each tuple gives ``(freq_min_Hz, freq_max_Hz, max_allowed_amplitude_Hz_per_m)``.
-            Drawn as shaded regions on the harmonic plot. If ``None``, no bands
-            are drawn unless defaults are available from ``self.system``
-            (e.g., :class:`pge.Opts`).
+            Forbidden-band specifications.  Each tuple gives
+            ``(freq_min_Hz, freq_max_Hz, max_allowed_amplitude_Hz_per_m)``.
+            Drawn as shaded regions with max-allowed amplitude labelled in mT/m.
+            If ``None``, defaults are used from ``self.system`` when available.
         window_duration : float, default 25.0e-3
-            Sliding-window size for spectrograms in seconds (default 25 ms).
-            Smaller windows reveal time-varying frequency content; larger
-            windows improve frequency resolution.
+            Sliding-window size in seconds (default 25 ms), used to set the
+            spectral analysis window.
         spectral_resolution : float, default 5.0
             Target frequency resolution for FFT in Hz (default 5 Hz).
-            Actual resolution = ``1 / (2 * (window_duration / overlap_factor))``.
         max_frequency : float, default 3000.0
-            Upper frequency limit for all plots in Hz (default 3 kHz).
-        threshold_percent : float or sequence of float, optional
-            Extra horizontal threshold guide line(s) drawn on harmonic plots,
-            as percentage of peak amplitude. Accepts a single float or
-            a list/tuple. If ``None``, no extra lines are drawn.
+            Upper frequency limit in Hz (default 3 kHz).
         peak_log10_threshold : float, optional
             Resonance detector threshold in log10 space. Higher values detect
             fewer peaks.
         peak_norm_scale : float, optional
-            Normalization scale used before log transform in resonance
-            detection.
+            Normalization scale used before log transform in resonance detection.
         peak_eps : float, optional
-            Positive epsilon added before log transform for numerical
-            stability.
+            Positive epsilon added before log transform for numerical stability.
         peak_prominence : float, optional
             Minimum prominence (in log10 units) for a detected peak.
-            Peaks with prominence below this value are discarded.
-            Use this to suppress spurious peaks in noisy spectra (e.g. FSE).
 
         Raises
         ------
         ValueError
-            If *sequence_idx* is out of range or parameters are inconsistent.
+            If *sequence_idx* is out of range.
 
         Notes
         -----
-        This is a visualization function only. To enforce acoustic safety limits,
-        use :meth:`check` with *forbidden_bands*.
-
-        Spectrograms show time evolution of gradient spectrum; the bottom harmonic
-        plot shows the peak envelope across all time windows.
+        This is a visualization function only. To enforce mechanical resonance
+        safety limits, use :meth:`check` with *forbidden_bands*.
 
         Examples
         --------
-        Plot gradient spectra with forbidden bands:
+        Plot mechanical resonance candidates with forbidden bands:
 
         >>> sc = SequenceCollection('path/to/sequence.seq')
         >>> bands = [
         ...     (100, 500, 1.0),    # 100-500 Hz: max 1.0 Hz/m
         ...     (2000, 3000, 0.5),  # 2-3 kHz: max 0.5 Hz/m
         ... ]
-        >>> sc.grad_spectrum(forbidden_bands=bands)
-
-        Plot with custom time/frequency resolution:
-
-        >>> sc.grad_spectrum(
-        ...     window_duration=50e-3,  # 50 ms windows
-        ...     spectral_resolution=2.0,  # 2 Hz bins
-        ... )
+        >>> sc.mechanical_resonances(forbidden_bands=bands)
 
         See Also
         --------
-        check : Run acoustic safety checks.
+        check : Run mechanical-resonance safety checks.
         pns : Plot peripheral nerve stimulation waveforms.
         """
-        from ._acoustics import grad_spectrum as _gs_impl
+        from ._acoustics import mechanical_resonances as _mr_impl
 
         if forbidden_bands is None:
             forbidden_bands = self._default_forbidden_bands_hz_per_m()
 
-        _gs_impl(
+        _mr_impl(
             self,
             sequence_idx=sequence_idx,
             forbidden_bands=forbidden_bands,
             window_duration=window_duration,
             spectral_resolution=spectral_resolution,
             max_frequency=max_frequency,
-            threshold_percent=threshold_percent,
             peak_log10_threshold=peak_log10_threshold,
             peak_norm_scale=peak_norm_scale,
             peak_eps=peak_eps,
             peak_prominence=peak_prominence,
         )
 
+    def grad_spectrum(self, **kwargs) -> None:
+        """Alias for :meth:`mechanical_resonances` (backward compatible)."""
+        # Drop threshold_percent — removed in mechanical_resonances
+        kwargs.pop('threshold_percent', None)
+        self.mechanical_resonances(**kwargs)
+
     def calculate_gradient_spectrum(self, **kwargs) -> None:
-        """Alias for :meth:`grad_spectrum`."""
+        """Alias for :meth:`mechanical_resonances` (backward compatible)."""
         self.grad_spectrum(**kwargs)
+
+    def calculate_mechanical_resonances(self, **kwargs) -> None:
+        """Alias for :meth:`mechanical_resonances`."""
+        self.mechanical_resonances(**kwargs)
 
     def plot(
         self,

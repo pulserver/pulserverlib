@@ -239,6 +239,7 @@ struct AcousticSpectra {
     std::vector<int>   candidate_violations_gx;
     std::vector<int>   candidate_violations_gy;
     std::vector<int>   candidate_violations_gz;
+    std::vector<float> candidate_grad_amps;  /* max time-domain grad amp (Hz/m), shared across axes */
 };
 
 // ── PNS result ──────────────────────────────────────────────────────

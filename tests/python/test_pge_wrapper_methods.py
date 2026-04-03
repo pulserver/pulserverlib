@@ -23,6 +23,7 @@ def test_grad_spectrum_threshold_percent_variants(
 ):
     sc = SequenceCollection(str(generated_seq_path))
 
+    # threshold_percent is silently ignored by the backward-compat alias
     sc.grad_spectrum(
         sequence_idx=0,
         forbidden_bands=[(500.0, 600.0, 2000.0)],
@@ -32,30 +33,16 @@ def test_grad_spectrum_threshold_percent_variants(
 
     fig = plt.gcf()
     assert fig is not None
-    # Layout can be either two-row (spectrogram + harmonics) or
-    # harmonics-only when sliding windows are not meaningful.
-    assert len(fig.axes) >= 3
+    # Single-panel: 1 main axis + 1 twin (echo spacing) = 2
+    assert len(fig.axes) >= 1
 
-    harmonic_axes = [
+    resonance_axes = [
         ax
         for ax in fig.axes
         if isinstance(ax.get_title(), str)
-        and ax.get_title().endswith("Harmonic Spectrum")
+        and 'Mechanical Resonances' in ax.get_title()
     ]
-    assert len(harmonic_axes) == 3
-
-    expected_count = (
-        1 if isinstance(threshold_percent, (int, float)) else len(threshold_percent)
-    )
-    if expected_count > 0:
-        for ax in harmonic_axes:
-            labels = [ln.get_label() for ln in ax.lines]
-            threshold_labels = [
-                lb
-                for lb in labels
-                if isinstance(lb, str) and lb.startswith("threshold ")
-            ]
-            assert len(threshold_labels) >= expected_count
+    assert len(resonance_axes) == 1
 
     plt.close(fig)
 
@@ -74,7 +61,7 @@ def test_grad_spectrum_peak_tuning_kwargs_smoke(generated_seq_path):
 
     fig = plt.gcf()
     assert fig is not None
-    assert len(fig.axes) >= 3
+    assert len(fig.axes) >= 1
     plt.close(fig)
 
 
@@ -117,6 +104,59 @@ def test_calc_acoustic_spectra_peak_default_parity(generated_seq_path):
         )
 
 
+def test_calc_acoustic_spectra_returns_candidate_grad_amps(generated_seq_path):
+    sc = SequenceCollection(str(generated_seq_path))
+    rd = _calc_acoustic_spectra(
+        sc._cseq,
+        subsequence_idx=0,
+        target_window_size=5000,
+        target_resolution_hz=5.0,
+        max_freq_hz=1200.0,
+        forbidden_bands=[(500.0, 600.0, 2000.0)],
+    )
+    assert 'candidate_grad_amps' in rd
+    grad_amps = np.asarray(rd['candidate_grad_amps'], dtype=np.float32)
+    freqs_gx = np.asarray(rd.get('candidate_freqs_gx', []), dtype=np.float32)
+    assert len(grad_amps) == len(freqs_gx)
+    assert np.all(grad_amps >= 0.0)
+
+
+def test_mechanical_resonances_single_panel(generated_seq_path):
+    sc = SequenceCollection(str(generated_seq_path))
+
+    sc.mechanical_resonances(
+        sequence_idx=0,
+        forbidden_bands=[(500.0, 600.0, 2000.0)],
+        max_frequency=1200.0,
+    )
+
+    fig = plt.gcf()
+    assert fig is not None
+    resonance_axes = [
+        ax
+        for ax in fig.axes
+        if isinstance(ax.get_title(), str)
+        and 'Mechanical Resonances' in ax.get_title()
+    ]
+    assert len(resonance_axes) == 1
+    plt.close(fig)
+
+
+def test_calculate_mechanical_resonances_alias(generated_seq_path):
+    sc = SequenceCollection(str(generated_seq_path))
+
+    sc.calculate_mechanical_resonances(
+        sequence_idx=0,
+        forbidden_bands=[(500.0, 600.0, 2000.0)],
+        max_frequency=1200.0,
+    )
+
+    fig = plt.gcf()
+    assert fig is not None
+    assert len(fig.axes) >= 1
+    plt.close(fig)
+
+
 def test_calculate_gradient_spectrum_alias(generated_seq_path):
     sc = SequenceCollection(str(generated_seq_path))
 
@@ -128,7 +168,7 @@ def test_calculate_gradient_spectrum_alias(generated_seq_path):
 
     fig = plt.gcf()
     assert fig is not None
-    assert len(fig.axes) >= 3
+    assert len(fig.axes) >= 1
     plt.close(fig)
 
 

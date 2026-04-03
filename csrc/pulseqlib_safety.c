@@ -797,6 +797,7 @@ void pulseqlib_acoustic_spectra_free(pulseqlib_acoustic_spectra* s)
     if (s->candidate_violations_gx) PULSEQLIB_FREE(s->candidate_violations_gx);
     if (s->candidate_violations_gy) PULSEQLIB_FREE(s->candidate_violations_gy);
     if (s->candidate_violations_gz) PULSEQLIB_FREE(s->candidate_violations_gz);
+    if (s->candidate_grad_amps)     PULSEQLIB_FREE(s->candidate_grad_amps);
 
     memset(s, 0, sizeof(*s));
 }
@@ -1980,11 +1981,13 @@ static int sa_check_structural_violations(
     float* ax_freqs[3];
     float* ax_amps[3];
     int*   ax_viol[3];
+    float* ax_grad_amps;
 
     memset(&sc, 0, sizeof(sc));
     for (ax = 0; ax < 3; ++ax) {
         n_ax[ax] = 0; ax_freqs[ax] = NULL; ax_amps[ax] = NULL; ax_viol[ax] = NULL;
     }
+    ax_grad_amps = NULL;
 
     result = sa_build_structural_candidates(
         &sc, desc, start_block, block_count,
@@ -2010,12 +2013,23 @@ static int sa_check_structural_violations(
     /* --- Assign candidates to per-axis outputs --- */
     /* All candidates are cross-axis, so store the full list on each axis.
      * But re-evaluate with per-axis amplitude for display. */
+    if (num_candidates > 0) {
+        ax_grad_amps = (float*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(float));
+        if (!ax_grad_amps) {
+            if (candidates) PULSEQLIB_FREE(candidates);
+            sa_free_structural_candidates(&sc);
+            return PULSEQLIB_ERR_ALLOC_FAILED;
+        }
+        for (i = 0; i < num_candidates; ++i)
+            ax_grad_amps[i] = candidates[i].grad_amp;
+    }
     for (ax = 0; ax < 3; ++ax) {
         if (num_candidates > 0) {
             ax_freqs[ax] = (float*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(float));
             ax_amps[ax]  = (float*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(float));
             ax_viol[ax]  = (int*)PULSEQLIB_ALLOC((size_t)num_candidates * sizeof(int));
             if (!ax_freqs[ax] || !ax_amps[ax] || !ax_viol[ax]) {
+                if (ax_grad_amps) PULSEQLIB_FREE(ax_grad_amps);
                 for (i = 0; i < 3; ++i) {
                     if (ax_freqs[i]) PULSEQLIB_FREE(ax_freqs[i]);
                     if (ax_amps[i]) PULSEQLIB_FREE(ax_amps[i]);
@@ -2049,6 +2063,7 @@ static int sa_check_structural_violations(
     spectra->candidate_violations_gx = ax_viol[0];
     spectra->candidate_violations_gy = ax_viol[1];
     spectra->candidate_violations_gz = ax_viol[2];
+    spectra->candidate_grad_amps     = ax_grad_amps;
 
     if (candidates) PULSEQLIB_FREE(candidates);
     sa_free_structural_candidates(&sc);

@@ -368,6 +368,7 @@ typedef struct pulseqlib_acoustic_spectra {
     int*   candidate_violations_gx; /**< 1 = violates a band           */
     int*   candidate_violations_gy;
     int*   candidate_violations_gz;
+    float* candidate_grad_amps;  /**< max time-domain grad amp (Hz/m), shared across axes */
 } pulseqlib_acoustic_spectra;
 
 #define PULSEQLIB_ACOUSTIC_SPECTRA_INIT { \
@@ -376,7 +377,8 @@ typedef struct pulseqlib_acoustic_spectra {
     0.0f, 0,  NULL, NULL, NULL,  NULL, NULL, NULL, \
     0, \
     0, 0, 0, \
-    NULL, NULL, NULL,  NULL, NULL, NULL,  NULL, NULL, NULL \
+    NULL, NULL, NULL,  NULL, NULL, NULL,  NULL, NULL, NULL, \
+    NULL \
 }
 
 /* ================================================================== */

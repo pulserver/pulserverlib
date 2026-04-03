@@ -236,6 +236,7 @@ static py::dict _calc_acoustic_spectra(
     out["candidate_violations_gx"] = sp.candidate_violations_gx;
     out["candidate_violations_gy"] = sp.candidate_violations_gy;
     out["candidate_violations_gz"] = sp.candidate_violations_gz;
+    out["candidate_grad_amps"]     = sp.candidate_grad_amps;
 
     return out;
 }

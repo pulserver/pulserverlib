@@ -391,6 +391,7 @@ public:
         assign_i(a.candidate_violations_gx, cs.candidate_violations_gx, cs.num_candidates_gx);
         assign_i(a.candidate_violations_gy, cs.candidate_violations_gy, cs.num_candidates_gy);
         assign_i(a.candidate_violations_gz, cs.candidate_violations_gz, cs.num_candidates_gz);
+        assign_f(a.candidate_grad_amps, cs.candidate_grad_amps, cs.num_candidates_gx);
 
         pulseqlib_acoustic_spectra_free(&cs);
         return a;
