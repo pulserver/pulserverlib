@@ -1204,12 +1204,13 @@ static int sa_extract_def_occurrences(
                 &desc->grad_table[grad_table_idx];
             const struct pulseqlib_grad_definition* gdef =
                 &desc->grad_definitions[gte->id];
-            float abs_amp = gte->amplitude;
-            float max_amp;
-
-            if (abs_amp < 0.0f) abs_amp = -abs_amp;
-            max_amp = gdef->max_amplitude[gte->shot_index];
-            if (max_amp < 0.0f) max_amp = -max_amp;
+            /* Use sign(gte->amplitude) × max positional amplitude — consistent
+             * with PULSEQLIB_AMP_MAX_POS canonical TR waveforms.  The sign
+             * distinguishes positive/negative lobes (EPI readout); the magnitude
+             * is the worst-case over all positional instances of this def. */
+            float sign    = (gte->amplitude >= 0.0f) ? 1.0f : -1.0f;
+            float max_abs = gdef->max_amplitude[gte->shot_index];
+            if (max_abs < 0.0f) max_abs = -max_abs;
 
             if (n >= cap) {
                 sa_occurrence* tmp;
@@ -1220,10 +1221,10 @@ static int sa_extract_def_occurrences(
                 PULSEQLIB_FREE(occ);
                 occ = tmp;
             }
-            occ[n].def_id = gte->id;
-            occ[n].def_index = gte->id;
+            occ[n].def_id        = gte->id;
+            occ[n].def_index     = gte->id;
             occ[n].start_time_us = time_us;
-            occ[n].amplitude = abs_amp * max_amp;
+            occ[n].amplitude     = sign * max_abs; /* signed worst-case Hz/m */
             ++n;
         }
 
@@ -1378,10 +1379,10 @@ static int sa_build_axis_contributions(
     float peak_log10_threshold, float peak_norm_scale,
     float peak_eps, float peak_prominence)
 {
-    int i, j, num_unique, c;
+    int i, j, num_unique, c, n_pos, n_neg, s;
     int* unique_ids;
-    float* def_times;
-    int def_time_cap;
+    float* pos_times;
+    float* neg_times;
 
     ac->num_contributions = 0;
     ac->contributions = NULL;
@@ -1398,53 +1399,50 @@ static int sa_build_axis_contributions(
         if (unique_ids[i] != unique_ids[i - 1])
             unique_ids[num_unique++] = unique_ids[i];
 
+    /* Allocate up to 2*num_unique contributions: defs with both positive and
+     * negative occurrences (e.g., EPI readout) yield two separate contributions
+     * so that the signed spectral interference is modelled correctly. */
     ac->contributions = (sa_def_contribution*)PULSEQLIB_ALLOC(
-        (size_t)num_unique * sizeof(sa_def_contribution));
+        (size_t)(2 * num_unique) * sizeof(sa_def_contribution));
     if (!ac->contributions) { PULSEQLIB_FREE(unique_ids); return PULSEQLIB_ERR_ALLOC_FAILED; }
-    memset(ac->contributions, 0, (size_t)num_unique * sizeof(sa_def_contribution));
+    memset(ac->contributions, 0, (size_t)(2 * num_unique) * sizeof(sa_def_contribution));
 
-    def_time_cap = num_occ;
-    def_times = (float*)PULSEQLIB_ALLOC((size_t)def_time_cap * sizeof(float));
-    if (!def_times) { PULSEQLIB_FREE(unique_ids);
-                      PULSEQLIB_FREE(ac->contributions); ac->contributions = NULL;
-                      return PULSEQLIB_ERR_ALLOC_FAILED; }
+    pos_times = (float*)PULSEQLIB_ALLOC((size_t)num_occ * sizeof(float));
+    neg_times = (float*)PULSEQLIB_ALLOC((size_t)num_occ * sizeof(float));
+    if (!pos_times || !neg_times) {
+        PULSEQLIB_FREE(unique_ids);
+        PULSEQLIB_FREE(ac->contributions); ac->contributions = NULL;
+        if (pos_times) PULSEQLIB_FREE(pos_times);
+        if (neg_times) PULSEQLIB_FREE(neg_times);
+        return PULSEQLIB_ERR_ALLOC_FAILED;
+    }
 
     c = 0;
     for (i = 0; i < num_unique; ++i) {
         int did = unique_ids[i];
-        int n_times = 0;
-        float max_amp = 0.0f;
+        float max_amp_abs = 0.0f;
         const struct pulseqlib_grad_definition* gdef = NULL;
+        sa_def_contribution wf_params;  /* waveform response params, shared by sign groups */
 
-        /* Gather times and worst-case amplitude for this def */
+        memset(&wf_params, 0, sizeof(wf_params));
+        n_pos = 0;
+        n_neg = 0;
+
+        /* Gather times by sign and worst-case absolute amplitude for this def */
         for (j = 0; j < num_occ; ++j) {
             if (occ[j].def_id == did) {
-                def_times[n_times++] = occ[j].start_time_us;
-                if (occ[j].amplitude > max_amp) max_amp = occ[j].amplitude;
+                float abs_a = occ[j].amplitude;
+                if (abs_a < 0.0f) abs_a = -abs_a;
+                if (abs_a > max_amp_abs) max_amp_abs = abs_a;
                 gdef = &desc->grad_definitions[occ[j].def_index];
+                if (occ[j].amplitude >= 0.0f)
+                    pos_times[n_pos++] = occ[j].start_time_us;
+                else
+                    neg_times[n_neg++] = occ[j].start_time_us;
             }
         }
 
-        ac->contributions[c].def_id = did;
-        ac->contributions[c].amplitude = max_amp;
-        ac->contributions[c].resonant_freq_hz = 0.0f;
-        ac->contributions[c].resonant_num_cycles = 0;
-        ac->contributions[c].pwl_num_vertices = 0;
-
-        /* Cluster spacings */
-        {
-            sa_spacing_run* runs = NULL;
-            int num_runs = sa_cluster_def_spacings(&runs, def_times, n_times,
-                                                    abs_tol_us, rel_tol);
-            if (num_runs < 0) {
-                PULSEQLIB_FREE(unique_ids); PULSEQLIB_FREE(def_times);
-                return PULSEQLIB_ERR_ALLOC_FAILED;
-            }
-            ac->contributions[c].runs = runs;
-            ac->contributions[c].num_runs = num_runs;
-        }
-
-        /* ---- Intra-pulse waveform response H_d(f) ---- */
+        /* ---- Intra-pulse waveform response H_d(f) — computed once per def ---- */
 
         if (gdef && gdef->type == 0) {
             /* Case 1: Trapezoid — build 4-vertex PWL from rise/flat/fall.
@@ -1453,15 +1451,15 @@ static int sa_build_axis_contributions(
             float tr = (float)gdef->rise_time_or_unused;
             float tf = (float)gdef->flat_time_or_unused;
             float td = (float)gdef->fall_time_or_num_uncompressed_samples;
-            ac->contributions[c].pwl_num_vertices = 4;
-            ac->contributions[c].pwl_times_us[0] = 0.0f;
-            ac->contributions[c].pwl_values[0]   = 0.0f;
-            ac->contributions[c].pwl_times_us[1] = tr;
-            ac->contributions[c].pwl_values[1]   = 1.0f;
-            ac->contributions[c].pwl_times_us[2] = tr + tf;
-            ac->contributions[c].pwl_values[2]   = 1.0f;
-            ac->contributions[c].pwl_times_us[3] = tr + tf + td;
-            ac->contributions[c].pwl_values[3]   = 0.0f;
+            wf_params.pwl_num_vertices = 4;
+            wf_params.pwl_times_us[0] = 0.0f;
+            wf_params.pwl_values[0]   = 0.0f;
+            wf_params.pwl_times_us[1] = tr;
+            wf_params.pwl_values[1]   = 1.0f;
+            wf_params.pwl_times_us[2] = tr + tf;
+            wf_params.pwl_values[2]   = 1.0f;
+            wf_params.pwl_times_us[3] = tr + tf + td;
+            wf_params.pwl_values[3]   = 0.0f;
         }
         else if (gdef && gdef->type == 1) {
             /* Arbitrary waveform — decompress shape, then decide path. */
@@ -1507,14 +1505,14 @@ static int sa_build_axis_contributions(
                         int nv = num_samp;
                         int s_idx;
                         if (nv > SA_MAX_PWL_VERTICES) nv = SA_MAX_PWL_VERTICES;
-                        ac->contributions[c].pwl_num_vertices = nv;
+                        wf_params.pwl_num_vertices = nv;
                         for (s_idx = 0; s_idx < nv; ++s_idx) {
                             if (has_time && time_us)
-                                ac->contributions[c].pwl_times_us[s_idx] = time_us[s_idx];
+                                wf_params.pwl_times_us[s_idx] = time_us[s_idx];
                             else
-                                ac->contributions[c].pwl_times_us[s_idx] =
+                                wf_params.pwl_times_us[s_idx] =
                                     0.5f * raster + (float)s_idx * raster;
-                            ac->contributions[c].pwl_values[s_idx] = wave_samp[s_idx];
+                            wf_params.pwl_values[s_idx] = wave_samp[s_idx];
                         }
                     }
                     else if (has_time && time_us) {
@@ -1611,11 +1609,11 @@ static int sa_build_axis_contributions(
                                                         peak_max = mag_buf[s_idx]; peak_idx = s_idx;
                                                     }
                                                 f_pk = (float)peak_idx * freq_res_arb;
-                                                ac->contributions[c].resonant_freq_hz = f_pk;
+                                                wf_params.resonant_freq_hz = f_pk;
                                                 t_wf = (float)n_uniform * raster * 1.0e-6f;
                                                 n_eff = (int)(t_wf * f_pk + 0.5f);
                                                 if (n_eff < 1) n_eff = 1;
-                                                ac->contributions[c].resonant_num_cycles = n_eff;
+                                                wf_params.resonant_num_cycles = n_eff;
                                             }
                                             PULSEQLIB_FREE(wf_peaks);
                                         }
@@ -1693,11 +1691,11 @@ static int sa_build_axis_contributions(
                                                 peak_max = mag_buf[s_idx]; peak_idx = s_idx;
                                             }
                                         f_pk = (float)peak_idx * freq_res_arb;
-                                        ac->contributions[c].resonant_freq_hz = f_pk;
+                                        wf_params.resonant_freq_hz = f_pk;
                                         t_wf = (float)num_samp * raster * 1.0e-6f;
                                         n_eff = (int)(t_wf * f_pk + 0.5f);
                                         if (n_eff < 1) n_eff = 1;
-                                        ac->contributions[c].resonant_num_cycles = n_eff;
+                                        wf_params.resonant_num_cycles = n_eff;
                                     }
                                     PULSEQLIB_FREE(wf_peaks);
                                 }
@@ -1714,12 +1712,59 @@ static int sa_build_axis_contributions(
                 if (decomp_wave.samples) PULSEQLIB_FREE(decomp_wave.samples);
             }
         }
-        ++c;
+
+        /* ---- Build one or two contributions (one per sign group) ---- *
+         * Defs with both positive and negative occurrences (e.g. EPI readout)
+         * get two separate contributions with ± amplitude so that spectral
+         * interference is modelled correctly, yielding peaks at 1/(2*ESP)
+         * instead of the incorrectly merged 1/ESP.                       */
+        for (s = 0; s < 2; ++s) {
+            float* times_s = (s == 0) ? pos_times : neg_times;
+            int    n_times_s = (s == 0) ? n_pos : n_neg;
+            float  sign_amp;
+            sa_spacing_run* runs = NULL;
+            int    num_runs;
+
+            if (n_times_s == 0) continue;
+
+            /* Mixed-sign defs (e.g. EPI readout): preserve ± so that the two
+             * contributions interfere correctly in the spectrum.
+             * Single-sign defs: use +max_amp_abs regardless of original polarity
+             * because only the magnitude matters for spectral analysis and
+             * violation checking. */
+            if (n_pos > 0 && n_neg > 0)
+                sign_amp = (s == 0) ? max_amp_abs : -max_amp_abs;
+            else
+                sign_amp = max_amp_abs;
+
+            ac->contributions[c].def_id              = did;
+            ac->contributions[c].amplitude           = sign_amp;
+            ac->contributions[c].resonant_freq_hz    = wf_params.resonant_freq_hz;
+            ac->contributions[c].resonant_num_cycles = wf_params.resonant_num_cycles;
+            ac->contributions[c].pwl_num_vertices    = wf_params.pwl_num_vertices;
+            memcpy(ac->contributions[c].pwl_times_us, wf_params.pwl_times_us,
+                   sizeof(wf_params.pwl_times_us));
+            memcpy(ac->contributions[c].pwl_values, wf_params.pwl_values,
+                   sizeof(wf_params.pwl_values));
+
+            num_runs = sa_cluster_def_spacings(&runs, times_s, n_times_s,
+                                               abs_tol_us, rel_tol);
+            if (num_runs < 0) {
+                PULSEQLIB_FREE(unique_ids);
+                PULSEQLIB_FREE(pos_times);
+                PULSEQLIB_FREE(neg_times);
+                return PULSEQLIB_ERR_ALLOC_FAILED;
+            }
+            ac->contributions[c].runs     = runs;
+            ac->contributions[c].num_runs = num_runs;
+            c++;
+        }
     }
 
     ac->num_contributions = c;
     PULSEQLIB_FREE(unique_ids);
-    PULSEQLIB_FREE(def_times);
+    PULSEQLIB_FREE(pos_times);
+    PULSEQLIB_FREE(neg_times);
     return PULSEQLIB_SUCCESS;
 }
 
@@ -2172,21 +2217,22 @@ static int sa_check_structural_violations(
                                         &d_re, &d_im);
                     d_mag = (float)sqrt((double)(d_re * d_re + d_im * d_im));
                     if (d_mag > threshold) {
-                        if (sc.axes[ax].contributions[d].amplitude > max_ga)
-                            max_ga = sc.axes[ax].contributions[d].amplitude;
+                        float d_amp = sc.axes[ax].contributions[d].amplitude;
+                        if (d_amp < 0.0f) d_amp = -d_amp;
+                        if (d_amp > max_ga)
+                            max_ga = d_amp;
                     }
                 }
             }
             cand_grad_amps[ci] = max_ga;
 
-            /* Check against forbidden bands */
+            /* Check against forbidden bands — check ALL matching bands */
             cand_violations[ci] = 0;
             for (b = 0; b < num_forbidden_bands; ++b) {
                 if (f_hz >= forbidden_bands[b].freq_min_hz &&
                     f_hz <= forbidden_bands[b].freq_max_hz) {
                     if (max_ga > forbidden_bands[b].max_amplitude_hz_per_m)
                         cand_violations[ci] = 1;
-                    break;
                 }
             }
             ci++;

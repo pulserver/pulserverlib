@@ -11,11 +11,11 @@ from ._helpers import _add_echo_spacing_axis
 from ._sequence import SequenceCollection
 
 
-def _plot_grad_spectrum_single(
+def _plot_grad_spectrum_for_subsequence(
     seq: SequenceCollection,
     *,
     subsequence_idx: int,
-    canonical_tr_idx: int,
+    canonical_tr_indices: list[int],
     forbidden_bands: list[tuple[float, float, float]],
     target_window_size: int,
     spectral_resolution: float,
@@ -25,119 +25,129 @@ def _plot_grad_spectrum_single(
     peak_eps: float | None,
     peak_prominence: float | None,
 ) -> None:
+    """Plot gradient spectra for all canonical TRs of one subsequence, overlaid.
+
+    One figure with 3 axes (Gx, Gy, Gz) is produced per subsequence.  Each
+    canonical TR is drawn with a different alpha level so all waveforms are
+    visible.  The analytical (Dirichlet) structural spectra are shown as
+    dashed overlays.  Forbidden bands are shaded.  Violation candidates are
+    annotated with their peak gradient amplitude (mT/m).
+    """
     import matplotlib.pyplot as plt
 
     gamma_hz_per_t = float(seq.system.gamma)
     hz_per_m_to_mT_per_m = 1e3 / gamma_hz_per_t
+    n_ctrs = len(canonical_tr_indices)
 
-    rd = _calc_mech_resonances(
-        seq._cseq,
-        subsequence_idx=subsequence_idx,
-        canonical_tr_idx=canonical_tr_idx,
-        target_window_size=target_window_size,
-        target_resolution_hz=spectral_resolution,
-        max_freq_hz=max_frequency,
-        forbidden_bands=forbidden_bands,
-        peak_log10_threshold=peak_log10_threshold,
-        peak_norm_scale=peak_norm_scale,
-        peak_eps=peak_eps,
-        peak_prominence=peak_prominence,
-    )
-
-    num_freq_bins = rd['num_freq_bins']
-    frequencies = rd['freq_min_hz'] + np.arange(num_freq_bins) * rd['freq_spacing_hz']
-
-    spectrum_full = {}
-    for ax_name in ('gx', 'gy', 'gz'):
-        spectrum_full[ax_name] = np.asarray(
-            rd[f'spectrum_full_{ax_name}'],
-            dtype=np.float32,
+    # Collect per-canonical-TR result dicts
+    all_rd = []
+    for ctr_idx in canonical_tr_indices:
+        rd = _calc_mech_resonances(
+            seq._cseq,
+            subsequence_idx=subsequence_idx,
+            canonical_tr_idx=ctr_idx,
+            target_window_size=target_window_size,
+            target_resolution_hz=spectral_resolution,
+            max_freq_hz=max_frequency,
+            forbidden_bands=forbidden_bands,
+            peak_log10_threshold=peak_log10_threshold,
+            peak_norm_scale=peak_norm_scale,
+            peak_eps=peak_eps,
+            peak_prominence=peak_prominence,
         )
+        all_rd.append(rd)
 
-    # Dirichlet kernel envelope for multi-TR visualization
-    num_instances = int(rd.get('num_instances', 0))
-    f0 = float(rd.get('freq_spacing_seq_hz', 0.0))
-    dirichlet_env = {}
-    if num_instances > 1 and f0 > 0.0:
-        N = num_instances
-        arg = np.pi * frequencies / f0
-        with np.errstate(divide='ignore', invalid='ignore'):
-            dkern = np.abs(np.sin(N * arg) / (N * np.sin(arg)))
-        # Replace 0/0 at exact multiples of f0 with the correct limit (1.0)
-        dkern[~np.isfinite(dkern)] = 1.0
-        for ax_name in ('gx', 'gy', 'gz'):
-            dirichlet_env[ax_name] = spectrum_full[ax_name] * dkern
-
+    # Use the frequency grid of the first result (all share the same grid)
+    rd0 = all_rd[0]
+    num_freq_bins = rd0['num_freq_bins']
+    frequencies = rd0['freq_min_hz'] + np.arange(num_freq_bins) * rd0['freq_spacing_hz']
     freq_min = 0.0
-    freq_max = float(frequencies[-1])
-
-    axis_labels = {'gx': 'Gx', 'gy': 'Gy', 'gz': 'Gz'}
-    colors = {'gx': 'C0', 'gy': 'C1', 'gz': 'C2'}
-    title = f'[SS{subsequence_idx}, CTR{canonical_tr_idx}] Mechanical Resonances'
-
-    # Candidate data (shared across axes)
-    cand_freqs = np.asarray(rd.get('candidate_freqs', []), dtype=np.float64)
-    cand_viols = np.asarray(rd.get('candidate_violations', []), dtype=np.int32)
-    cand_grad_amps = np.asarray(rd.get('candidate_grad_amps', []), dtype=np.float64)
-
-    # Analytical structural spectrum (dense grid, one per axis)
-    analytical = {}
-    for ax_name in ('gx', 'gy', 'gz'):
-        raw = rd.get(f'analytical_{ax_name}', [])
-        analytical[ax_name] = (
-            np.asarray(raw, dtype=np.float32) if len(raw) > 0 else None
-        )
-
-    fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
+    freq_max = float(frequencies[-1]) if num_freq_bins > 0 else max_frequency
 
     axis_names = ('gx', 'gy', 'gz')
     axis_labels = {'gx': 'Gx', 'gy': 'Gy', 'gz': 'Gz'}
     colors = {'gx': 'C0', 'gy': 'C1', 'gz': 'C2'}
 
+    # Alpha levels: first CTR is most opaque; subsequent ones are lighter
+    alphas = [max(0.2, 0.5 - 0.15 * k) for k in range(n_ctrs)]
+
+    title_suffix = (
+        f'CTR{canonical_tr_indices[0]}–CTR{canonical_tr_indices[-1]}'
+        if n_ctrs > 1
+        else f'CTR{canonical_tr_indices[0]}'
+    )
+    title = f'[SS{subsequence_idx}, {title_suffix}] Mechanical Resonances'
+
+    fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
+
     for panel_idx, ax_name in enumerate(axis_names):
         ax = axes[panel_idx]
         color = colors[ax_name]
 
-        # FFT spectrum
-        ax.plot(
-            frequencies,
-            spectrum_full[ax_name],
-            color=color,
-            lw=0.8,
-            alpha=0.5,
-        )
+        for k, (ctr_idx, rd) in enumerate(zip(canonical_tr_indices, all_rd)):
+            num_bins_k = rd['num_freq_bins']
+            freqs_k = rd['freq_min_hz'] + np.arange(num_bins_k) * rd['freq_spacing_hz']
+            spec = np.asarray(rd[f'spectrum_full_{ax_name}'], dtype=np.float32)
+            label = f'CTR{ctr_idx}' if n_ctrs > 1 else None
 
-        # Dirichlet kernel envelope
-        if ax_name in dirichlet_env:
+            # FFT spectrum
             ax.plot(
-                frequencies,
-                dirichlet_env[ax_name],
+                freqs_k,
+                spec,
                 color=color,
-                lw=0.6,
-                alpha=0.35,
-                linestyle=':',
+                lw=0.8,
+                alpha=alphas[k],
+                label=label,
             )
 
-        # Analytical structural spectrum overlay
-        if analytical.get(ax_name) is not None:
-            ax.plot(
-                frequencies,
-                analytical[ax_name],
-                color='k',
-                lw=0.7,
-                alpha=0.45,
-            )
+            # Dirichlet kernel envelope
+            num_instances = int(rd.get('num_instances', 0))
+            f0 = float(rd.get('freq_spacing_seq_hz', 0.0))
+            if num_instances > 1 and f0 > 0.0:
+                N = num_instances
+                arg = np.pi * freqs_k / f0
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    dkern = np.abs(np.sin(N * arg) / (N * np.sin(arg)))
+                dkern[~np.isfinite(dkern)] = 1.0
+                ax.plot(
+                    freqs_k,
+                    spec * dkern,
+                    color=color,
+                    lw=0.6,
+                    alpha=max(0.15, alphas[k] * 0.7),
+                    linestyle=':',
+                )
 
-        # Forbidden bands — shaded regions
+            # Analytical structural spectrum overlay
+            raw_analytical = rd.get(f'analytical_{ax_name}', [])
+            if len(raw_analytical) > 0:
+                analytical = np.asarray(raw_analytical, dtype=np.float32)
+                ax.plot(
+                    freqs_k,
+                    analytical,
+                    color='k',
+                    lw=0.7,
+                    alpha=max(0.2, alphas[k] * 0.9),
+                    linestyle='--',
+                )
+
+        # Forbidden bands — shaded regions (drawn once, shared for all CTRs)
         for band in forbidden_bands:
             ax.axvspan(band[0], band[1], alpha=0.15, color='red', zorder=0)
 
-        # Candidate frequency lines
-        for ci in range(len(cand_freqs)):
-            cf = cand_freqs[ci]
-            if cf < freq_min or cf > freq_max:
-                continue
-            is_viol = int(cand_viols[ci]) if ci < len(cand_viols) else 0
+        # Candidate frequency lines — union over all canonical TRs
+        # Violations from any CTR are shown in red; others in dimgray.
+        drawn_freqs: dict[float, int] = {}  # freq -> max is_viol flag
+        for rd in all_rd:
+            cf_arr = np.asarray(rd.get('candidate_freqs', []), dtype=np.float64)
+            viol_arr = np.asarray(rd.get('candidate_violations', []), dtype=np.int32)
+            for ci in range(len(cf_arr)):
+                cf = float(cf_arr[ci])
+                if cf < freq_min or cf > freq_max:
+                    continue
+                iv = int(viol_arr[ci]) if ci < len(viol_arr) else 0
+                drawn_freqs[cf] = max(drawn_freqs.get(cf, 0), iv)
+        for cf, is_viol in drawn_freqs.items():
             ax.axvline(
                 cf,
                 color='red' if is_viol else 'dimgray',
@@ -150,44 +160,56 @@ def _plot_grad_spectrum_single(
         ax.set_xlim(freq_min, freq_max)
         ax.set_ylabel(f'{axis_labels[ax_name]} (a.u.)')
         ax.grid(True, alpha=0.3)
+        if n_ctrs > 1 and panel_idx == 0:
+            ax.legend(fontsize=7, loc='upper right', framealpha=0.6)
 
     # --- Annotations on top panel only ---
-
-    # Per-candidate grad-amp labels (horizontal, mT/m, on top panel)
     ax_top = axes[0]
-    for ci in range(len(cand_freqs)):
-        cf = cand_freqs[ci]
-        if cf < freq_min or cf > freq_max:
-            continue
-        if ci < len(cand_grad_amps) and cand_grad_amps[ci] > 0.0:
-            is_viol = int(cand_viols[ci]) if ci < len(cand_viols) else 0
-            gamp_mT = float(cand_grad_amps[ci]) * hz_per_m_to_mT_per_m
-            ax_top.annotate(
-                f'{gamp_mT:.1f}',
-                xy=(cf, 1.02),
-                xycoords=('data', 'axes fraction'),
-                ha='center',
-                va='bottom',
-                fontsize=7,
-                fontweight='bold' if is_viol else 'normal',
-                color='red' if is_viol else 'dimgray',
-                alpha=0.9,
-                clip_on=False,
-            )
 
-    # Per-forbidden-band: max candidate amplitude within band (mT/m)
+    # Per-candidate grad-amp labels (mT/m) — worst case across all CTRs,
+    # only for candidates that violate a forbidden band in any CTR.
+    viol_amps: dict[float, float] = {}
+    for rd in all_rd:
+        cf_arr = np.asarray(rd.get('candidate_freqs', []), dtype=np.float64)
+        viol_arr = np.asarray(rd.get('candidate_violations', []), dtype=np.int32)
+        amp_arr = np.asarray(rd.get('candidate_grad_amps', []), dtype=np.float64)
+        for ci in range(len(cf_arr)):
+            cf = float(cf_arr[ci])
+            if cf < freq_min or cf > freq_max:
+                continue
+            is_viol = int(viol_arr[ci]) if ci < len(viol_arr) else 0
+            if is_viol and ci < len(amp_arr) and amp_arr[ci] > 0.0:
+                gamp = float(amp_arr[ci]) * hz_per_m_to_mT_per_m
+                viol_amps[cf] = max(viol_amps.get(cf, 0.0), gamp)
+    for cf, gamp_mT in viol_amps.items():
+        ax_top.annotate(
+            f'{gamp_mT:.1f} mT/m',
+            xy=(cf, 1.02),
+            xycoords=('data', 'axes fraction'),
+            ha='center',
+            va='bottom',
+            fontsize=7,
+            fontweight='bold',
+            color='red',
+            alpha=0.9,
+            clip_on=False,
+        )
+
+    # Per-forbidden-band: max candidate amplitude within band (mT/m),
+    # worst case across all canonical TRs.
     for band in forbidden_bands:
         band_lo, band_hi, band_limit = band[0], band[1], band[2]
         band_limit_mT = band_limit * hz_per_m_to_mT_per_m
-        # Find max candidate grad_amp within this band
         max_cand_mT = 0.0
-        for ci in range(len(cand_freqs)):
-            cf = cand_freqs[ci]
-            if band_lo <= cf <= band_hi and ci < len(cand_grad_amps):
-                val = float(cand_grad_amps[ci]) * hz_per_m_to_mT_per_m
-                if val > max_cand_mT:
-                    max_cand_mT = val
-
+        for rd in all_rd:
+            cf_arr = np.asarray(rd.get('candidate_freqs', []), dtype=np.float64)
+            amp_arr = np.asarray(rd.get('candidate_grad_amps', []), dtype=np.float64)
+            for ci in range(len(cf_arr)):
+                cf = float(cf_arr[ci])
+                if band_lo <= cf <= band_hi and ci < len(amp_arr):
+                    val = float(amp_arr[ci]) * hz_per_m_to_mT_per_m
+                    if val > max_cand_mT:
+                        max_cand_mT = val
         band_center = 0.5 * (band_lo + band_hi)
         label = f'limit: {band_limit_mT:.1f} mT/m'
         if max_cand_mT > 0.0:
@@ -284,20 +306,19 @@ def grad_spectrum(
     for ss_idx in subsequence_indices:
         tr_info = _find_tr(seq._cseq, subsequence_idx=ss_idx)
         num_canonical = int(tr_info.get('num_canonical_trs', 1))
-        for canonical_tr_idx in range(num_canonical):
-            _plot_grad_spectrum_single(
-                seq,
-                subsequence_idx=ss_idx,
-                canonical_tr_idx=canonical_tr_idx,
-                forbidden_bands=forbidden_bands,
-                target_window_size=target_window_size,
-                spectral_resolution=spectral_resolution,
-                max_frequency=max_frequency,
-                peak_log10_threshold=peak_log10_threshold,
-                peak_norm_scale=peak_norm_scale,
-                peak_eps=peak_eps,
-                peak_prominence=peak_prominence,
-            )
+        _plot_grad_spectrum_for_subsequence(
+            seq,
+            subsequence_idx=ss_idx,
+            canonical_tr_indices=list(range(num_canonical)),
+            forbidden_bands=forbidden_bands,
+            target_window_size=target_window_size,
+            spectral_resolution=spectral_resolution,
+            max_frequency=max_frequency,
+            peak_log10_threshold=peak_log10_threshold,
+            peak_norm_scale=peak_norm_scale,
+            peak_eps=peak_eps,
+            peak_prominence=peak_prominence,
+        )
 
 
 # Alias
