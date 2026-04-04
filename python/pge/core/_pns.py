@@ -77,9 +77,15 @@ def pns(
 
     grad_raster_time = seq.system.grad_raster_time  # seconds
 
+    # Base colors (opaque) for the four PNS traces.
+    _BASE_COLORS = ['C3', 'C0', 'C1', 'C2']
+
     for ss_idx in sequence_indices:
         tr_info = _find_tr(seq._cseq, subsequence_idx=ss_idx)
         num_canonical = int(tr_info.get('num_canonical_trs', 1))
+
+        fig, ax = plt.subplots(figsize=(12, 5))
+
         for canonical_tr_idx in range(num_canonical):
             result_dict = _calc_pns(
                 seq._cseq,
@@ -97,28 +103,34 @@ def pns(
             pns_total = np.sqrt(pns_x**2 + pns_y**2 + pns_z**2)
             time_ms = np.arange(num_samples, dtype=np.float32) * grad_raster_time * 1e3
 
-            fig, ax = plt.subplots(figsize=(12, 5))
+            # First canonical TR is fully opaque; subsequent ones are shaded.
+            alpha = 1.0 if canonical_tr_idx == 0 else 0.35
+            ctr_label = f' (CTR{canonical_tr_idx})' if num_canonical > 1 else ''
 
-            ax.plot(time_ms, pns_total, color='C3', linewidth=2, label='PNS Total')
-            ax.plot(time_ms, pns_x, color='C0', linewidth=1.2, label='PNS X')
-            ax.plot(time_ms, pns_y, color='C1', linewidth=1.2, label='PNS Y')
-            ax.plot(time_ms, pns_z, color='C2', linewidth=1.2, label='PNS Z')
+            ax.plot(time_ms, pns_total, color=_BASE_COLORS[0], linewidth=2,
+                    alpha=alpha, label=f'PNS Total{ctr_label}')
+            ax.plot(time_ms, pns_x, color=_BASE_COLORS[1], linewidth=1.2,
+                    alpha=alpha, label=f'PNS X{ctr_label}')
+            ax.plot(time_ms, pns_y, color=_BASE_COLORS[2], linewidth=1.2,
+                    alpha=alpha, label=f'PNS Y{ctr_label}')
+            ax.plot(time_ms, pns_z, color=_BASE_COLORS[3], linewidth=1.2,
+                    alpha=alpha, label=f'PNS Z{ctr_label}')
 
-            for thr, color in threshold_styles:
-                ax.axhline(
-                    thr,
-                    color=color,
-                    linestyle=':',
-                    linewidth=2,
-                    label=f'{thr:.0f}% threshold',
-                )
-
-            ax.set_xlabel('Time (ms)')
-            ax.set_ylabel('PNS (%)')
-            ax.set_title(
-                f'Peripheral Nerve Stimulation - Convolved Slew Rate [SS{ss_idx}, CTR{canonical_tr_idx}]'
+        for thr, color in threshold_styles:
+            ax.axhline(
+                thr,
+                color=color,
+                linestyle=':',
+                linewidth=2,
+                label=f'{thr:.0f}% threshold',
             )
-            ax.legend(loc='upper right')
-            ax.grid(True, alpha=0.3)
-            ax.set_ylim(bottom=0)
-            fig.tight_layout()
+
+        ax.set_xlabel('Time (ms)')
+        ax.set_ylabel('PNS (%)')
+        ax.set_title(
+            f'Peripheral Nerve Stimulation - Convolved Slew Rate [SS{ss_idx}]'
+        )
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(bottom=0)
+        fig.tight_layout()
