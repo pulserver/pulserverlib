@@ -382,9 +382,12 @@ public:
 
         a.num_instances = cs.num_instances;
 
-        assign_f(a.analytical_gx, cs.analytical_gx, cs.num_freq_bins);
-        assign_f(a.analytical_gy, cs.analytical_gy, cs.num_freq_bins);
-        assign_f(a.analytical_gz, cs.analytical_gz, cs.num_freq_bins);
+        a.num_analytical_peaks = cs.num_analytical_peaks;
+        assign_f(a.analytical_peak_freqs,  cs.analytical_peak_freqs,  cs.num_analytical_peaks);
+        assign_f(a.analytical_peak_amp_gx, cs.analytical_peak_amp_gx, cs.num_analytical_peaks);
+        assign_f(a.analytical_peak_amp_gy, cs.analytical_peak_amp_gy, cs.num_analytical_peaks);
+        assign_f(a.analytical_peak_amp_gz, cs.analytical_peak_amp_gz, cs.num_analytical_peaks);
+        assign_f(a.analytical_peak_widths_hz, cs.analytical_peak_widths_hz, cs.num_analytical_peaks);
         a.num_candidates = cs.num_candidates;
         assign_f(a.candidate_freqs,      cs.candidate_freqs,      cs.num_candidates);
         assign_f(a.candidate_amps_gx,    cs.candidate_amps_gx,    cs.num_candidates);
@@ -392,6 +395,14 @@ public:
         assign_f(a.candidate_amps_gz,    cs.candidate_amps_gz,    cs.num_candidates);
         assign_f(a.candidate_grad_amps,  cs.candidate_grad_amps,  cs.num_candidates);
         assign_i(a.candidate_violations, cs.candidate_violations, cs.num_candidates);
+        assign_i(a.candidate_num_contribs, cs.candidate_num_contribs, cs.num_candidates);
+        {
+            int total_c = 0;
+            for (int k = 0; k < cs.num_candidates; ++k)
+                if (cs.candidate_num_contribs) total_c += cs.candidate_num_contribs[k];
+            assign_i(a.candidate_contrib_def_ids, cs.candidate_contrib_def_ids, total_c);
+            assign_i(a.candidate_contrib_axes,    cs.candidate_contrib_axes,    total_c);
+        }
 
         pulseqlib_mech_resonances_spectra_free(&cs);
         return a;

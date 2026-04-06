@@ -17,17 +17,12 @@ def test_generated_sequences_wrapper_smoke(generated_seq_path):
     assert report[0].num_blocks > 0
 
 
-@pytest.mark.parametrize("threshold_percent", [80.0, [80.0, 100.0], (80.0, 100.0), []])
-def test_grad_spectrum_threshold_percent_variants(
-    generated_seq_path, threshold_percent
-):
+def test_grad_spectrum_api_smoke(generated_seq_path):
     sc = SequenceCollection(str(generated_seq_path))
 
-    # threshold_percent is silently ignored by the backward-compat alias
     sc.grad_spectrum(
         sequence_idx=0,
         forbidden_bands=[(500.0, 600.0, 2000.0)],
-        threshold_percent=threshold_percent,
         max_frequency=1200.0,
     )
 
@@ -461,6 +456,23 @@ def test_grad_spectrum_uses_opts_forbidden_bands_default(simple_gre_seq, monkeyp
             "spectrum_seq_gx": [0.0, 0.0, 0.0, 0.0],
             "spectrum_seq_gy": [0.0, 0.0, 0.0, 0.0],
             "spectrum_seq_gz": [0.0, 0.0, 0.0, 0.0],
+            "num_instances": 1,
+            "num_analytical_peaks": 4,
+            "analytical_peak_freqs": [50.0, 100.0, 150.0, 200.0],
+            "analytical_peak_amp_gx": [0.0, 0.1, 0.2, 0.1],
+            "analytical_peak_amp_gy": [0.0, 0.1, 0.2, 0.1],
+            "analytical_peak_amp_gz": [0.0, 0.1, 0.2, 0.1],
+            "analytical_peak_widths_hz": [8.0, 8.0, 8.0, 8.0],
+            "num_candidates": 0,
+            "candidate_freqs": [],
+            "candidate_amps_gx": [],
+            "candidate_amps_gy": [],
+            "candidate_amps_gz": [],
+            "candidate_grad_amps": [],
+            "candidate_violations": [],
+            "candidate_num_contribs": [],
+            "candidate_contrib_def_ids": [],
+            "candidate_contrib_axes": [],
         }
 
     import pge.core._acoustics as _ac_mod
@@ -517,6 +529,23 @@ def test_grad_spectrum_explicit_bands_override_opts(simple_gre_seq, monkeypatch)
             "spectrum_seq_gx": [0.0, 0.0, 0.0, 0.0],
             "spectrum_seq_gy": [0.0, 0.0, 0.0, 0.0],
             "spectrum_seq_gz": [0.0, 0.0, 0.0, 0.0],
+            "num_instances": 1,
+            "num_analytical_peaks": 4,
+            "analytical_peak_freqs": [50.0, 100.0, 150.0, 200.0],
+            "analytical_peak_amp_gx": [0.0, 0.1, 0.2, 0.1],
+            "analytical_peak_amp_gy": [0.0, 0.1, 0.2, 0.1],
+            "analytical_peak_amp_gz": [0.0, 0.1, 0.2, 0.1],
+            "analytical_peak_widths_hz": [8.0, 8.0, 8.0, 8.0],
+            "num_candidates": 0,
+            "candidate_freqs": [],
+            "candidate_amps_gx": [],
+            "candidate_amps_gy": [],
+            "candidate_amps_gz": [],
+            "candidate_grad_amps": [],
+            "candidate_violations": [],
+            "candidate_num_contribs": [],
+            "candidate_contrib_def_ids": [],
+            "candidate_contrib_axes": [],
         }
 
     import pge.core._acoustics as _ac_mod
@@ -598,6 +627,23 @@ def test_grad_spectrum_iterates_all_subsequences_and_canonical_trs(
             "spectrum_seq_gx": [0.0, 0.0, 0.0, 0.0],
             "spectrum_seq_gy": [0.0, 0.0, 0.0, 0.0],
             "spectrum_seq_gz": [0.0, 0.0, 0.0, 0.0],
+            "num_instances": 1,
+            "num_analytical_peaks": 4,
+            "analytical_peak_freqs": [50.0, 100.0, 150.0, 200.0],
+            "analytical_peak_amp_gx": [0.0, 0.1, 0.2, 0.1],
+            "analytical_peak_amp_gy": [0.0, 0.1, 0.2, 0.1],
+            "analytical_peak_amp_gz": [0.0, 0.1, 0.2, 0.1],
+            "analytical_peak_widths_hz": [8.0, 8.0, 8.0, 8.0],
+            "num_candidates": 0,
+            "candidate_freqs": [],
+            "candidate_amps_gx": [],
+            "candidate_amps_gy": [],
+            "candidate_amps_gz": [],
+            "candidate_grad_amps": [],
+            "candidate_violations": [],
+            "candidate_num_contribs": [],
+            "candidate_contrib_def_ids": [],
+            "candidate_contrib_axes": [],
         }
 
     import pge.core._acoustics as _ac_mod

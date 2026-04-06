@@ -85,61 +85,49 @@ def _plot_grad_spectrum_for_subsequence(
         color = colors[ax_name]
 
         for k, (ctr_idx, rd) in enumerate(zip(canonical_tr_indices, all_rd)):
-            num_bins_k = rd['num_freq_bins']
-            freqs_k = rd['freq_min_hz'] + np.arange(num_bins_k) * rd['freq_spacing_hz']
-            spec = np.asarray(rd[f'spectrum_full_{ax_name}'], dtype=np.float32)
             label = f'CTR{ctr_idx}' if n_ctrs > 1 else None
 
-            # FFT spectrum
-            ax.plot(
-                freqs_k,
-                spec,
-                color=color,
-                lw=0.8,
-                alpha=alphas[k],
-                label=label,
-            )
+            # Rebuild dense analytical spectrum from sparse surviving peaks.
+            # Each peak contributes a smooth Gaussian lobe using C-provided
+            # center frequency, axis amplitude, and FWHM width.
+            pk_freqs = np.asarray(rd.get('analytical_peak_freqs', []), dtype=np.float64)
+            pk_amps = np.asarray(rd.get(f'analytical_peak_amp_{ax_name}', []), dtype=np.float64)
+            pk_widths = np.asarray(rd.get('analytical_peak_widths_hz', []), dtype=np.float64)
 
-            # Dirichlet kernel envelope
-            num_instances = int(rd.get('num_instances', 0))
-            f0 = float(rd.get('freq_spacing_seq_hz', 0.0))
-            if num_instances > 1 and f0 > 0.0:
-                N = num_instances
-                arg = np.pi * freqs_k / f0
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    dkern = np.abs(np.sin(N * arg) / (N * np.sin(arg)))
-                dkern[~np.isfinite(dkern)] = 1.0
+            if len(pk_freqs) > 0 and len(pk_amps) > 0 and len(pk_widths) > 0:
+                n_pk = min(len(pk_freqs), len(pk_amps), len(pk_widths))
+                f_dense = np.linspace(freq_min, freq_max, 2000)
+                rebuilt = np.zeros_like(f_dense)
+
+                for pi in range(n_pk):
+                    fpk = float(pk_freqs[pi])
+                    apk = float(pk_amps[pi])
+                    wpk = float(pk_widths[pi])
+                    if not np.isfinite(fpk) or not np.isfinite(apk) or not np.isfinite(wpk):
+                        continue
+                    if wpk <= 0.0:
+                        wpk = max(1.0, (freq_max - freq_min) / 500.0)
+                    sigma = wpk / 2.3548200450309493
+                    rebuilt += apk * np.exp(-0.5 * ((f_dense - fpk) / sigma) ** 2)
+
                 ax.plot(
-                    freqs_k,
-                    spec * dkern,
+                    f_dense,
+                    rebuilt,
                     color=color,
-                    lw=0.6,
-                    alpha=max(0.15, alphas[k] * 0.7),
-                    linestyle=':',
-                )
-
-            # Analytical structural spectrum overlay
-            raw_analytical = rd.get(f'analytical_{ax_name}', [])
-            if len(raw_analytical) > 0:
-                analytical = np.asarray(raw_analytical, dtype=np.float32)
-                ax.plot(
-                    freqs_k,
-                    analytical,
-                    color='k',
-                    lw=0.7,
-                    alpha=max(0.2, alphas[k] * 0.9),
-                    linestyle='--',
+                    lw=0.9,
+                    alpha=alphas[k],
+                    label=label,
                 )
 
         # Forbidden bands — shaded regions (drawn once, shared for all CTRs)
         for band in forbidden_bands:
             ax.axvspan(band[0], band[1], alpha=0.15, color='red', zorder=0)
 
-        # Candidate frequency lines — union over all canonical TRs
+        # Sparse analytical peak markers — union over all canonical TRs.
         # Violations from any CTR are shown in red; others in dimgray.
         drawn_freqs: dict[float, int] = {}  # freq -> max is_viol flag
         for rd in all_rd:
-            cf_arr = np.asarray(rd.get('candidate_freqs', []), dtype=np.float64)
+            cf_arr = np.asarray(rd.get('analytical_peak_freqs', []), dtype=np.float64)
             viol_arr = np.asarray(rd.get('candidate_violations', []), dtype=np.int32)
             for ci in range(len(cf_arr)):
                 cf = float(cf_arr[ci])
@@ -151,7 +139,7 @@ def _plot_grad_spectrum_for_subsequence(
             ax.axvline(
                 cf,
                 color='red' if is_viol else 'dimgray',
-                linestyle='-' if is_viol else '--',
+                linestyle='-.',
                 linewidth=1.0 if is_viol else 0.6,
                 alpha=0.7 if is_viol else 0.4,
                 zorder=1,

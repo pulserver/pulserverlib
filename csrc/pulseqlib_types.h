@@ -355,10 +355,13 @@ typedef struct pulseqlib_mech_resonances_spectra {
     /* -- repetition info ------------------------------------------- */
     int    num_instances;        /**< TR repetition count (for display) */
 
-    /* -- analytical structural spectrum (dense grid) --------------- */
-    float* analytical_gx;        /**< [num_freq_bins] structural model */
-    float* analytical_gy;
-    float* analytical_gz;
+    /* -- analytical structural spectrum (sparse TR-harmonic grid) -- */
+    int    num_analytical_peaks;      /**< evaluated harmonic count        */
+    float* analytical_peak_freqs;     /**< [num_analytical_peaks] (Hz)     */
+    float* analytical_peak_amp_gx;    /**< [num_analytical_peaks] |S_gx|   */
+    float* analytical_peak_amp_gy;
+    float* analytical_peak_amp_gz;
+    float* analytical_peak_widths_hz; /**< [num_analytical_peaks] FWHM (Hz) */
 
     /* -- structural candidate frequencies (shared cross-axis) ----- */
     int    num_candidates;       /**< candidate count (shared)         */
@@ -368,6 +371,9 @@ typedef struct pulseqlib_mech_resonances_spectra {
     float* candidate_amps_gz;
     float* candidate_grad_amps;  /**< max time-domain grad amp (Hz/m)  */
     int*   candidate_violations; /**< 1 = violates a band              */
+    int*   candidate_num_contribs;    /**< [num_candidates] contributors  */
+    int*   candidate_contrib_def_ids; /**< flat [total_contribs] def_ids  */
+    int*   candidate_contrib_axes;    /**< flat [total_contribs] axis idx */
 } pulseqlib_mech_resonances_spectra;
 
 #define PULSEQLIB_MECH_RESONANCES_SPECTRA_INIT { \
@@ -381,10 +387,11 @@ typedef struct pulseqlib_mech_resonances_spectra {
     0.0f, 0,  NULL, NULL, NULL,  NULL, NULL, NULL, \
     /* num_instances */ \
     0, \
-    /* analytical_gx/gy/gz */ \
-    NULL, NULL, NULL, \
-    /* num_candidates, candidate_freqs, amps_gx/gy/gz, grad_amps, violations */ \
-    0, NULL, NULL, NULL, NULL, NULL, NULL \
+    /* num_analytical_peaks, analytical_peak_freqs, amp_gx/gy/gz, widths */ \
+    0, NULL, NULL, NULL, NULL, NULL, \
+    /* num_candidates, candidate_freqs, amps_gx/gy/gz, grad_amps, violations, */ \
+    /* num_contribs, contrib_def_ids, contrib_axes */ \
+    0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL \
 }
 
 /* ================================================================== */
