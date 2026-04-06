@@ -361,6 +361,9 @@ typedef struct pulseqlib_mech_resonances_spectra {
     float* analytical_peak_amp_gx;    /**< [num_analytical_peaks] |S_gx|   */
     float* analytical_peak_amp_gy;
     float* analytical_peak_amp_gz;
+    float* analytical_peak_phase_gx;  /**< [num_analytical_peaks] arg(S_gx) (rad) */
+    float* analytical_peak_phase_gy;
+    float* analytical_peak_phase_gz;
     float* analytical_peak_widths_hz; /**< [num_analytical_peaks] FWHM (Hz) */
 
     /* -- structural candidate frequencies (shared cross-axis) ----- */
@@ -370,10 +373,25 @@ typedef struct pulseqlib_mech_resonances_spectra {
     float* candidate_amps_gy;
     float* candidate_amps_gz;
     float* candidate_grad_amps;  /**< max time-domain grad amp (Hz/m)  */
+    float* candidate_grad_amps_gx; /**< per-axis contributing grad amp (Hz/m) */
+    float* candidate_grad_amps_gy;
+    float* candidate_grad_amps_gz;
     int*   candidate_violations; /**< 1 = violates a band              */
-    int*   candidate_num_contribs;    /**< [num_candidates] contributors  */
-    int*   candidate_contrib_def_ids; /**< flat [total_contribs] def_ids  */
-    int*   candidate_contrib_axes;    /**< flat [total_contribs] axis idx */
+
+    /* -- component-level sparse analytical terms ------------------ */
+    int    num_component_terms;       /**< number of sparse component terms */
+    float* component_freqs_hz;        /**< [num_component_terms] term center (Hz) */
+    float* component_amps;            /**< [num_component_terms] |term| (Hz/m) */
+    float* component_phases_rad;      /**< [num_component_terms] arg(term) (rad) */
+    float* component_widths_hz;       /**< [num_component_terms] FWHM (Hz) */
+    int*   component_axes;            /**< [num_component_terms] 0=gx,1=gy,2=gz */
+    int*   component_def_ids;         /**< [num_component_terms] grad def id */
+    int*   component_contrib_ids;     /**< [num_component_terms] axis-local contrib id */
+    int*   component_run_ids;         /**< [num_component_terms] run index within contrib */
+
+    /* -- surviving sparse peak positions (positions only) --------- */
+    int    num_surviving_freqs;       /**< surviving candidate frequency count */
+    float* surviving_freqs_hz;        /**< [num_surviving_freqs] (Hz) */
 } pulseqlib_mech_resonances_spectra;
 
 #define PULSEQLIB_MECH_RESONANCES_SPECTRA_INIT { \
@@ -387,11 +405,14 @@ typedef struct pulseqlib_mech_resonances_spectra {
     0.0f, 0,  NULL, NULL, NULL,  NULL, NULL, NULL, \
     /* num_instances */ \
     0, \
-    /* num_analytical_peaks, analytical_peak_freqs, amp_gx/gy/gz, widths */ \
-    0, NULL, NULL, NULL, NULL, NULL, \
-    /* num_candidates, candidate_freqs, amps_gx/gy/gz, grad_amps, violations, */ \
-    /* num_contribs, contrib_def_ids, contrib_axes */ \
-    0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL \
+    /* num_analytical_peaks, analytical_peak_freqs, amp_gx/gy/gz, phase_gx/gy/gz, widths */ \
+    0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+    /* num_candidates, candidate_freqs, amps_gx/gy/gz, grad_amps, grad_amps_gx/gy/gz, violations */ \
+    0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+    /* num_component_terms, component_{freqs,amps,phases,widths,axes,def_ids,contrib_ids,run_ids} */ \
+    0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+    /* num_surviving_freqs, surviving_freqs_hz */ \
+    0, NULL \
 }
 
 /* ================================================================== */

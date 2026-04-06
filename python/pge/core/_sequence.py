@@ -163,11 +163,18 @@ class SequenceCollection(pp.Sequence):
         override = object.__getattribute__(self, '_system_override')
         return override if override is not None else self._seq.system
 
-    def _default_forbidden_bands_hz_per_m(self) -> list[tuple[float, float, float]]:
+    def _default_forbidden_bands_hz_per_m(
+        self, *, include_channel: bool = False
+    ) -> list[tuple[float, float, float] | tuple[float, float, float, str]]:
         """Return default forbidden bands in backend units (Hz, Hz/m)."""
         sys = self.system
         if hasattr(sys, 'forbidden_bands_hz_per_m'):
-            return list(sys.forbidden_bands_hz_per_m())
+            try:
+                return list(
+                    sys.forbidden_bands_hz_per_m(include_channel=include_channel)
+                )
+            except TypeError:
+                return list(sys.forbidden_bands_hz_per_m())
         return []
 
     @property
@@ -807,7 +814,9 @@ class SequenceCollection(pp.Sequence):
         self,
         *,
         sequence_idx: int | None = None,
-        forbidden_bands: list[tuple[float, float, float]] | None = None,
+        forbidden_bands: (
+            list[tuple[float, float, float] | tuple[float, float, float, str]] | None
+        ) = None,
         window_duration: float = 25.0e-3,
         spectral_resolution: float = 5.0,
         max_frequency: float = 3000.0,
@@ -886,7 +895,9 @@ class SequenceCollection(pp.Sequence):
         from ._acoustics import grad_spectrum as _gs_impl
 
         if forbidden_bands is None:
-            forbidden_bands = self._default_forbidden_bands_hz_per_m()
+            forbidden_bands = self._default_forbidden_bands_hz_per_m(
+                include_channel=True
+            )
 
         _gs_impl(
             self,

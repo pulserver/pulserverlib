@@ -62,6 +62,7 @@ def _add_echo_spacing_axis(ax, freq_min, freq_max):
         [f'{freq_to_es(f):.1f}' if f > 0 else '\u221e' for f in primary_ticks]
     )
     ax_top.set_xlim((freq_min, freq_max))
+    ax_top.tick_params(axis='x', pad=6)
     ax_top.set_xlabel('Echo Spacing (\u00b5s)', fontsize=12)
 
     return ax_top

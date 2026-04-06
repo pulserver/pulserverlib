@@ -473,6 +473,17 @@ def test_grad_spectrum_uses_opts_forbidden_bands_default(simple_gre_seq, monkeyp
             "candidate_num_contribs": [],
             "candidate_contrib_def_ids": [],
             "candidate_contrib_axes": [],
+            "num_component_terms": 3,
+            "component_freqs_hz": [100.0, 100.0, 100.0],
+            "component_amps": [0.2, 0.2, 0.2],
+            "component_phases_rad": [0.0, 0.0, 0.0],
+            "component_widths_hz": [8.0, 8.0, 8.0],
+            "component_axes": [0, 1, 2],
+            "component_def_ids": [10, 11, 12],
+            "component_contrib_ids": [0, 0, 0],
+            "component_run_ids": [0, 0, 0],
+            "num_surviving_freqs": 0,
+            "surviving_freqs_hz": [],
         }
 
     import pge.core._acoustics as _ac_mod
@@ -546,6 +557,17 @@ def test_grad_spectrum_explicit_bands_override_opts(simple_gre_seq, monkeypatch)
             "candidate_num_contribs": [],
             "candidate_contrib_def_ids": [],
             "candidate_contrib_axes": [],
+            "num_component_terms": 3,
+            "component_freqs_hz": [100.0, 100.0, 100.0],
+            "component_amps": [0.2, 0.2, 0.2],
+            "component_phases_rad": [0.0, 0.0, 0.0],
+            "component_widths_hz": [8.0, 8.0, 8.0],
+            "component_axes": [0, 1, 2],
+            "component_def_ids": [10, 11, 12],
+            "component_contrib_ids": [0, 0, 0],
+            "component_run_ids": [0, 0, 0],
+            "num_surviving_freqs": 0,
+            "surviving_freqs_hz": [],
         }
 
     import pge.core._acoustics as _ac_mod
@@ -644,6 +666,17 @@ def test_grad_spectrum_iterates_all_subsequences_and_canonical_trs(
             "candidate_num_contribs": [],
             "candidate_contrib_def_ids": [],
             "candidate_contrib_axes": [],
+            "num_component_terms": 3,
+            "component_freqs_hz": [100.0, 100.0, 100.0],
+            "component_amps": [0.2, 0.2, 0.2],
+            "component_phases_rad": [0.0, 0.0, 0.0],
+            "component_widths_hz": [8.0, 8.0, 8.0],
+            "component_axes": [0, 1, 2],
+            "component_def_ids": [10, 11, 12],
+            "component_contrib_ids": [0, 0, 0],
+            "component_run_ids": [0, 0, 0],
+            "num_surviving_freqs": 0,
+            "surviving_freqs_hz": [],
         }
 
     import pge.core._acoustics as _ac_mod

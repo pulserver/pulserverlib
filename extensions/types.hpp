@@ -235,6 +235,9 @@ struct MechResonancesSpectra {
     std::vector<float> analytical_peak_amp_gx;
     std::vector<float> analytical_peak_amp_gy;
     std::vector<float> analytical_peak_amp_gz;
+    std::vector<float> analytical_peak_phase_gx;
+    std::vector<float> analytical_peak_phase_gy;
+    std::vector<float> analytical_peak_phase_gz;
     std::vector<float> analytical_peak_widths_hz;
 
     /* -- structural candidate frequencies (shared cross-axis) -- */
@@ -244,10 +247,23 @@ struct MechResonancesSpectra {
     std::vector<float> candidate_amps_gy;
     std::vector<float> candidate_amps_gz;
     std::vector<float> candidate_grad_amps;
+    std::vector<float> candidate_grad_amps_gx;
+    std::vector<float> candidate_grad_amps_gy;
+    std::vector<float> candidate_grad_amps_gz;
     std::vector<int>   candidate_violations;
-    std::vector<int>   candidate_num_contribs;
-    std::vector<int>   candidate_contrib_def_ids;
-    std::vector<int>   candidate_contrib_axes;
+
+    int                num_component_terms = 0;
+    std::vector<float> component_freqs_hz;
+    std::vector<float> component_amps;
+    std::vector<float> component_phases_rad;
+    std::vector<float> component_widths_hz;
+    std::vector<int>   component_axes;
+    std::vector<int>   component_def_ids;
+    std::vector<int>   component_contrib_ids;
+    std::vector<int>   component_run_ids;
+
+    int                num_surviving_freqs = 0;
+    std::vector<float> surviving_freqs_hz;
 };
 
 // ── PNS result ──────────────────────────────────────────────────────

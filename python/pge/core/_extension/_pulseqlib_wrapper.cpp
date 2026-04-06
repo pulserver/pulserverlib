@@ -232,6 +232,9 @@ static py::dict _calc_mech_resonances(
     out["analytical_peak_amp_gx"] = sp.analytical_peak_amp_gx;
     out["analytical_peak_amp_gy"] = sp.analytical_peak_amp_gy;
     out["analytical_peak_amp_gz"] = sp.analytical_peak_amp_gz;
+    out["analytical_peak_phase_gx"] = sp.analytical_peak_phase_gx;
+    out["analytical_peak_phase_gy"] = sp.analytical_peak_phase_gy;
+    out["analytical_peak_phase_gz"] = sp.analytical_peak_phase_gz;
     out["analytical_peak_widths_hz"] = sp.analytical_peak_widths_hz;
     out["num_candidates"]          = sp.num_candidates;
     out["candidate_freqs"]         = sp.candidate_freqs;
@@ -239,10 +242,23 @@ static py::dict _calc_mech_resonances(
     out["candidate_amps_gy"]       = sp.candidate_amps_gy;
     out["candidate_amps_gz"]       = sp.candidate_amps_gz;
     out["candidate_grad_amps"]     = sp.candidate_grad_amps;
+    out["candidate_grad_amps_gx"]  = sp.candidate_grad_amps_gx;
+    out["candidate_grad_amps_gy"]  = sp.candidate_grad_amps_gy;
+    out["candidate_grad_amps_gz"]  = sp.candidate_grad_amps_gz;
     out["candidate_violations"]    = sp.candidate_violations;
-    out["candidate_num_contribs"]  = sp.candidate_num_contribs;
-    out["candidate_contrib_def_ids"] = sp.candidate_contrib_def_ids;
-    out["candidate_contrib_axes"]  = sp.candidate_contrib_axes;
+
+    out["num_component_terms"]     = sp.num_component_terms;
+    out["component_freqs_hz"]      = sp.component_freqs_hz;
+    out["component_amps"]          = sp.component_amps;
+    out["component_phases_rad"]    = sp.component_phases_rad;
+    out["component_widths_hz"]     = sp.component_widths_hz;
+    out["component_axes"]          = sp.component_axes;
+    out["component_def_ids"]       = sp.component_def_ids;
+    out["component_contrib_ids"]   = sp.component_contrib_ids;
+    out["component_run_ids"]       = sp.component_run_ids;
+
+    out["num_surviving_freqs"]     = sp.num_surviving_freqs;
+    out["surviving_freqs_hz"]      = sp.surviving_freqs_hz;
 
     return out;
 }

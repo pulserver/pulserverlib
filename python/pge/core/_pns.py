@@ -107,14 +107,38 @@ def pns(
             alpha = 1.0 if canonical_tr_idx == 0 else 0.35
             ctr_label = f' (CTR{canonical_tr_idx})' if num_canonical > 1 else ''
 
-            ax.plot(time_ms, pns_total, color=_BASE_COLORS[0], linewidth=2,
-                    alpha=alpha, label=f'PNS Total{ctr_label}')
-            ax.plot(time_ms, pns_x, color=_BASE_COLORS[1], linewidth=1.2,
-                    alpha=alpha, label=f'PNS X{ctr_label}')
-            ax.plot(time_ms, pns_y, color=_BASE_COLORS[2], linewidth=1.2,
-                    alpha=alpha, label=f'PNS Y{ctr_label}')
-            ax.plot(time_ms, pns_z, color=_BASE_COLORS[3], linewidth=1.2,
-                    alpha=alpha, label=f'PNS Z{ctr_label}')
+            ax.plot(
+                time_ms,
+                pns_total,
+                color=_BASE_COLORS[0],
+                linewidth=2,
+                alpha=alpha,
+                label=f'PNS Total{ctr_label}',
+            )
+            ax.plot(
+                time_ms,
+                pns_x,
+                color=_BASE_COLORS[1],
+                linewidth=1.2,
+                alpha=alpha,
+                label=f'PNS X{ctr_label}',
+            )
+            ax.plot(
+                time_ms,
+                pns_y,
+                color=_BASE_COLORS[2],
+                linewidth=1.2,
+                alpha=alpha,
+                label=f'PNS Y{ctr_label}',
+            )
+            ax.plot(
+                time_ms,
+                pns_z,
+                color=_BASE_COLORS[3],
+                linewidth=1.2,
+                alpha=alpha,
+                label=f'PNS Z{ctr_label}',
+            )
 
         for thr, color in threshold_styles:
             ax.axhline(
@@ -127,9 +151,7 @@ def pns(
 
         ax.set_xlabel('Time (ms)')
         ax.set_ylabel('PNS (%)')
-        ax.set_title(
-            f'Peripheral Nerve Stimulation - Convolved Slew Rate [SS{ss_idx}]'
-        )
+        ax.set_title(f'Peripheral Nerve Stimulation - Convolved Slew Rate [SS{ss_idx}]')
         ax.legend(loc='upper right')
         ax.grid(True, alpha=0.3)
         ax.set_ylim(bottom=0)

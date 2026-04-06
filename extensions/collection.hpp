@@ -387,6 +387,9 @@ public:
         assign_f(a.analytical_peak_amp_gx, cs.analytical_peak_amp_gx, cs.num_analytical_peaks);
         assign_f(a.analytical_peak_amp_gy, cs.analytical_peak_amp_gy, cs.num_analytical_peaks);
         assign_f(a.analytical_peak_amp_gz, cs.analytical_peak_amp_gz, cs.num_analytical_peaks);
+        assign_f(a.analytical_peak_phase_gx, cs.analytical_peak_phase_gx, cs.num_analytical_peaks);
+        assign_f(a.analytical_peak_phase_gy, cs.analytical_peak_phase_gy, cs.num_analytical_peaks);
+        assign_f(a.analytical_peak_phase_gz, cs.analytical_peak_phase_gz, cs.num_analytical_peaks);
         assign_f(a.analytical_peak_widths_hz, cs.analytical_peak_widths_hz, cs.num_analytical_peaks);
         a.num_candidates = cs.num_candidates;
         assign_f(a.candidate_freqs,      cs.candidate_freqs,      cs.num_candidates);
@@ -394,15 +397,23 @@ public:
         assign_f(a.candidate_amps_gy,    cs.candidate_amps_gy,    cs.num_candidates);
         assign_f(a.candidate_amps_gz,    cs.candidate_amps_gz,    cs.num_candidates);
         assign_f(a.candidate_grad_amps,  cs.candidate_grad_amps,  cs.num_candidates);
+        assign_f(a.candidate_grad_amps_gx, cs.candidate_grad_amps_gx, cs.num_candidates);
+        assign_f(a.candidate_grad_amps_gy, cs.candidate_grad_amps_gy, cs.num_candidates);
+        assign_f(a.candidate_grad_amps_gz, cs.candidate_grad_amps_gz, cs.num_candidates);
         assign_i(a.candidate_violations, cs.candidate_violations, cs.num_candidates);
-        assign_i(a.candidate_num_contribs, cs.candidate_num_contribs, cs.num_candidates);
-        {
-            int total_c = 0;
-            for (int k = 0; k < cs.num_candidates; ++k)
-                if (cs.candidate_num_contribs) total_c += cs.candidate_num_contribs[k];
-            assign_i(a.candidate_contrib_def_ids, cs.candidate_contrib_def_ids, total_c);
-            assign_i(a.candidate_contrib_axes,    cs.candidate_contrib_axes,    total_c);
-        }
+
+        a.num_component_terms = cs.num_component_terms;
+        assign_f(a.component_freqs_hz,   cs.component_freqs_hz,   cs.num_component_terms);
+        assign_f(a.component_amps,       cs.component_amps,       cs.num_component_terms);
+        assign_f(a.component_phases_rad, cs.component_phases_rad, cs.num_component_terms);
+        assign_f(a.component_widths_hz,  cs.component_widths_hz,  cs.num_component_terms);
+        assign_i(a.component_axes,       cs.component_axes,       cs.num_component_terms);
+        assign_i(a.component_def_ids,    cs.component_def_ids,    cs.num_component_terms);
+        assign_i(a.component_contrib_ids, cs.component_contrib_ids, cs.num_component_terms);
+        assign_i(a.component_run_ids,    cs.component_run_ids,    cs.num_component_terms);
+
+        a.num_surviving_freqs = cs.num_surviving_freqs;
+        assign_f(a.surviving_freqs_hz, cs.surviving_freqs_hz, cs.num_surviving_freqs);
 
         pulseqlib_mech_resonances_spectra_free(&cs);
         return a;
