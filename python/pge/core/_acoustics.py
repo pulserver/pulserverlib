@@ -46,24 +46,34 @@ def _plot_grad_spectrum_for_subsequence(
     peak_eps: float | None,
     peak_prominence: float | None,
 ) -> None:
-    """Plot gradient spectra for all canonical TRs of one subsequence, overlaid.
+    """Plot gradient spectra for all canonical TRs of one subsequence.
 
-    One figure with 3 axes (Gx, Gy, Gz) is produced per subsequence.  Each
-    canonical TR is drawn with a different alpha level so all waveforms are
-    visible.  The analytical (Dirichlet) structural spectra are shown as
-    dashed overlays.  Forbidden bands are shaded.  Violation candidates are
-    annotated with their peak gradient amplitude (mT/m).
+    Each panel shows the analytical power spectrum comb (TR harmonics weighted
+    by |H(f)|²) for the corresponding gradient axis.  All CTR combs are
+    normalised to the global peak power across all axes and all CTRs so that
+    relative channel levels are directly comparable; y-limits are fixed at
+    (0, 1.1).  The first canonical TR is drawn solid; additional CTRs are
+    dashed overlays at decreasing opacity.
+
+    Forbidden bands are shaded in every panel regardless of their associated
+    channel.  Structural candidates appear as dotted vertical lines that span
+    the full panel height, shown only in the panel(s) where they carry
+    significant spectral weight (≥ 25 % of the cross-axis maximum).  The
+    effective gradient amplitude in mT/m is annotated beside the line only
+    when the candidate violates a forbidden band.
     """
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
 
     gamma_hz_per_t = float(seq.system.gamma)
     hz_per_m_to_mT_per_m = 1e3 / gamma_hz_per_t
     n_ctrs = len(canonical_tr_indices)
-
     axis_names = ('gx', 'gy', 'gz')
+    axis_labels = {'gx': 'Gx', 'gy': 'Gy', 'gz': 'Gz'}
+    colors = {'gx': 'C0', 'gy': 'C1', 'gz': 'C2'}
 
-    # Normalize forbidden-band input: keep channel metadata for plotting,
-    # strip to plain triples for C backend calls.
+    # --- Parse forbidden bands ---
     plot_bands: list[tuple[float, float, float, str]] = []
     c_forbidden_bands: list[tuple[float, float, float]] = []
     for bi, band in enumerate(forbidden_bands):
@@ -75,15 +85,11 @@ def _plot_grad_spectrum_for_subsequence(
         else:
             b0, b1, b2 = band
             b_axis = axis_names[bi % 3]
+        c_forbidden_bands.append((float(b0), float(b1), float(b2)))
+        plot_bands.append((float(b0), float(b1), float(b2), b_axis))
 
-        fmin = float(b0)
-        fmax = float(b1)
-        alim = float(b2)
-        c_forbidden_bands.append((fmin, fmax, alim))
-        plot_bands.append((fmin, fmax, alim, b_axis))
-
-    # Collect per-canonical-TR result dicts
-    all_rd = []
+    # --- Collect per-CTR result dicts ---
+    all_rd: list[dict] = []
     for ctr_idx in canonical_tr_indices:
         rd = _calc_mech_resonances(
             seq._cseq,
@@ -100,363 +106,196 @@ def _plot_grad_spectrum_for_subsequence(
         )
         all_rd.append(rd)
 
-    # Use the frequency grid of the first result (all share the same grid)
-    rd0 = all_rd[0]
-    num_freq_bins = rd0['num_freq_bins']
-    frequencies = rd0['freq_min_hz'] + np.arange(num_freq_bins) * rd0['freq_spacing_hz']
     freq_min = 0.0
-    freq_max = float(frequencies[-1]) if num_freq_bins > 0 else max_frequency
+    freq_max = max_frequency
 
-    axis_labels = {'gx': 'Gx', 'gy': 'Gy', 'gz': 'Gz'}
-    colors = {'gx': 'C0', 'gy': 'C1', 'gz': 'C2'}
-    resonance_styles = {
-        'gx': ((0.0, (1.0, 1.8)), 2.0),
-        'gy': ((1.1, (1.0, 2.3)), 1.8),
-        'gz': ((2.2, (1.0, 2.8)), 1.6),
-    }
+    # --- Build TR FFT power spectra (dense uniform grid) ---
+    # spectrum_full_gx/gy/gz[k] = |FFT(canonical_TR_waveform)| on the dense
+    # uniform frequency grid (freq_min_hz + k * freq_spacing_hz).  Squaring
+    # gives the power spectrum — the continuous envelope of the Dirichlet comb.
+    # Global normalisation preserves relative scale across axes and CTRs.
+    comb_data: list[dict[str, tuple[np.ndarray, np.ndarray]]] = []
+    global_peak_power = 0.0
+    for rd in all_rd:
+        n_bins = int(rd.get('num_freq_bins', 0))
+        f_min = float(rd.get('freq_min_hz', 0.0))
+        f_spacing = float(rd.get('freq_spacing_hz', 1.0))
+        per_axis: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        for ax_name in axis_names:
+            if n_bins > 0:
+                amps = np.asarray(rd.get(f'spectrum_full_{ax_name}', []), dtype=np.float64)
+                n = min(n_bins, len(amps))
+                f = f_min + np.arange(n, dtype=np.float64) * f_spacing
+                pw = amps[:n] ** 2
+            else:
+                f = np.empty(0, dtype=np.float64)
+                pw = np.empty(0, dtype=np.float64)
+            per_axis[ax_name] = (f, pw)
+            if pw.size > 0 and np.any(np.isfinite(pw)):
+                p = float(np.nanmax(pw))
+                if p > global_peak_power:
+                    global_peak_power = p
+        comb_data.append(per_axis)
+    if global_peak_power <= 0.0:
+        global_peak_power = 1.0
 
-    # Alpha levels: first CTR is most opaque; subsequent ones are lighter
-    alphas = [max(0.2, 0.5 - 0.15 * k) for k in range(n_ctrs)]
-
+    # --- Figure ---
     title_suffix = (
-        f'CTR{canonical_tr_indices[0]} - CTR{canonical_tr_indices[-1]}'
+        f'CTR{canonical_tr_indices[0]}-CTR{canonical_tr_indices[-1]}'
         if n_ctrs > 1
         else f'CTR{canonical_tr_indices[0]}'
     )
     title = f'[SS{subsequence_idx}, {title_suffix}] Mechanical Resonances'
-
     fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
-    global_ymax = 0.0
-    traces_by_axis: dict[
-        str, list[tuple[np.ndarray, np.ndarray, float, str | None]]
-    ] = {
-        'gx': [],
-        'gy': [],
-        'gz': [],
-    }
-    axis_to_idx = {'gx': 0, 'gy': 1, 'gz': 2}
 
-    for ax_name in axis_names:
-        for k, (ctr_idx, rd) in enumerate(zip(canonical_tr_indices, all_rd, strict=False)):
-            label = f'CTR{ctr_idx}' if n_ctrs > 1 else None
-
-            comp_freqs = np.asarray(rd['component_freqs_hz'], dtype=np.float64)
-            comp_amps = np.asarray(rd['component_amps'], dtype=np.float64)
-            comp_phases = np.asarray(rd['component_phases_rad'], dtype=np.float64)
-            comp_widths = np.asarray(rd['component_widths_hz'], dtype=np.float64)
-            comp_axes = np.asarray(rd['component_axes'], dtype=np.int32)
-            comp_def_ids = np.asarray(rd['component_def_ids'], dtype=np.int32)
-            comp_contrib_ids = np.asarray(rd['component_contrib_ids'], dtype=np.int32)
-
-            n_comp = min(
-                len(comp_freqs),
-                len(comp_amps),
-                len(comp_phases),
-                len(comp_widths),
-                len(comp_axes),
-                len(comp_def_ids),
-                len(comp_contrib_ids),
-            )
-            if n_comp == 0:
-                f_dense = np.linspace(freq_min, freq_max, 2000)
-                rebuilt = np.zeros_like(f_dense)
-                traces_by_axis[ax_name].append((f_dense, rebuilt, alphas[k], label))
-                continue
-
-            f_dense = np.linspace(freq_min, freq_max, 2000)
-            x_half = 0.6033545644016142
-            idx_ax = axis_to_idx[ax_name]
-
-            # Stage 1: sum spacing/duration terms within each contribution.
-            contrib_curves: dict[int, np.ndarray] = {}
-            contrib_def: dict[int, int] = {}
-            for ci in range(n_comp):
-                if int(comp_axes[ci]) != idx_ax:
-                    continue
-                fpk = float(comp_freqs[ci])
-                apk = float(comp_amps[ci])
-                ppk = float(comp_phases[ci])
-                wpk = float(comp_widths[ci])
-                contrib_id = int(comp_contrib_ids[ci])
-                def_id = int(comp_def_ids[ci])
-                if (
-                    not np.isfinite(fpk)
-                    or not np.isfinite(apk)
-                    or not np.isfinite(ppk)
-                    or not np.isfinite(wpk)
-                ):
-                    continue
-                if wpk <= 0.0:
-                    raise RuntimeError(
-                        'Invalid non-positive component width in analytical export'
-                    )
-                sinc_scale = wpk / (2.0 * x_half)
-                term = apk * np.exp(1j * ppk) * np.sinc((f_dense - fpk) / sinc_scale)
-                if contrib_id in contrib_curves:
-                    contrib_curves[contrib_id] += term
-                else:
-                    contrib_curves[contrib_id] = term
-                    contrib_def[contrib_id] = def_id
-
-            if len(contrib_curves) == 0:
-                rebuilt = np.zeros_like(f_dense)
-                traces_by_axis[ax_name].append((f_dense, rebuilt, alphas[k], label))
-                continue
-
-            # Stage 2: sum contributions by grad def, then across defs.
-            def_curves: dict[int, np.ndarray] = {}
-            for contrib_id, curve in contrib_curves.items():
-                def_id = contrib_def[contrib_id]
-                if def_id in def_curves:
-                    def_curves[def_id] += curve
-                else:
-                    def_curves[def_id] = curve.copy()
-
-            rebuilt_complex = np.zeros_like(f_dense, dtype=np.complex128)
-            for curve in def_curves.values():
-                rebuilt_complex += curve
-
-            # Plot the inner-run spectral envelope (sum of sinc terms per
-            # contribution/def) without applying the outer-TR Dirichlet D_K.
-            # D_K has FWHM = 1.2067 * seq_df / K, which is typically sub-Hz
-            # (e.g. 0.12 Hz for K=200, TR=50ms) — far below the f_dense grid
-            # spacing — so multiplying by D_K produces sub-pixel spikes that
-            # make the traces invisible.  The outer-TR modulation is already
-            # encoded in the candidate positions (found by C at outer harmonics):
-            # the vertical candidate lines show exactly which peaks C selected.
-            rebuilt = np.abs(rebuilt_complex)
-
-            local_max = float(np.max(rebuilt)) if rebuilt.size > 0 else 0.0
-            if np.isfinite(local_max) and local_max > global_ymax:
-                global_ymax = local_max
-            traces_by_axis[ax_name].append((f_dense, rebuilt, alphas[k], label))
-
-    band_colors = [colors[b[3]] for b in plot_bands]
-
-    def _candidate_is_viol(rd: dict, ci: int, cf: float) -> bool:
-        arr = np.asarray(rd.get('candidate_grad_amps', []), dtype=np.float64)
-        if ci >= len(arr):
-            return False
-        amp_hz = float(arr[ci])
-        return any(blo <= cf <= bhi and amp_hz > blim for blo, bhi, blim, _ in plot_bands)
+    # Threshold below which a candidate is not shown in a given panel.
+    rel_axis_thresh = 0.25
 
     for panel_idx, ax_name in enumerate(axis_names):
         ax = axes[panel_idx]
         color = colors[ax_name]
 
-        for f_dense, rebuilt, alpha_k, label in traces_by_axis[ax_name]:
-            y_plot = rebuilt / global_ymax if global_ymax > 0.0 else rebuilt
-            ax.plot(
-                f_dense,
-                y_plot,
-                color=color,
-                lw=0.9,
-                alpha=alpha_k,
-                label=label,
-            )
+        # 1 — TR FFT power spectrum envelope (underlay, continuous line)
+        for k, per_axis in enumerate(comb_data):
+            f, pw = per_axis[ax_name]
+            if len(f) == 0:
+                continue
+            pw_norm = pw / global_peak_power
+            if k == 0:
+                ax.plot(f, pw_norm, color=color, linewidth=1.2, alpha=0.85,
+                        linestyle='solid', zorder=1)
+            else:
+                alpha_k = max(0.20, 0.50 - 0.12 * k)
+                ax.plot(f, pw_norm, color=color, linewidth=0.7, alpha=alpha_k,
+                        linestyle='dashed', zorder=1)
 
-        for bi, band in enumerate(plot_bands):
-            ax.axvspan(
-                band[0],
-                band[1],
-                alpha=0.10,
-                color=band_colors[bi],
-                zorder=0,
-            )
+        # 2 — Forbidden bands shaded across ALL panels
+        for blo, bhi, _blim, b_ax in plot_bands:
+            ax.axvspan(blo, bhi, alpha=0.10, color=colors[b_ax], zorder=0)
 
-        # Draw channel-colored resonance markers using per-channel candidate
-        # amplitudes, then propagate selected channel markers to all subplots.
-        # A channel is shown for candidate i only if its amplitude is at least
-        # rel_axis_thresh of the candidate max across x/y/z.
-        rel_axis_thresh = 0.25
-        drawn_freqs: dict[tuple[float, str], int] = {}
+        # 3 — Structural candidate dotted vertical lines
+        # Each candidate is drawn only in panel(s) where its per-axis analytical
+        # amplitude is at least rel_axis_thresh of the cross-axis maximum.
+        # The effective gradient amplitude (mT/m) is annotated beside the line
+        # only when the candidate falls within a forbidden band.
         for rd in all_rd:
             cf_arr = np.asarray(rd.get('candidate_freqs', []), dtype=np.float64)
-            a_gx = np.asarray(rd.get('candidate_amps_gx', []), dtype=np.float64)
-            a_gy = np.asarray(rd.get('candidate_amps_gy', []), dtype=np.float64)
-            a_gz = np.asarray(rd.get('candidate_amps_gz', []), dtype=np.float64)
-            n_c = len(cf_arr)
-            for ci in range(n_c):
+            ax_amps = {
+                n: np.asarray(rd.get(f'candidate_amps_{n}', []), dtype=np.float64)
+                for n in axis_names
+            }
+            grad_amp_arr = np.asarray(
+                rd.get('candidate_grad_amps', []), dtype=np.float64
+            )
+            for ci in range(len(cf_arr)):
                 cf = float(cf_arr[ci])
                 if cf < freq_min or cf > freq_max:
                     continue
-
-                ax_amp = {
-                    'gx': float(a_gx[ci]) if ci < len(a_gx) else 0.0,
-                    'gy': float(a_gy[ci]) if ci < len(a_gy) else 0.0,
-                    'gz': float(a_gz[ci]) if ci < len(a_gz) else 0.0,
+                amps = {
+                    n: float(ax_amps[n][ci]) if ci < len(ax_amps[n]) else 0.0
+                    for n in axis_names
                 }
-                amax = max(ax_amp.values())
-                if not np.isfinite(amax) or amax <= 0.0:
+                a_max = max(amps.values())
+                if not np.isfinite(a_max) or a_max <= 0.0:
                     continue
-
-                for src_axis in axis_names:
-                    if ax_amp[src_axis] >= rel_axis_thresh * amax:
-                        key = (cf, src_axis)
-                        iv = 1 if _candidate_is_viol(rd, ci, cf) else 0
-                        drawn_freqs[key] = max(drawn_freqs.get(key, 0), iv)
-
-        for (cf, src_axis), is_viol in sorted(
-            drawn_freqs.items(), key=lambda kv: (kv[0][0], kv[0][1])
-        ):
-            ls, lw_base = resonance_styles[src_axis]
-            ax.axvline(
-                cf,
-                color=colors[src_axis],
-                linestyle=ls,
-                linewidth=lw_base + (0.4 if is_viol else 0.0),
-                alpha=0.9,
-                zorder=1,
-            )
+                if amps[ax_name] < rel_axis_thresh * a_max:
+                    continue
+                # Full-height dotted line
+                ax.axvline(
+                    cf,
+                    color=color,
+                    linestyle='dotted',
+                    linewidth=1.0,
+                    alpha=0.85,
+                    zorder=3,
+                )
+                # Annotate effective amplitude only if within a forbidden band
+                if ci < len(grad_amp_arr):
+                    gamp_hz = float(grad_amp_arr[ci])
+                    if any(
+                        blo <= cf <= bhi and gamp_hz > blim
+                        for blo, bhi, blim, _ in plot_bands
+                    ):
+                        gamp_mT = gamp_hz * hz_per_m_to_mT_per_m
+                        ax.annotate(
+                            f'{gamp_mT:.1f}',
+                            xy=(cf, 1.04),
+                            xycoords=('data', 'axes fraction'),
+                            ha='center',
+                            va='bottom',
+                            fontsize=6,
+                            fontweight='bold',
+                            color=color,
+                            alpha=0.9,
+                            clip_on=False,
+                        )
 
         ax.set_xlim(freq_min, freq_max)
-        ax.set_ylabel(f'{axis_labels[ax_name]} (norm.)')
+        ax.set_ylim(0.0, 1.1)
+        ax.set_ylabel(f'{axis_labels[ax_name]} power (norm.)')
         ax.grid(True, alpha=0.3)
-    for ax in axes:
-        ax.set_ylim(0.0, 1.0)
 
-    # --- Annotations on top panel only ---
-    ax_top = axes[0]
-
-    # Per-candidate grad-amp labels (mT/m) — worst case across all CTRs,
-    # only for candidates that violate any forbidden band.
-    viol_amps: dict[float, float] = {}
-    for rd in all_rd:
-        cf_arr = np.asarray(rd.get('candidate_freqs', []), dtype=np.float64)
-        amp_arr = np.asarray(rd.get('candidate_grad_amps', []), dtype=np.float64)
-        for ci in range(len(cf_arr)):
-            cf = float(cf_arr[ci])
-            if cf < freq_min or cf > freq_max:
-                continue
-            if ci >= len(amp_arr):
-                continue
-            gamp_hz = float(amp_arr[ci])
-            if gamp_hz <= 0.0:
-                continue
-            if not any(
-                blo <= cf <= bhi and gamp_hz > blim for blo, bhi, blim, _ in plot_bands
-            ):
-                continue
-            gamp = gamp_hz * hz_per_m_to_mT_per_m
-            viol_amps[cf] = max(viol_amps.get(cf, 0.0), gamp)
-    for cf, gamp_mT in viol_amps.items():
-        ax_top.annotate(
-            f'{gamp_mT:.1f} mT/m',
-            xy=(cf, 1.02),
-            xycoords=('data', 'axes fraction'),
-            ha='center',
-            va='bottom',
-            fontsize=7,
-            fontweight='bold',
-            color='#333333',
-            alpha=0.9,
-            clip_on=False,
-        )
-
-    # Per-forbidden-band: max candidate amplitude within band (mT/m),
-    # worst case across all canonical TRs.
-    band_label_base_y = {'gx': 0.95, 'gy': 0.86, 'gz': 0.77}
-    band_label_step = 0.09
-    band_axis_counts: dict[str, int] = {'gx': 0, 'gy': 0, 'gz': 0}
-    for bi, band in enumerate(plot_bands):
-        band_lo, band_hi, band_limit = band[0], band[1], band[2]
-        band_axis = band[3]
-        band_limit_mT = band_limit * hz_per_m_to_mT_per_m
-        max_cand_mT = 0.0
-        for rd in all_rd:
-            cf_arr = np.asarray(rd.get('candidate_freqs', []), dtype=np.float64)
-            amp_arr = np.asarray(rd.get('candidate_grad_amps', []), dtype=np.float64)
-            for ci in range(len(cf_arr)):
-                cf = float(cf_arr[ci])
-                if band_lo <= cf <= band_hi and ci < len(amp_arr):
-                    amp_hz = float(amp_arr[ci])
-                    if amp_hz > band_limit:
-                        val = amp_hz * hz_per_m_to_mT_per_m
-                        if val > max_cand_mT:
-                            max_cand_mT = val
-        band_center = 0.5 * (band_lo + band_hi)
-        label = f'limit: {band_limit_mT:.1f} mT/m'
-        if max_cand_mT > 0.0:
-            label += f'\nmax: {max_cand_mT:.1f} mT/m'
-
-        y_anchor = (
-            band_label_base_y[band_axis] - band_axis_counts[band_axis] * band_label_step
-        )
-        y_anchor = max(0.20, y_anchor)
-        band_axis_counts[band_axis] += 1
-        ax_top.annotate(
-            label,
-            xy=(band_center, y_anchor),
-            xycoords=('data', 'axes fraction'),
-            ha='center',
-            va='top',
-            fontsize=7,
-            color=band_colors[bi],
-            alpha=0.85,
-            bbox={
-                'boxstyle': 'round,pad=0.2',
-                'fc': 'white',
-                'ec': band_colors[bi],
-                'alpha': 0.6,
-            },
-        )
-
-    # Title and axis labels
     axes[0].set_title(title)
     axes[2].set_xlabel('Frequency (Hz)')
 
-    # Single bottom legend: explicit channel mapping for spectra, resonance,
-    # and forbidden-band shading.
-    from matplotlib.lines import Line2D
-    from matplotlib.patches import Patch
-
-    legend_handles = [
-        Line2D([0], [0], color=colors['gx'], lw=1.6, label='Gx spectrum'),
-        Line2D([0], [0], color=colors['gy'], lw=1.6, label='Gy spectrum'),
-        Line2D([0], [0], color=colors['gz'], lw=1.6, label='Gz spectrum'),
+    # --- Legend ---
+    legend_handles: list = []
+    for ax_name in axis_names:
+        lbl = f'{axis_labels[ax_name]} spectrum'
+        if n_ctrs > 1:
+            lbl += ' (CTR0, solid)'
+        legend_handles.append(
+            Line2D(
+                [0], [0], color=colors[ax_name], lw=1.4, linestyle='solid', label=lbl
+            )
+        )
+    if n_ctrs > 1:
+        legend_handles.append(
+            Line2D(
+                [0],
+                [0],
+                color='gray',
+                lw=0.9,
+                linestyle='dashed',
+                alpha=0.5,
+                label='Other CTRs (dashed)',
+            )
+        )
+    legend_handles.append(
         Line2D(
             [0],
             [0],
-            color=colors['gx'],
-            lw=resonance_styles['gx'][1],
-            linestyle=resonance_styles['gx'][0],
-            label='Gx resonance',
-        ),
-        Line2D(
-            [0],
-            [0],
-            color=colors['gy'],
-            lw=resonance_styles['gy'][1],
-            linestyle=resonance_styles['gy'][0],
-            label='Gy resonance',
-        ),
-        Line2D(
-            [0],
-            [0],
-            color=colors['gz'],
-            lw=resonance_styles['gz'][1],
-            linestyle=resonance_styles['gz'][0],
-            label='Gz resonance',
-        ),
-        Patch(facecolor=colors['gx'], alpha=0.10, edgecolor='none', label='Gx bands'),
-        Patch(facecolor=colors['gy'], alpha=0.10, edgecolor='none', label='Gy bands'),
-        Patch(facecolor=colors['gz'], alpha=0.10, edgecolor='none', label='Gz bands'),
-    ]
+            color='gray',
+            lw=1.0,
+            linestyle='dotted',
+            label='Structural candidates',
+        )
+    )
+    for _bi, (blo, bhi, blim, b_ax) in enumerate(plot_bands):
+        blim_mT = blim * hz_per_m_to_mT_per_m
+        legend_handles.append(
+            Patch(
+                facecolor=colors[b_ax],
+                alpha=0.25,
+                edgecolor=colors[b_ax],
+                label=f'{axis_labels[b_ax]} band [{blo:.0f} - {bhi:.0f} Hz, ≤{blim_mT:.1f} mT/m]',
+            )
+        )
+    n_cols = min(4, max(1, len(legend_handles)))
     fig.legend(
         handles=legend_handles,
         loc='lower center',
-        ncol=3,
+        ncol=n_cols,
         frameon=True,
         fontsize=8,
-        bbox_to_anchor=(0.5, 0.01),
+        bbox_to_anchor=(0.5, 0.00),
     )
 
-    # Echo spacing secondary axis on top panel only
     _add_echo_spacing_axis(axes[0], freq_min, freq_max)
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        fig.tight_layout(rect=(0.0, 0.07, 1.0, 1.0))
+        fig.tight_layout(rect=(0.0, 0.10, 1.0, 1.0))
 
 
 def grad_spectrum(
