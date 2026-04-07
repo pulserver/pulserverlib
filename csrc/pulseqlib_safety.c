@@ -1133,6 +1133,17 @@ static void detect_resonances(
 /** Absolute amplitude floor for Tier 1 (Hz/m). */
 #define SA_AMPLITUDE_FLOOR 1.0f
 
+/** FFT power gate: candidate requires FFT RSS magnitude above this fraction
+ *  of the peak RSS magnitude.  Prevents flagging TR harmonics where the
+ *  actual gradient waveform has negligible spectral energy. */
+#define SA_FFT_GATE_FRACTION 0.10f
+
+/** FFT peak promotion: a dense-FFT local maximum must exceed this fraction
+ *  of the peak RSS magnitude to be promoted into the evaluation set when
+ *  it falls between TR harmonics.  Higher than the gate to avoid adding
+ *  many minor spectral features as candidates. */
+#define SA_FFT_PROMOTION_FRACTION 0.25f
+
 /** Absolute amplitude safety threshold for single-event Tier 2 (Hz/m).
  * Only applies when an axis has exactly one event (coherence ratio is
  * undefined for N=1).  Value is in the same units as the coherent
@@ -1858,9 +1869,9 @@ static float sa_eval_geff(
  *      min 2 so the Fourier comb works even for single-TR sequences).
  *   3. Evaluate inner TR spectrum H(f) at each candidate via coherent sum
  *      of per-event contributions.
- *   4. Two-tier candidate selection:
- *      - Tier 1: coherence ratio > threshold AND |H| > floor
- *      - Tier 2: |H| > safety threshold
+ *   4. Two-tier candidate selection with FFT power gate:
+ *      - Tier 1: coherence ratio > threshold AND |H| > floor AND FFT gate
+ *      - Tier 2: |H| > safety threshold AND FFT gate
  *   5. For each candidate: compute G_eff(f) and check forbidden bands.
  */
 static int sa_check_structural_violations(
@@ -1881,6 +1892,9 @@ static int sa_check_structural_violations(
     float* coherent_mag[3];
     float* incoherent_mag[3];
     int*   is_candidate;
+    float max_fft_rss_sq, fft_gate_sq, fft_promo_sq;
+    int has_fft_data;
+    int n_tr_harmonics;
     float* cand_freqs;
     float* cand_amps[3];
     float* cand_grad_amps;
@@ -1913,6 +1927,7 @@ static int sa_check_structural_violations(
     eval_freqs = NULL;
     is_candidate = NULL;
     cand_freqs = NULL;
+    n_tr_harmonics = 0;
     cand_grad_amps = NULL;
     cand_violations = NULL;
     ana_peak_freqs = NULL;
@@ -1948,24 +1963,103 @@ static int sa_check_structural_violations(
     freq_max = spectra->freq_min_hz +
                (float)(spectra->num_freq_bins - 1) * spectra->freq_spacing_hz;
 
-    /* --- Build sparse evaluation frequency list (TR harmonics) ---
-     * For K=1, pretend K=2 so the Fourier comb naturally produces the
-     * correct spectrum — each event's phasor contribution already encodes
-     * its timing, and the harmonic grid lets sidelobe interactions emerge
-     * without needing to guess characteristic periods. */
+    /* --- Compute FFT power gate threshold ---
+     * Find peak RSS magnitude of the dense FFT and set the gate at
+     * SA_FFT_GATE_FRACTION of the peak.  Work in squared magnitudes to
+     * avoid sqrt in the inner loops. */
+    max_fft_rss_sq = 0.0f;
+    has_fft_data = (spectra->spectrum_full_gx && spectra->spectrum_full_gy &&
+                    spectra->spectrum_full_gz && spectra->num_freq_bins > 0 &&
+                    spectra->freq_spacing_hz > 0.0f);
+    if (has_fft_data) {
+        for (i = 0; i < spectra->num_freq_bins; ++i) {
+            float sx = spectra->spectrum_full_gx[i];
+            float sy = spectra->spectrum_full_gy[i];
+            float sz = spectra->spectrum_full_gz[i];
+            float rss_sq = sx * sx + sy * sy + sz * sz;
+            if (rss_sq > max_fft_rss_sq) max_fft_rss_sq = rss_sq;
+        }
+    }
+    fft_gate_sq = SA_FFT_GATE_FRACTION * SA_FFT_GATE_FRACTION * max_fft_rss_sq;
+    {   /* Promotion threshold (higher than gate) */
+        float promo_frac = SA_FFT_PROMOTION_FRACTION;
+        fft_promo_sq = promo_frac * promo_frac * max_fft_rss_sq;
+    }
+
+    /* --- Build evaluation frequency list ---
+     * TR harmonics form the primary grid.  Additionally, any local maximum
+     * of the dense FFT RSS spectrum that exceeds the gate threshold and
+     * falls between TR harmonics is promoted into the evaluation set.
+     * This catches spectral features (e.g. the bipolar-readout fundamental
+     * in bSSFP) that land between adjacent TR harmonics.
+     *
+     * For K=1 we pretend K=2 so the TR-harmonic comb naturally produces
+     * the correct spectrum via destructive/constructive interference. */
     if (num_instances < 2) num_instances = 2;
     {
-        int m_max = (int)(freq_max * tr_duration_us * 1.0e-6f);
-        int m;
-        if (m_max < 1) {
+        float tr_f1 = 1.0e6f / tr_duration_us;
+        int m_max = (int)(freq_max / tr_f1);
+        int max_eval, m, fi;
+        if (m_max < 1) m_max = 0;
+
+        /* Upper bound on eval_freqs size */
+        max_eval = m_max + (has_fft_data ? spectra->num_freq_bins : 0);
+        if (max_eval < 1) {
             sa_free_structural_events(&se);
             return PULSEQLIB_SUCCESS;
         }
-        num_freqs = m_max;
-        eval_freqs = (float*)PULSEQLIB_ALLOC((size_t)num_freqs * sizeof(float));
+        eval_freqs = (float*)PULSEQLIB_ALLOC((size_t)max_eval * sizeof(float));
         if (!eval_freqs) goto alloc_fail;
+
+        /* 1) TR harmonics */
+        num_freqs = 0;
         for (m = 0; m < m_max; ++m)
-            eval_freqs[m] = (float)(m + 1) * (1.0e6f / tr_duration_us);
+            eval_freqs[num_freqs++] = (float)(m + 1) * tr_f1;
+        n_tr_harmonics = num_freqs;
+
+        /* 2) FFT local maxima between TR harmonics (peak promotion) */
+        if (has_fft_data && m_max > 0) {
+            for (fi = 1; fi < spectra->num_freq_bins - 1; ++fi) {
+                float sx = spectra->spectrum_full_gx[fi];
+                float sy = spectra->spectrum_full_gy[fi];
+                float sz = spectra->spectrum_full_gz[fi];
+                float rss_sq = sx * sx + sy * sy + sz * sz;
+                float f_peak, nearest, dist;
+                float spx, spy, spz, snx, sny, snz;
+                float rss_prev, rss_next;
+
+                if (rss_sq < fft_promo_sq) continue;
+
+                /* Local max check on RSS² */
+                spx = spectra->spectrum_full_gx[fi - 1];
+                spy = spectra->spectrum_full_gy[fi - 1];
+                spz = spectra->spectrum_full_gz[fi - 1];
+                snx = spectra->spectrum_full_gx[fi + 1];
+                sny = spectra->spectrum_full_gy[fi + 1];
+                snz = spectra->spectrum_full_gz[fi + 1];
+                rss_prev = spx * spx + spy * spy + spz * spz;
+                rss_next = snx * snx + sny * sny + snz * snz;
+                if (rss_sq <= rss_prev || rss_sq <= rss_next) continue;
+
+                /* Not near a TR harmonic? (> 25% of harmonic spacing) */
+                f_peak = spectra->freq_min_hz
+                       + (float)fi * spectra->freq_spacing_hz;
+                if (f_peak <= 0.0f || f_peak > freq_max) continue;
+                nearest = (float)floor((double)(f_peak / tr_f1) + 0.5) * tr_f1;
+                dist = f_peak - nearest;
+                if (dist < 0.0f) dist = -dist;
+                if (dist <= tr_f1 * 0.25f) continue;
+
+                eval_freqs[num_freqs++] = f_peak;
+            }
+        }
+
+        if (num_freqs == 0) {
+            PULSEQLIB_FREE(eval_freqs);
+            eval_freqs = NULL;
+            sa_free_structural_events(&se);
+            return PULSEQLIB_SUCCESS;
+        }
     }
 
     /* --- Evaluate inner spectrum at each frequency for each axis --- */
@@ -1994,6 +2088,29 @@ static int sa_check_structural_violations(
 
     for (i = 0; i < num_freqs; ++i) {
         is_candidate[i] = 0;
+
+        /* FFT power gate: reject frequencies where the actual waveform FFT
+         * shows negligible energy, regardless of analytical coherence. */
+        if (has_fft_data) {
+            int fft_bin = (int)((eval_freqs[i] - spectra->freq_min_hz)
+                                / spectra->freq_spacing_hz + 0.5f);
+            if (fft_bin >= 0 && fft_bin < spectra->num_freq_bins) {
+                float sx = spectra->spectrum_full_gx[fft_bin];
+                float sy = spectra->spectrum_full_gy[fft_bin];
+                float sz = spectra->spectrum_full_gz[fft_bin];
+                float rss_sq = sx * sx + sy * sy + sz * sz;
+                if (rss_sq < fft_gate_sq) continue;
+            }
+        }
+
+        /* Tier 3: FFT-promoted peaks (indices >= n_tr_harmonics) are
+         * automatically candidates — the dense FFT already confirmed
+         * they are significant spectral features. */
+        if (i >= n_tr_harmonics) {
+            is_candidate[i] = 1;
+            continue;
+        }
+
         for (ax = 0; ax < 3; ++ax) {
             float coh = coherent_mag[ax][i];
             float inc = incoherent_mag[ax][i];
