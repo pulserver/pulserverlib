@@ -1133,16 +1133,18 @@ static void detect_resonances(
 /** Absolute amplitude floor for Tier 1 (Hz/m). */
 #define SA_AMPLITUDE_FLOOR 1.0f
 
-/** FFT power gate: candidate requires FFT RSS magnitude above this fraction
- *  of the peak RSS magnitude.  Prevents flagging TR harmonics where the
- *  actual gradient waveform has negligible spectral energy. */
-#define SA_FFT_GATE_FRACTION 0.10f
+/** FFT power gate: candidate requires RSS power (sum of squared magnitudes)
+ *  above this fraction of the peak RSS power.  Prevents flagging TR
+ *  harmonics where the actual gradient waveform has negligible spectral
+ *  energy.  Power-proportional gating gives sharper discrimination than
+ *  amplitude-proportional because it tracks energy content directly. */
+#define SA_FFT_GATE_POWER_FRAC 0.05f
 
 /** FFT peak promotion: a dense-FFT local maximum must exceed this fraction
- *  of the peak RSS magnitude to be promoted into the evaluation set when
- *  it falls between TR harmonics.  Higher than the gate to avoid adding
- *  many minor spectral features as candidates. */
-#define SA_FFT_PROMOTION_FRACTION 0.25f
+ *  of the peak RSS power to be promoted into the evaluation set when it
+ *  falls between TR harmonics.  Higher than the gate to avoid adding many
+ *  minor spectral features as candidates. */
+#define SA_FFT_PROMOTION_POWER_FRAC 0.15f
 
 /** Absolute amplitude safety threshold for single-event Tier 2 (Hz/m).
  * Only applies when an axis has exactly one event (coherence ratio is
@@ -1980,11 +1982,8 @@ static int sa_check_structural_violations(
             if (rss_sq > max_fft_rss_sq) max_fft_rss_sq = rss_sq;
         }
     }
-    fft_gate_sq = SA_FFT_GATE_FRACTION * SA_FFT_GATE_FRACTION * max_fft_rss_sq;
-    {   /* Promotion threshold (higher than gate) */
-        float promo_frac = SA_FFT_PROMOTION_FRACTION;
-        fft_promo_sq = promo_frac * promo_frac * max_fft_rss_sq;
-    }
+    fft_gate_sq = SA_FFT_GATE_POWER_FRAC * max_fft_rss_sq;
+    fft_promo_sq = SA_FFT_PROMOTION_POWER_FRAC * max_fft_rss_sq;
 
     /* --- Build evaluation frequency list ---
      * TR harmonics form the primary grid.  Additionally, any local maximum
