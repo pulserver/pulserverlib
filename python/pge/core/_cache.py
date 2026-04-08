@@ -101,7 +101,7 @@ def deserialize(path: str | Path) -> list[pp.Sequence]:
             seq.read(str(current))
         seqs.append(seq)
 
-        next_name = seq.definitions.get('next')
+        next_name = seq.definitions.get('NextSequence') or seq.definitions.get('next')
         if next_name:
             current = current.parent / str(next_name)
         else:

@@ -25,6 +25,15 @@
 #define SEGSTATE_SEEKING_BOUNDARY  1
 #define SEGSTATE_OPTIMIZED_MODE    2
 
+/* Fixed threshold (Hz/m) for treating a gradient boundary value as zero.
+ * Segment boundaries are structural: they require gradients to be zero at
+ * the split point.  This must NOT depend on runtime system parameters
+ * (max_slew) so that segment detection is hardware-independent.  The value
+ * is generous enough to absorb floating-point noise from shape
+ * decompression while remaining far below the smallest real non-zero
+ * gradient boundary in practice (~4 600 Hz/m).                          */
+#define SEG_ZERO_GRAD_THRESHOLD_HZ_PER_M  100.0f
+
 /* ================================================================== */
 /*  Tiny helpers                                                      */
 /* ================================================================== */
@@ -1072,7 +1081,7 @@ static int find_segments_on_scan_table(
     const int* scan_block_idx,
     int pat_start, int pat_size)
 {
-    float max_slew, grad_raster_s, max_allowed;
+    float max_allowed;
     int grad_ids[3];
     float phys_first, phys_last;
     float grad_last_cur[3], grad_first_next[3];
@@ -1085,9 +1094,8 @@ static int find_segments_on_scan_table(
     int has_rf, has_adc, is_cand;
     int nb, n, i;
 
-    max_slew = opts->max_slew_hz_per_m_per_s;
-    grad_raster_s = desc->grad_raster_us * 1e-6f;
-    max_allowed = max_slew * grad_raster_s;
+    (void)opts;
+    max_allowed = SEG_ZERO_GRAD_THRESHOLD_HZ_PER_M;
     nb = pat_size;
 
     seg_starts = (int*)PULSEQLIB_ALLOC(nb * sizeof(int));
@@ -1407,8 +1415,7 @@ int pulseqlib__get_scan_table_segments(
     num_prep_blk = desc->tr_descriptor.num_prep_blocks;
     num_cool_blk = desc->tr_descriptor.num_cooldown_blocks;
     tr_size      = desc->tr_descriptor.tr_size;
-    max_allowed  = opts->max_slew_hz_per_m_per_s
-                 * desc->grad_raster_us * 1e-6f;
+    max_allowed  = SEG_ZERO_GRAD_THRESHOLD_HZ_PER_M;
 
     /* max_mult: maximum number of TRs we can absorb into a section retry.
      * The entire first pass is the upper bound. */

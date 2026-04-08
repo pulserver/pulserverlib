@@ -1893,7 +1893,7 @@ static int sa_check_structural_violations(
     float* eval_freqs;
     float* coherent_mag[3];
     float* incoherent_mag[3];
-    int*   is_candidate;
+    int*   is_candidate_ax[3];
     float max_fft_rss_sq, fft_gate_sq, fft_promo_sq;
     int has_fft_data;
     int n_tr_harmonics;
@@ -1927,7 +1927,6 @@ static int sa_check_structural_violations(
 
     memset(&se, 0, sizeof(se));
     eval_freqs = NULL;
-    is_candidate = NULL;
     cand_freqs = NULL;
     n_tr_harmonics = 0;
     cand_grad_amps = NULL;
@@ -1948,6 +1947,7 @@ static int sa_check_structural_violations(
     for (ax = 0; ax < 3; ++ax) {
         coherent_mag[ax] = NULL;
         incoherent_mag[ax] = NULL;
+        is_candidate_ax[ax] = NULL;
         cand_amps[ax] = NULL;
         cand_grad_amps_ax[ax] = NULL;
         ana_peak_amps[ax] = NULL;
@@ -2081,13 +2081,15 @@ static int sa_check_structural_violations(
         }
     }
 
-    /* --- Two-tier candidate selection --- */
-    is_candidate = (int*)PULSEQLIB_ALLOC((size_t)num_freqs * sizeof(int));
-    if (!is_candidate) goto alloc_fail;
+    /* --- Per-axis candidate selection --- */
+    for (ax = 0; ax < 3; ++ax) {
+        is_candidate_ax[ax] = (int*)PULSEQLIB_ALLOC((size_t)num_freqs * sizeof(int));
+        if (!is_candidate_ax[ax]) goto alloc_fail;
+        for (i = 0; i < num_freqs; ++i)
+            is_candidate_ax[ax][i] = 0;
+    }
 
     for (i = 0; i < num_freqs; ++i) {
-        is_candidate[i] = 0;
-
         /* FFT power gate: reject frequencies where the actual waveform FFT
          * shows negligible energy, regardless of analytical coherence. */
         if (has_fft_data) {
@@ -2102,14 +2104,6 @@ static int sa_check_structural_violations(
             }
         }
 
-        /* Tier 3: FFT-promoted peaks (indices >= n_tr_harmonics) are
-         * automatically candidates — the dense FFT already confirmed
-         * they are significant spectral features. */
-        if (i >= n_tr_harmonics) {
-            is_candidate[i] = 1;
-            continue;
-        }
-
         for (ax = 0; ax < 3; ++ax) {
             float coh = coherent_mag[ax][i];
             float inc = incoherent_mag[ax][i];
@@ -2117,27 +2111,38 @@ static int sa_check_structural_violations(
             if (se.axes[ax].num_events == 0)
                 continue;
 
+            /* Tier 3: FFT-promoted peaks — per-axis if analytical signal
+             * is above the amplitude floor. */
+            if (i >= n_tr_harmonics) {
+                if (coh > SA_AMPLITUDE_FLOOR)
+                    is_candidate_ax[ax][i] = 1;
+                continue;
+            }
+
             /* Tier 1: coherence-detected (N_events >= 2) */
             if (se.axes[ax].num_events >= 2 && inc > 1.0e-20f) {
                 float rho = coh / inc;
                 if (rho > SA_COHERENCE_RATIO_THRESHOLD && coh > SA_AMPLITUDE_FLOOR) {
-                    is_candidate[i] = 1;
-                    break;
+                    is_candidate_ax[ax][i] = 1;
+                    continue;
                 }
             }
 
             /* Tier 2: absolute amplitude threshold (single-event axes) */
             if (se.axes[ax].num_events == 1 && coh > SA_AMPLITUDE_SAFETY) {
-                is_candidate[i] = 1;
-                break;
+                is_candidate_ax[ax][i] = 1;
             }
         }
     }
 
-    /* Count candidates */
+    /* Count candidates: a frequency is a candidate if any axis qualifies */
     num_candidates = 0;
-    for (i = 0; i < num_freqs; ++i)
-        if (is_candidate[i]) num_candidates++;
+    for (i = 0; i < num_freqs; ++i) {
+        int any = 0;
+        for (ax = 0; ax < 3; ++ax)
+            if (is_candidate_ax[ax][i]) any = 1;
+        if (any) num_candidates++;
+    }
 
     /* --- Estimate max component terms for export --- */
     max_component_terms = 0;
@@ -2189,7 +2194,10 @@ static int sa_check_structural_violations(
         ci = 0;
         for (i = 0; i < num_freqs; ++i) {
             float max_ga;
-            if (!is_candidate[i]) continue;
+            int any_ax = 0;
+            for (ax = 0; ax < 3; ++ax)
+                if (is_candidate_ax[ax][i]) any_ax = 1;
+            if (!any_ax) continue;
             f_hz = eval_freqs[i];
             cand_freqs[ci] = f_hz;
             surviving_freqs_hz[ci] = f_hz;
@@ -2223,8 +2231,8 @@ static int sa_check_structural_violations(
                     ana_peak_phases[ax][ci] = (float)atan2((double)sum_im, (double)sum_re);
                 }
 
-                /* G_eff per axis */
-                if (se.axes[ax].num_events > 0) {
+                /* G_eff per axis — only for qualifying axes */
+                if (se.axes[ax].num_events > 0 && is_candidate_ax[ax][i]) {
                     float ga = sa_eval_geff(f_hz, &se.axes[ax]);
                     cand_grad_amps_ax[ax][ci] = ga;
                     if (ga > max_ga) max_ga = ga;
@@ -2233,28 +2241,21 @@ static int sa_check_structural_violations(
                 }
             }
 
-            /* Cross-axis G_eff: spectral-weighted blend across axes */
-            {
-                float aw_sum = 0.0f, aw_amp_sum = 0.0f;
-                for (ax = 0; ax < 3; ++ax) {
-                    float s_ax = cand_amps[ax][ci];
-                    float a_ax = cand_grad_amps_ax[ax][ci];
-                    if (s_ax > 0.0f && a_ax > 0.0f) {
-                        aw_sum += s_ax;
-                        aw_amp_sum += s_ax * a_ax;
-                    }
-                }
-                if (aw_sum > 0.0f) max_ga = aw_amp_sum / aw_sum;
-            }
+            /* Per-axis max G_eff for the combined output field */
             cand_grad_amps[ci] = max_ga;
 
-            /* Check against forbidden bands */
+            /* Check against forbidden bands — per-axis independently.
+             * A violation occurs if ANY single axis exceeds the band limit. */
             cand_violations[ci] = 0;
             for (b = 0; b < num_forbidden_bands; ++b) {
                 if (f_hz >= forbidden_bands[b].freq_min_hz &&
                     f_hz <= forbidden_bands[b].freq_max_hz) {
-                    if (max_ga > forbidden_bands[b].max_amplitude_hz_per_m)
-                        cand_violations[ci] = 1;
+                    for (ax = 0; ax < 3; ++ax) {
+                        if (cand_grad_amps_ax[ax][ci] > forbidden_bands[b].max_amplitude_hz_per_m) {
+                            cand_violations[ci] = 1;
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -2317,8 +2318,8 @@ static int sa_check_structural_violations(
 
     /* Cleanup */
     if (eval_freqs)    PULSEQLIB_FREE(eval_freqs);
-    if (is_candidate)  PULSEQLIB_FREE(is_candidate);
     for (ax = 0; ax < 3; ++ax) {
+        if (is_candidate_ax[ax]) PULSEQLIB_FREE(is_candidate_ax[ax]);
         if (coherent_mag[ax])    PULSEQLIB_FREE(coherent_mag[ax]);
         if (incoherent_mag[ax])  PULSEQLIB_FREE(incoherent_mag[ax]);
     }
@@ -2327,6 +2328,7 @@ static int sa_check_structural_violations(
 
 alloc_fail:
     for (ax = 0; ax < 3; ++ax) {
+        if (is_candidate_ax[ax])  PULSEQLIB_FREE(is_candidate_ax[ax]);
         if (coherent_mag[ax])     PULSEQLIB_FREE(coherent_mag[ax]);
         if (incoherent_mag[ax])   PULSEQLIB_FREE(incoherent_mag[ax]);
         if (cand_amps[ax])        PULSEQLIB_FREE(cand_amps[ax]);
@@ -2337,7 +2339,6 @@ alloc_fail:
     if (ana_peak_freqs)       PULSEQLIB_FREE(ana_peak_freqs);
     if (ana_peak_widths)      PULSEQLIB_FREE(ana_peak_widths);
     if (eval_freqs)           PULSEQLIB_FREE(eval_freqs);
-    if (is_candidate)         PULSEQLIB_FREE(is_candidate);
     if (cand_freqs)           PULSEQLIB_FREE(cand_freqs);
     if (cand_grad_amps)       PULSEQLIB_FREE(cand_grad_amps);
     if (cand_violations)      PULSEQLIB_FREE(cand_violations);
@@ -4012,30 +4013,40 @@ int pulseqlib_check_safety(
                  * Pattern: for each candidate, scan union of all bands. */
                 if (!PULSEQLIB_FAILED(rc) && spectra.num_candidates > 0 &&
                     spectra.candidate_freqs &&
-                    spectra.candidate_grad_amps) {
+                    spectra.candidate_grad_amps_gx &&
+                    spectra.candidate_grad_amps_gy &&
+                    spectra.candidate_grad_amps_gz) {
+                    float* cga[3];
+                    int axi;
+                    cga[0] = spectra.candidate_grad_amps_gx;
+                    cga[1] = spectra.candidate_grad_amps_gy;
+                    cga[2] = spectra.candidate_grad_amps_gz;
                     for (ci = 0; ci < spectra.num_candidates; ++ci) {
                         cf_hz = spectra.candidate_freqs[ci];
-                        ca_hz_per_m = spectra.candidate_grad_amps[ci];
 
                         for (b = 0; b < num_forbidden_bands; ++b) {
                             if (cf_hz < forbidden_bands[b].freq_min_hz ||
                                 cf_hz > forbidden_bands[b].freq_max_hz)
                                 continue;
-                            if (ca_hz_per_m > forbidden_bands[b].max_amplitude_hz_per_m) {
-                                rc = PULSEQLIB_ERR_MECH_RESONANCES_VIOLATION;
-                                if (diag) {
-                                    diag->code = rc;
-                                    pulseqlib__diag_printf(
-                                        diag,
-                                        "mechanical resonance violation: ss=%d ctr=%d f=%.3fHz amp=%.3fHz/m band=[%.3f,%.3f]Hz limit=%.3fHz/m",
-                                        s, u,
-                                        (double)cf_hz, (double)ca_hz_per_m,
-                                        (double)forbidden_bands[b].freq_min_hz,
-                                        (double)forbidden_bands[b].freq_max_hz,
-                                        (double)forbidden_bands[b].max_amplitude_hz_per_m);
+                            for (axi = 0; axi < 3; ++axi) {
+                                ca_hz_per_m = cga[axi][ci];
+                                if (ca_hz_per_m > forbidden_bands[b].max_amplitude_hz_per_m) {
+                                    rc = PULSEQLIB_ERR_MECH_RESONANCES_VIOLATION;
+                                    if (diag) {
+                                        diag->code = rc;
+                                        pulseqlib__diag_printf(
+                                            diag,
+                                            "mechanical resonance violation: ss=%d ctr=%d ax=%d f=%.3fHz amp=%.3fHz/m band=[%.3f,%.3f]Hz limit=%.3fHz/m",
+                                            s, u, axi,
+                                            (double)cf_hz, (double)ca_hz_per_m,
+                                            (double)forbidden_bands[b].freq_min_hz,
+                                            (double)forbidden_bands[b].freq_max_hz,
+                                            (double)forbidden_bands[b].max_amplitude_hz_per_m);
+                                    }
+                                    break;
                                 }
-                                break;
                             }
+                            if (PULSEQLIB_FAILED(rc)) break;
                         }
                         if (PULSEQLIB_FAILED(rc)) break;
                     }

@@ -143,8 +143,10 @@ def _fix_block_segment_indices(wf, source, subsequence_idx):
             if i < len(prep_map):
                 blk.segment_idx = prep_map[i]
             else:
-                # Fallback: check segment definitions by range
-                blk.segment_idx = _find_seg_by_def(segs, i)
+                # Fallback: cycle through main segment map (covers non-degenerate
+                # sequences like bSSFP where the whole pass is a single segment
+                # and prep/cooldown segment tables are empty)
+                blk.segment_idx = tr_map[i % tr_len] if tr_len > 0 else _find_seg_by_def(segs, i)
         elif i < num_prep + main_blocks:
             # Main imaging region — cycle through tr_map
             pos = (i - num_prep) % tr_len if tr_len > 0 else -1
@@ -155,7 +157,7 @@ def _fix_block_segment_indices(wf, source, subsequence_idx):
             if cool_pos < len(cool_map):
                 blk.segment_idx = cool_map[cool_pos]
             else:
-                blk.segment_idx = _find_seg_by_def(segs, i)
+                blk.segment_idx = tr_map[cool_pos % tr_len] if tr_len > 0 else _find_seg_by_def(segs, i)
 
 
 def _find_seg_by_def(segs, block_pos):

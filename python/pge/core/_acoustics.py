@@ -123,7 +123,9 @@ def _plot_grad_spectrum_for_subsequence(
         per_axis: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         for ax_name in axis_names:
             if n_bins > 0:
-                amps = np.asarray(rd.get(f'spectrum_full_{ax_name}', []), dtype=np.float64)
+                amps = np.asarray(
+                    rd.get(f'spectrum_full_{ax_name}', []), dtype=np.float64
+                )
                 n = min(n_bins, len(amps))
                 f = f_min + np.arange(n, dtype=np.float64) * f_spacing
                 pw = amps[:n] ** 2
@@ -162,12 +164,26 @@ def _plot_grad_spectrum_for_subsequence(
                 continue
             pw_norm = pw / global_peak_power
             if k == 0:
-                ax.plot(f, pw_norm, color=color, linewidth=1.2, alpha=0.85,
-                        linestyle='solid', zorder=1)
+                ax.plot(
+                    f,
+                    pw_norm,
+                    color=color,
+                    linewidth=1.2,
+                    alpha=0.85,
+                    linestyle='solid',
+                    zorder=1,
+                )
             else:
                 alpha_k = max(0.20, 0.50 - 0.12 * k)
-                ax.plot(f, pw_norm, color=color, linewidth=0.7, alpha=alpha_k,
-                        linestyle='dashed', zorder=1)
+                ax.plot(
+                    f,
+                    pw_norm,
+                    color=color,
+                    linewidth=0.7,
+                    alpha=alpha_k,
+                    linestyle='dashed',
+                    zorder=1,
+                )
 
         # 2 — Forbidden bands shaded across ALL panels
         for blo, bhi, _blim, b_ax in plot_bands:
@@ -184,9 +200,10 @@ def _plot_grad_spectrum_for_subsequence(
                 n: np.asarray(rd.get(f'candidate_amps_{n}', []), dtype=np.float64)
                 for n in axis_names
             }
-            grad_amp_arr = np.asarray(
-                rd.get('candidate_grad_amps', []), dtype=np.float64
-            )
+            grad_amp_per_ax = {
+                n: np.asarray(rd.get(f'candidate_grad_amps_{n}', []), dtype=np.float64)
+                for n in axis_names
+            }
             for ci in range(len(cf_arr)):
                 cf = float(cf_arr[ci])
                 if cf < freq_min or cf > freq_max:
@@ -209,26 +226,29 @@ def _plot_grad_spectrum_for_subsequence(
                     alpha=0.85,
                     zorder=3,
                 )
-                # Annotate effective amplitude only if within a forbidden band
-                if ci < len(grad_amp_arr):
-                    gamp_hz = float(grad_amp_arr[ci])
-                    if any(
-                        blo <= cf <= bhi and gamp_hz > blim
-                        for blo, bhi, blim, _ in plot_bands
-                    ):
-                        gamp_mT = gamp_hz * hz_per_m_to_mT_per_m
-                        ax.annotate(
-                            f'{gamp_mT:.1f}',
-                            xy=(cf, 1.04),
-                            xycoords=('data', 'axes fraction'),
-                            ha='center',
-                            va='bottom',
-                            fontsize=6,
-                            fontweight='bold',
-                            color=color,
-                            alpha=0.9,
-                            clip_on=False,
-                        )
+                # Annotate effective amplitude only if this axis violates a band
+                gamp_hz = (
+                    float(grad_amp_per_ax[ax_name][ci])
+                    if ci < len(grad_amp_per_ax[ax_name])
+                    else 0.0
+                )
+                if any(
+                    blo <= cf <= bhi and gamp_hz > blim
+                    for blo, bhi, blim, _ in plot_bands
+                ):
+                    gamp_mT = gamp_hz * hz_per_m_to_mT_per_m
+                    ax.annotate(
+                        f'{gamp_mT:.1f}',
+                        xy=(cf, 1.04),
+                        xycoords=('data', 'axes fraction'),
+                        ha='center',
+                        va='bottom',
+                        fontsize=6,
+                        fontweight='bold',
+                        color=color,
+                        alpha=0.9,
+                        clip_on=False,
+                    )
 
         ax.set_xlim(freq_min, freq_max)
         ax.set_ylim(0.0, 1.1)
