@@ -486,9 +486,9 @@ def test_grad_spectrum_uses_opts_forbidden_bands_default(simple_gre_seq, monkeyp
             "surviving_freqs_hz": [],
         }
 
-    import pge.core._acoustics as _ac_mod
+    import pge.core._mechresonance as _mr_mod
 
-    monkeypatch.setattr(_ac_mod, "_calc_mech_resonances", _fake_calc_acoustic)
+    monkeypatch.setattr(_mr_mod, "_calc_mech_resonances", _fake_calc_acoustic)
 
     sc.grad_spectrum(sequence_idx=0)
 
@@ -570,9 +570,9 @@ def test_grad_spectrum_explicit_bands_override_opts(simple_gre_seq, monkeypatch)
             "surviving_freqs_hz": [],
         }
 
-    import pge.core._acoustics as _ac_mod
+    import pge.core._mechresonance as _mr_mod
 
-    monkeypatch.setattr(_ac_mod, "_calc_mech_resonances", _fake_calc_acoustic)
+    monkeypatch.setattr(_mr_mod, "_calc_mech_resonances", _fake_calc_acoustic)
 
     explicit = [(250.0, 300.0, 1234.0)]
     sc.grad_spectrum(sequence_idx=0, forbidden_bands=explicit)
@@ -679,10 +679,10 @@ def test_grad_spectrum_iterates_all_subsequences_and_canonical_trs(
             "surviving_freqs_hz": [],
         }
 
-    import pge.core._acoustics as _ac_mod
+    import pge.core._mechresonance as _mr_mod
 
-    monkeypatch.setattr(_ac_mod, "_find_tr", _fake_find_tr)
-    monkeypatch.setattr(_ac_mod, "_calc_mech_resonances", _fake_calc_acoustic)
+    monkeypatch.setattr(_mr_mod, "_find_tr", _fake_find_tr)
+    monkeypatch.setattr(_mr_mod, "_calc_mech_resonances", _fake_calc_acoustic)
 
     sc.grad_spectrum(forbidden_bands=[(250.0, 300.0, 1234.0)])
 

@@ -892,7 +892,7 @@ class SequenceCollection(pp.Sequence):
         check : Run mechanical-resonance safety checks.
         pns : Plot peripheral nerve stimulation waveforms.
         """
-        from ._acoustics import grad_spectrum as _gs_impl
+        from ._mechresonance import grad_spectrum as _gs_impl
 
         if forbidden_bands is None:
             forbidden_bands = self._default_forbidden_bands_hz_per_m(
