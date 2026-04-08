@@ -1133,12 +1133,24 @@ static void detect_resonances(
 /** Absolute amplitude floor for Tier 1 (Hz/m). */
 #define SA_AMPLITUDE_FLOOR 1.0f
 
-/** FFT power gate: candidate requires RSS power (sum of squared magnitudes)
- *  above this fraction of the peak RSS power.  Prevents flagging TR
- *  harmonics where the actual gradient waveform has negligible spectral
- *  energy.  Power-proportional gating gives sharper discrimination than
- *  amplitude-proportional because it tracks energy content directly. */
-#define SA_FFT_GATE_POWER_FRAC 0.05f
+/* NOTE: FFT power gate was removed from structural candidate selection.
+ * The analytical coherence-ratio and amplitude-floor tiers provide
+ * principled stationary-limit criteria.  The dense FFT is computed on the
+ * finite expanded waveform, so gating structural candidates against it
+ * introduced a spurious dependence on num_averages (longer waveform →
+ * narrower FFT lobes → candidates rejected even though the infinite-
+ * repetition regime excites the same resonances).
+ *
+ * Replaced by an analytical power gate: candidates whose cross-axis RSS²
+ * of the coherent inner-TR magnitude is below SA_ANALYTICAL_GATE_FRAC of
+ * the peak RSS² are rejected.  This is computed entirely from the event
+ * model and does not depend on num_averages. */
+
+/** Analytical power gate: reject TR harmonics where the cross-axis
+ *  RSS² of |H(f)| is below this fraction of the peak RSS².  Same
+ *  concept as the former FFT gate, but derived from the analytical
+ *  inner-TR spectrum so it is independent of waveform length. */
+#define SA_ANALYTICAL_GATE_FRAC 0.05f
 
 /** FFT peak promotion: a dense-FFT local maximum must exceed this fraction
  *  of the peak RSS power to be promoted into the evaluation set when it
@@ -1212,7 +1224,8 @@ typedef struct {
 static int sa_extract_raw_occurrences(
     sa_raw_occurrence** out_occ,
     const struct pulseqlib_sequence_descriptor* desc,
-    int start_block, int block_count, int axis)
+    int start_block, int block_count, int axis,
+    const int* block_order)
 {
     int i, n, cap;
     float time_us;
@@ -1225,8 +1238,9 @@ static int sa_extract_raw_occurrences(
     time_us = 0.0f;
 
     for (i = 0; i < block_count; ++i) {
+        int blk_idx = block_order ? block_order[i] : (start_block + i);
         const struct pulseqlib_block_table_element* bte =
-            &desc->block_table[start_block + i];
+            &desc->block_table[blk_idx];
         const struct pulseqlib_block_definition* bdef =
             &desc->block_definitions[bte->id];
         int grad_table_idx;
@@ -1660,7 +1674,8 @@ static int sa_build_axis_events(
 static int sa_build_structural_events(
     sa_structural_events* se,
     const struct pulseqlib_sequence_descriptor* desc,
-    int start_block, int block_count)
+    int start_block, int block_count,
+    const int* block_order)
 {
     int ax, result;
     sa_raw_occurrence* occ;
@@ -1670,7 +1685,7 @@ static int sa_build_structural_events(
 
     for (ax = 0; ax < 3; ++ax) {
         occ = NULL;
-        num_occ = sa_extract_raw_occurrences(&occ, desc, start_block, block_count, ax);
+        num_occ = sa_extract_raw_occurrences(&occ, desc, start_block, block_count, ax, block_order);
         if (num_occ < 0) {
             sa_free_structural_events(se);
             return PULSEQLIB_ERR_ALLOC_FAILED;
@@ -1884,7 +1899,8 @@ static int sa_check_structural_violations(
     int num_forbidden_bands,
     const pulseqlib_forbidden_band* forbidden_bands,
     float peak_log10_threshold, float peak_norm_scale,
-    float peak_eps, float peak_prominence)
+    float peak_eps, float peak_prominence,
+    const int* block_order)
 {
     sa_structural_events se;
     int result, ax, i, b, ci;
@@ -1894,7 +1910,8 @@ static int sa_check_structural_violations(
     float* coherent_mag[3];
     float* incoherent_mag[3];
     int*   is_candidate_ax[3];
-    float max_fft_rss_sq, fft_gate_sq, fft_promo_sq;
+    float max_fft_rss_sq, fft_promo_sq;
+    float max_ana_rss_sq, ana_gate_sq;
     int has_fft_data;
     int n_tr_harmonics;
     float* cand_freqs;
@@ -1954,7 +1971,7 @@ static int sa_check_structural_violations(
         ana_peak_phases[ax] = NULL;
     }
 
-    result = sa_build_structural_events(&se, desc, start_block, block_count);
+    result = sa_build_structural_events(&se, desc, start_block, block_count, block_order);
     if (PULSEQLIB_FAILED(result)) return result;
 
     /* Compute evaluation frequency upper bound */
@@ -1982,7 +1999,6 @@ static int sa_check_structural_violations(
             if (rss_sq > max_fft_rss_sq) max_fft_rss_sq = rss_sq;
         }
     }
-    fft_gate_sq = SA_FFT_GATE_POWER_FRAC * max_fft_rss_sq;
     fft_promo_sq = SA_FFT_PROMOTION_POWER_FRAC * max_fft_rss_sq;
 
     /* --- Build evaluation frequency list ---
@@ -2081,6 +2097,19 @@ static int sa_check_structural_violations(
         }
     }
 
+    /* --- Analytical power gate threshold ---
+     * Compute peak cross-axis RSS² of the coherent inner-TR magnitude
+     * across all evaluation frequencies.  Gate at SA_ANALYTICAL_GATE_FRAC
+     * of peak to reject harmonics with negligible spectral weight. */
+    max_ana_rss_sq = 0.0f;
+    for (i = 0; i < num_freqs; ++i) {
+        float rss_sq = 0.0f;
+        for (ax = 0; ax < 3; ++ax)
+            rss_sq += coherent_mag[ax][i] * coherent_mag[ax][i];
+        if (rss_sq > max_ana_rss_sq) max_ana_rss_sq = rss_sq;
+    }
+    ana_gate_sq = SA_ANALYTICAL_GATE_FRAC * max_ana_rss_sq;
+
     /* --- Per-axis candidate selection --- */
     for (ax = 0; ax < 3; ++ax) {
         is_candidate_ax[ax] = (int*)PULSEQLIB_ALLOC((size_t)num_freqs * sizeof(int));
@@ -2090,20 +2119,14 @@ static int sa_check_structural_violations(
     }
 
     for (i = 0; i < num_freqs; ++i) {
-        /* FFT power gate: reject frequencies where the actual waveform FFT
-         * shows negligible energy, regardless of analytical coherence. */
-        if (has_fft_data) {
-            int fft_bin = (int)((eval_freqs[i] - spectra->freq_min_hz)
-                                / spectra->freq_spacing_hz + 0.5f);
-            if (fft_bin >= 0 && fft_bin < spectra->num_freq_bins) {
-                float sx = spectra->spectrum_full_gx[fft_bin];
-                float sy = spectra->spectrum_full_gy[fft_bin];
-                float sz = spectra->spectrum_full_gz[fft_bin];
-                float rss_sq = sx * sx + sy * sy + sz * sz;
-                if (rss_sq < fft_gate_sq) continue;
-            }
+        /* Analytical power gate: reject frequencies where the cross-axis
+         * RSS² of |H(f)| is below the gate threshold. */
+        {
+            float rss_sq = 0.0f;
+            for (ax = 0; ax < 3; ++ax)
+                rss_sq += coherent_mag[ax][i] * coherent_mag[ax][i];
+            if (rss_sq < ana_gate_sq) continue;
         }
-
         for (ax = 0; ax < 3; ++ax) {
             float coh = coherent_mag[ax][i];
             float inc = incoherent_mag[ax][i];
@@ -2703,7 +2726,8 @@ static int calc_mech_resonances_from_uniform(
     float peak_prominence,
     const struct pulseqlib_sequence_descriptor* desc,
     int start_block,
-    int block_count)
+    int block_count,
+    const int* block_order)
 {
     acoustic_support sup;
     pulseqlib_diagnostic local_diag;
@@ -2986,7 +3010,8 @@ static int calc_mech_resonances_from_uniform(
             num_trs, tr_duration_us,
             num_forbidden_bands, forbidden_bands,
             peak_log10_threshold, peak_norm_scale,
-            peak_eps, peak_prominence);
+            peak_eps, peak_prominence,
+            block_order);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_mech_resonances_spectra_free(spectra);
             diag->code = result; return result;
@@ -3185,7 +3210,6 @@ int pulseqlib_calc_mech_resonances(
     pulseqlib__uniform_grad_waveforms uw;
     pulseqlib_diagnostic local_diag;
     int rc, start_block, block_count, amplitude_mode, num_instances;
-    int sa_start_block, sa_block_count;
     int* block_order;
     int has_nd_prep, has_nd_cool;
     float tr_duration_us;
@@ -3230,9 +3254,6 @@ int pulseqlib_calc_mech_resonances(
         &num_instances,
         &tr_duration_us);
 
-    sa_start_block = start_block;
-    sa_block_count = block_count;
-
     has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
     has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
     if (has_nd_prep || has_nd_cool) {
@@ -3267,7 +3288,7 @@ int pulseqlib_calc_mech_resonances(
         num_forbidden_bands, forbidden_bands,
         peak_log10_threshold, peak_norm_scale, peak_eps,
         peak_prominence,
-        desc, sa_start_block, sa_block_count);
+        desc, start_block, block_count, block_order);
     pulseqlib__uniform_grad_waveforms_free(&uw);
     if (block_order) PULSEQLIB_FREE(block_order);
     return rc;
@@ -3907,7 +3928,6 @@ int pulseqlib_check_safety(
     pulseqlib_mech_resonances_spectra spectra;
     pulseqlib_pns_result pns_result;
     int start_block, block_count, amplitude_mode, num_instances;
-    int sa_start_block, sa_block_count;
     int* block_order;
     int has_nd_prep, has_nd_cool;
     float tr_duration_us;
@@ -3947,8 +3967,6 @@ int pulseqlib_check_safety(
             &num_instances,
             &tr_duration_us);
         (void)amplitude_mode;
-        sa_start_block = start_block;
-        sa_block_count = block_count;
         block_order = NULL;
         has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
         has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
@@ -4007,7 +4025,7 @@ int pulseqlib_check_safety(
                     opts->peak_norm_scale,
                     opts->peak_eps,
                     opts->peak_prominence,
-                    desc, sa_start_block, sa_block_count);
+                    desc, start_block, block_count, block_order);
 
                 /* Safety path: fail fast on first violating candidate.
                  * Pattern: for each candidate, scan union of all bands. */
