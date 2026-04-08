@@ -1177,6 +1177,8 @@ typedef struct {
     int   pwl_num_vertices; /**< >0 -> use piecewise-linear W(f)       */
     float pwl_times_us[SA_MAX_PWL_VERTICES]; /**< vertex times (us from event start) */
     float pwl_values[SA_MAX_PWL_VERTICES];   /**< vertex amplitudes (normalised)     */
+    int   num_reps;         /**< repetition count (1=once, N=imaging repeat) */
+    float rep_period_us;    /**< repetition period in us (0 if num_reps==1) */
 } sa_event;
 
 /** Per-axis event list. */
@@ -1224,8 +1226,7 @@ typedef struct {
 static int sa_extract_raw_occurrences(
     sa_raw_occurrence** out_occ,
     const struct pulseqlib_sequence_descriptor* desc,
-    int start_block, int block_count, int axis,
-    const int* block_order)
+    int start_block, int block_count, int axis)
 {
     int i, n, cap;
     float time_us;
@@ -1238,9 +1239,8 @@ static int sa_extract_raw_occurrences(
     time_us = 0.0f;
 
     for (i = 0; i < block_count; ++i) {
-        int blk_idx = block_order ? block_order[i] : (start_block + i);
         const struct pulseqlib_block_table_element* bte =
-            &desc->block_table[blk_idx];
+            &desc->block_table[start_block + i];
         const struct pulseqlib_block_definition* bdef =
             &desc->block_definitions[bte->id];
         int grad_table_idx;
@@ -1674,8 +1674,7 @@ static int sa_build_axis_events(
 static int sa_build_structural_events(
     sa_structural_events* se,
     const struct pulseqlib_sequence_descriptor* desc,
-    int start_block, int block_count,
-    const int* block_order)
+    int start_block, int block_count)
 {
     int ax, result;
     sa_raw_occurrence* occ;
@@ -1685,7 +1684,7 @@ static int sa_build_structural_events(
 
     for (ax = 0; ax < 3; ++ax) {
         occ = NULL;
-        num_occ = sa_extract_raw_occurrences(&occ, desc, start_block, block_count, ax, block_order);
+        num_occ = sa_extract_raw_occurrences(&occ, desc, start_block, block_count, ax);
         if (num_occ < 0) {
             sa_free_structural_events(se);
             return PULSEQLIB_ERR_ALLOC_FAILED;
@@ -1813,8 +1812,11 @@ static void sa_eval_event_spectrum(
 
 /**
  * Evaluate the inner TR spectrum magnitude for one axis at frequency f:
- *   |H(f)| = |sum_k a_k(f)|
- * Also returns the incoherent sum sqrt(sum |a_k|^2) for coherence ratio.
+ *   |H(f)| = |sum_k a_k(f) * D_{N_k}(f)|
+ * where D_N is the Dirichlet kernel for events repeated N times with
+ * period T:  D_N(f,T) = sum_{n=0}^{N-1} e^{-j 2 pi f n T}.
+ *
+ * Also returns the incoherent sum sqrt(sum N_k * |a_k|^2) for coherence ratio.
  */
 static void sa_eval_inner_spectrum(
     float f_hz,
@@ -1832,11 +1834,40 @@ static void sa_eval_inner_spectrum(
 
     for (k = 0; k < ae->num_events; ++k) {
         float d_re, d_im, d_mag2;
+        int N = ae->events[k].num_reps;
+        if (N < 1) N = 1;
+
         sa_eval_event_spectrum(f_hz, &ae->events[k], &d_re, &d_im);
-        sum_re += d_re;
-        sum_im += d_im;
         d_mag2 = d_re * d_re + d_im * d_im;
-        inc_sum += d_mag2;
+
+        if (N > 1 && ae->events[k].rep_period_us > 0.0f) {
+            /* Dirichlet kernel: D_N = e^{-j(N-1)phi/2} sin(N phi/2)/sin(phi/2) */
+            double phi = -2.0 * M_PI * (double)f_hz * (double)ae->events[k].rep_period_us * 1.0e-6;
+            double half_phi = phi * 0.5;
+            double sin_half = sin(half_phi);
+            double dk_re, dk_im;
+            double new_re, new_im;
+
+            if (fabs(sin_half) < 1.0e-12) {
+                dk_re = (double)N;
+                dk_im = 0.0;
+            } else {
+                double ratio = sin((double)N * half_phi) / sin_half;
+                double center = (double)(N - 1) * half_phi;
+                dk_re = ratio * cos(center);
+                dk_im = ratio * sin(center);
+            }
+
+            new_re = (double)d_re * dk_re - (double)d_im * dk_im;
+            new_im = (double)d_re * dk_im + (double)d_im * dk_re;
+            sum_re += (float)new_re;
+            sum_im += (float)new_im;
+            inc_sum += (float)N * d_mag2;
+        } else {
+            sum_re += d_re;
+            sum_im += d_im;
+            inc_sum += d_mag2;
+        }
     }
 
     *out_coherent_mag = (float)sqrt((double)(sum_re * sum_re + sum_im * sum_im));
@@ -1845,7 +1876,7 @@ static void sa_eval_inner_spectrum(
 
 /**
  * Compute spectral-weighted effective gradient amplitude G_eff at frequency f:
- *   G_eff(f) = sum_k |A_k| * |a_k(f)| / sum_k |a_k(f)|
+ *   G_eff(f) = sum_k |A_k| * |a_k(f)| * |D_{N_k}(f)| / sum_k |a_k(f)| * |D_{N_k}(f)|
  */
 static float sa_eval_geff(
     float f_hz,
@@ -1860,8 +1891,24 @@ static float sa_eval_geff(
     for (k = 0; k < ae->num_events; ++k) {
         float d_re, d_im, d_mag;
         float abs_amp;
+        int N = ae->events[k].num_reps;
+        if (N < 1) N = 1;
+
         sa_eval_event_spectrum(f_hz, &ae->events[k], &d_re, &d_im);
         d_mag = (float)sqrt((double)(d_re * d_re + d_im * d_im));
+
+        if (N > 1 && ae->events[k].rep_period_us > 0.0f) {
+            double phi = -2.0 * M_PI * (double)f_hz * (double)ae->events[k].rep_period_us * 1.0e-6;
+            double half_phi = phi * 0.5;
+            double sin_half = sin(half_phi);
+            float dk_mag;
+            if (fabs(sin_half) < 1.0e-12)
+                dk_mag = (float)N;
+            else
+                dk_mag = (float)fabs(sin((double)N * half_phi) / sin_half);
+            d_mag *= dk_mag;
+        }
+
         abs_amp = ae->events[k].amplitude;
         if (abs_amp < 0.0f) abs_amp = -abs_amp;
         w_sum += d_mag;
@@ -1880,16 +1927,19 @@ static float sa_eval_geff(
  * Run full structural acoustic analysis with event-level analytical framework.
  *
  * For each axis:
- *   1. Extract block-level occurrences, decompose arbitrary waveforms via
- *      autocorrelation if sub-periodicity detected.
- *   2. Build candidate frequency grid (TR harmonics; K is clamped to
- *      min 2 so the Fourier comb works even for single-TR sequences).
- *   3. Evaluate inner TR spectrum H(f) at each candidate via coherent sum
- *      of per-event contributions.
- *   4. Two-tier candidate selection with FFT power gate:
- *      - Tier 1: coherence ratio > threshold AND |H| > floor AND FFT gate
- *      - Tier 2: |H| > safety threshold AND FFT gate
- *   5. For each candidate: compute G_eff(f) and check forbidden bands.
+ *   1. Extract block-level occurrences from the base pass (not expanded),
+ *      decompose arbitrary waveforms via autocorrelation if sub-periodicity
+ *      detected.
+ *   2. Tag imaging events with repetition count (num_avgs) and period, and
+ *      shift cooldown event times to their expanded-pass positions.
+ *   3. Build candidate frequency grid (TR harmonics of expanded pass; K is
+ *      clamped to min 2 so the Fourier comb works for single-pass sequences).
+ *   4. Evaluate inner TR spectrum H(f) at each candidate via coherent sum
+ *      of per-event contributions with Dirichlet kernel for repeated events.
+ *   5. Analytical power gate + two-tier candidate selection:
+ *      - Tier 1: coherence ratio > threshold AND |H| > floor
+ *      - Tier 2: |H| > safety threshold
+ *   6. For each candidate: compute G_eff(f) and check forbidden bands.
  */
 static int sa_check_structural_violations(
     pulseqlib_mech_resonances_spectra* spectra,
@@ -1900,7 +1950,7 @@ static int sa_check_structural_violations(
     const pulseqlib_forbidden_band* forbidden_bands,
     float peak_log10_threshold, float peak_norm_scale,
     float peak_eps, float peak_prominence,
-    const int* block_order)
+    int num_avgs)
 {
     sa_structural_events se;
     int result, ax, i, b, ci;
@@ -1914,6 +1964,7 @@ static int sa_check_structural_violations(
     float max_ana_rss_sq, ana_gate_sq;
     int has_fft_data;
     int n_tr_harmonics;
+    int* fft_bypass_set;
     float* cand_freqs;
     float* cand_amps[3];
     float* cand_grad_amps;
@@ -1944,6 +1995,7 @@ static int sa_check_structural_violations(
 
     memset(&se, 0, sizeof(se));
     eval_freqs = NULL;
+    fft_bypass_set = NULL;
     cand_freqs = NULL;
     n_tr_harmonics = 0;
     cand_grad_amps = NULL;
@@ -1971,8 +2023,64 @@ static int sa_check_structural_violations(
         ana_peak_phases[ax] = NULL;
     }
 
-    result = sa_build_structural_events(&se, desc, start_block, block_count, block_order);
+    result = sa_build_structural_events(&se, desc, start_block, block_count);
     if (PULSEQLIB_FAILED(result)) return result;
+
+    /* --- Tag imaging events with repetition info ---
+     * For non-degenerate sequences (num_avgs > 1), imaging events repeat
+     * num_avgs times with period = imaging pass duration.  Cooldown events
+     * are shifted to their position in the expanded pass.  This lets the
+     * Dirichlet kernel handle repetition analytically (O(1) per event per
+     * frequency) instead of enumerating all N copies (O(N)). */
+    if (num_avgs > 1) {
+        const struct pulseqlib_tr_descriptor* trd = &desc->tr_descriptor;
+        int prep_blk = trd->num_prep_blocks;
+        int img_len  = trd->num_trs * trd->tr_size;
+        float prep_dur_us = 0.0f;
+        float img_dur_us  = 0.0f;
+        float img_end_us;
+        int bi;
+
+        for (bi = 0; bi < prep_blk; ++bi) {
+            int idx = start_block + bi;
+            const struct pulseqlib_block_table_element* bte = &desc->block_table[idx];
+            const struct pulseqlib_block_definition* bdef = &desc->block_definitions[bte->id];
+            prep_dur_us += (bte->duration_us >= 0) ? (float)bte->duration_us : (float)bdef->duration_us;
+        }
+        for (bi = 0; bi < img_len; ++bi) {
+            int idx = start_block + prep_blk + bi;
+            const struct pulseqlib_block_table_element* bte = &desc->block_table[idx];
+            const struct pulseqlib_block_definition* bdef = &desc->block_definitions[bte->id];
+            img_dur_us += (bte->duration_us >= 0) ? (float)bte->duration_us : (float)bdef->duration_us;
+        }
+        img_end_us = prep_dur_us + img_dur_us;
+
+        for (ax = 0; ax < 3; ++ax) {
+            int k;
+            for (k = 0; k < se.axes[ax].num_events; ++k) {
+                sa_event* ev = &se.axes[ax].events[k];
+                if (ev->start_time_us >= prep_dur_us && ev->start_time_us < img_end_us) {
+                    ev->num_reps = num_avgs;
+                    ev->rep_period_us = img_dur_us;
+                } else if (ev->start_time_us >= img_end_us) {
+                    ev->start_time_us += (float)(num_avgs - 1) * img_dur_us;
+                    ev->num_reps = 1;
+                    ev->rep_period_us = 0.0f;
+                } else {
+                    ev->num_reps = 1;
+                    ev->rep_period_us = 0.0f;
+                }
+            }
+        }
+    } else {
+        for (ax = 0; ax < 3; ++ax) {
+            int k;
+            for (k = 0; k < se.axes[ax].num_events; ++k) {
+                se.axes[ax].events[k].num_reps = 1;
+                se.axes[ax].events[k].rep_period_us = 0.0f;
+            }
+        }
+    }
 
     /* Compute evaluation frequency upper bound */
     if (spectra->num_freq_bins <= 0) {
@@ -2008,8 +2116,10 @@ static int sa_check_structural_violations(
      * This catches spectral features (e.g. the bipolar-readout fundamental
      * in bSSFP) that land between adjacent TR harmonics.
      *
-     * For K=1 we pretend K=2 so the TR-harmonic comb naturally produces
-     * the correct spectrum via destructive/constructive interference. */
+     * For non-degenerate sequences the caller passes the full-pass duration
+     * as tr_duration_us and num_instances is the pass count; the Dirichlet
+     * kernel on imaging events naturally produces peaks at the imaging-TR
+     * harmonic spacing within the fine pass-harmonic grid. */
     if (num_instances < 2) num_instances = 2;
     {
         float tr_f1 = 1.0e6f / tr_duration_us;
@@ -2118,18 +2228,67 @@ static int sa_check_structural_violations(
             is_candidate_ax[ax][i] = 0;
     }
 
+    /* --- Pre-build FFT bypass set ---
+     * For each FFT local maximum above the promotion threshold, find the
+     * single closest TR harmonic and mark it for gate bypass.  This
+     * catches high-order harmonics where the PWL spectral model
+     * underestimates the true amplitude. */
+    fft_bypass_set = NULL;
+    if (has_fft_data && n_tr_harmonics > 0) {
+        float tr_f1_byp = eval_freqs[0]; /* first TR harmonic = f1 */
+        fft_bypass_set = (int*)PULSEQLIB_ALLOC((size_t)num_freqs * sizeof(int));
+        if (fft_bypass_set) {
+            int fi;
+            for (i = 0; i < num_freqs; ++i) fft_bypass_set[i] = 0;
+            for (fi = 1; fi < spectra->num_freq_bins - 1; ++fi) {
+                float sx = spectra->spectrum_full_gx[fi];
+                float sy = spectra->spectrum_full_gy[fi];
+                float sz = spectra->spectrum_full_gz[fi];
+                float fft_rss_sq = sx * sx + sy * sy + sz * sz;
+                float spx, spy, spz, snx, sny, snz;
+                float rss_prev, rss_next;
+                float f_peak;
+                int m_nearest;
+
+                if (fft_rss_sq < fft_promo_sq) continue;
+
+                spx = spectra->spectrum_full_gx[fi - 1];
+                spy = spectra->spectrum_full_gy[fi - 1];
+                spz = spectra->spectrum_full_gz[fi - 1];
+                snx = spectra->spectrum_full_gx[fi + 1];
+                sny = spectra->spectrum_full_gy[fi + 1];
+                snz = spectra->spectrum_full_gz[fi + 1];
+                rss_prev = spx*spx + spy*spy + spz*spz;
+                rss_next = snx*snx + sny*sny + snz*snz;
+                if (fft_rss_sq < rss_prev || fft_rss_sq < rss_next)
+                    continue;
+
+                /* FFT local max — find nearest TR harmonic index */
+                f_peak = spectra->freq_min_hz + (float)fi * spectra->freq_spacing_hz;
+                m_nearest = (int)(f_peak / tr_f1_byp + 0.5f) - 1;
+                if (m_nearest >= 0 && m_nearest < n_tr_harmonics)
+                    fft_bypass_set[m_nearest] = 1;
+            }
+        }
+    }
+
     for (i = 0; i < num_freqs; ++i) {
         /* Analytical power gate: reject frequencies where the cross-axis
-         * RSS² of |H(f)| is below the gate threshold. */
+         * RSS² of |H(f)| is below the gate threshold.
+         * FFT bypass: frequencies marked in fft_bypass_set skip the gate. */
         {
             float rss_sq = 0.0f;
             for (ax = 0; ax < 3; ++ax)
                 rss_sq += coherent_mag[ax][i] * coherent_mag[ax][i];
-            if (rss_sq < ana_gate_sq) continue;
+            if (rss_sq < ana_gate_sq) {
+                if (!fft_bypass_set || !fft_bypass_set[i])
+                    continue;
+            }
         }
         for (ax = 0; ax < 3; ++ax) {
             float coh = coherent_mag[ax][i];
             float inc = incoherent_mag[ax][i];
+            int is_bypassed = (fft_bypass_set && fft_bypass_set[i]);
 
             if (se.axes[ax].num_events == 0)
                 continue;
@@ -2137,6 +2296,15 @@ static int sa_check_structural_violations(
             /* Tier 3: FFT-promoted peaks — per-axis if analytical signal
              * is above the amplitude floor. */
             if (i >= n_tr_harmonics) {
+                if (coh > SA_AMPLITUDE_FLOOR)
+                    is_candidate_ax[ax][i] = 1;
+                continue;
+            }
+
+            /* FFT-bypassed TR harmonics: the dense FFT already confirms a
+             * real spectral peak at this frequency, so use the relaxed
+             * amplitude-floor check instead of requiring high coherence. */
+            if (is_bypassed) {
                 if (coh > SA_AMPLITUDE_FLOOR)
                     is_candidate_ax[ax][i] = 1;
                 continue;
@@ -2156,7 +2324,10 @@ static int sa_check_structural_violations(
                 is_candidate_ax[ax][i] = 1;
             }
         }
+
     }
+
+    if (fft_bypass_set) PULSEQLIB_FREE(fft_bypass_set);
 
     /* Count candidates: a frequency is a candidate if any axis qualifies */
     num_candidates = 0;
@@ -2241,13 +2412,28 @@ static int sa_check_structural_violations(
                 cand_amps[ax][ci] = coh;
                 ana_peak_amps[ax][ci] = coh;
 
-                /* Phase: compute from coherent sum */
+                /* Phase: compute from coherent sum (with Dirichlet kernel) */
                 {
                     float sum_re = 0.0f, sum_im = 0.0f;
                     int k;
                     for (k = 0; k < se.axes[ax].num_events; ++k) {
                         float d_re, d_im;
+                        int N = se.axes[ax].events[k].num_reps;
+                        if (N < 1) N = 1;
                         sa_eval_event_spectrum(f_hz, &se.axes[ax].events[k], &d_re, &d_im);
+                        if (N > 1 && se.axes[ax].events[k].rep_period_us > 0.0f) {
+                            double phi = -2.0 * M_PI * (double)f_hz * (double)se.axes[ax].events[k].rep_period_us * 1.0e-6;
+                            double half_phi = phi * 0.5;
+                            double sin_half = sin(half_phi);
+                            double dk_re, dk_im, new_re, new_im;
+                            if (fabs(sin_half) < 1.0e-12) { dk_re = (double)N; dk_im = 0.0; }
+                            else { double ratio = sin((double)N * half_phi) / sin_half;
+                                   double center = (double)(N - 1) * half_phi;
+                                   dk_re = ratio * cos(center); dk_im = ratio * sin(center); }
+                            new_re = (double)d_re * dk_re - (double)d_im * dk_im;
+                            new_im = (double)d_re * dk_im + (double)d_im * dk_re;
+                            d_re = (float)new_re; d_im = (float)new_im;
+                        }
                         sum_re += d_re;
                         sum_im += d_im;
                     }
@@ -2287,8 +2473,23 @@ static int sa_check_structural_violations(
                 int k;
                 for (k = 0; k < se.axes[ax].num_events; ++k) {
                     float d_re, d_im, d_mag;
+                    int N = se.axes[ax].events[k].num_reps;
+                    if (N < 1) N = 1;
                     if (num_component_terms >= max_component_terms) break;
                     sa_eval_event_spectrum(f_hz, &se.axes[ax].events[k], &d_re, &d_im);
+                    if (N > 1 && se.axes[ax].events[k].rep_period_us > 0.0f) {
+                        double phi = -2.0 * M_PI * (double)f_hz * (double)se.axes[ax].events[k].rep_period_us * 1.0e-6;
+                        double half_phi = phi * 0.5;
+                        double sin_half = sin(half_phi);
+                        double dk_re, dk_im, new_re, new_im;
+                        if (fabs(sin_half) < 1.0e-12) { dk_re = (double)N; dk_im = 0.0; }
+                        else { double ratio = sin((double)N * half_phi) / sin_half;
+                               double center = (double)(N - 1) * half_phi;
+                               dk_re = ratio * cos(center); dk_im = ratio * sin(center); }
+                        new_re = (double)d_re * dk_re - (double)d_im * dk_im;
+                        new_im = (double)d_re * dk_im + (double)d_im * dk_re;
+                        d_re = (float)new_re; d_im = (float)new_im;
+                    }
                     d_mag = (float)sqrt((double)(d_re * d_re + d_im * d_im));
                     component_freqs_hz[num_component_terms] = f_hz;
                     component_amps[num_component_terms] = d_mag;
@@ -2362,6 +2563,7 @@ alloc_fail:
     if (ana_peak_freqs)       PULSEQLIB_FREE(ana_peak_freqs);
     if (ana_peak_widths)      PULSEQLIB_FREE(ana_peak_widths);
     if (eval_freqs)           PULSEQLIB_FREE(eval_freqs);
+    if (fft_bypass_set)       PULSEQLIB_FREE(fft_bypass_set);
     if (cand_freqs)           PULSEQLIB_FREE(cand_freqs);
     if (cand_grad_amps)       PULSEQLIB_FREE(cand_grad_amps);
     if (cand_violations)      PULSEQLIB_FREE(cand_violations);
@@ -2727,7 +2929,7 @@ static int calc_mech_resonances_from_uniform(
     const struct pulseqlib_sequence_descriptor* desc,
     int start_block,
     int block_count,
-    const int* block_order)
+    int num_avgs)
 {
     acoustic_support sup;
     pulseqlib_diagnostic local_diag;
@@ -3011,7 +3213,7 @@ static int calc_mech_resonances_from_uniform(
             num_forbidden_bands, forbidden_bands,
             peak_log10_threshold, peak_norm_scale,
             peak_eps, peak_prominence,
-            block_order);
+            num_avgs);
         if (PULSEQLIB_FAILED(result)) {
             pulseqlib_mech_resonances_spectra_free(spectra);
             diag->code = result; return result;
@@ -3210,6 +3412,7 @@ int pulseqlib_calc_mech_resonances(
     pulseqlib__uniform_grad_waveforms uw;
     pulseqlib_diagnostic local_diag;
     int rc, start_block, block_count, amplitude_mode, num_instances;
+    int sa_start_block, sa_block_count, num_avgs;
     int* block_order;
     int has_nd_prep, has_nd_cool;
     float tr_duration_us;
@@ -3254,9 +3457,14 @@ int pulseqlib_calc_mech_resonances(
         &num_instances,
         &tr_duration_us);
 
+    sa_start_block = start_block;
+    sa_block_count = block_count;
+    num_avgs = 1;
+
     has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
     has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
     if (has_nd_prep || has_nd_cool) {
+        num_avgs = (desc->num_averages > 1) ? desc->num_averages : 1;
         rc = pulseqlib__build_pass_expanded_block_order(
             desc,
             start_block,
@@ -3288,7 +3496,7 @@ int pulseqlib_calc_mech_resonances(
         num_forbidden_bands, forbidden_bands,
         peak_log10_threshold, peak_norm_scale, peak_eps,
         peak_prominence,
-        desc, start_block, block_count, block_order);
+        desc, sa_start_block, sa_block_count, num_avgs);
     pulseqlib__uniform_grad_waveforms_free(&uw);
     if (block_order) PULSEQLIB_FREE(block_order);
     return rc;
@@ -3928,6 +4136,7 @@ int pulseqlib_check_safety(
     pulseqlib_mech_resonances_spectra spectra;
     pulseqlib_pns_result pns_result;
     int start_block, block_count, amplitude_mode, num_instances;
+    int sa_start_block, sa_block_count, num_avgs;
     int* block_order;
     int has_nd_prep, has_nd_cool;
     float tr_duration_us;
@@ -3967,10 +4176,14 @@ int pulseqlib_check_safety(
             &num_instances,
             &tr_duration_us);
         (void)amplitude_mode;
+        sa_start_block = start_block;
+        sa_block_count = block_count;
+        num_avgs = 1;
         block_order = NULL;
         has_nd_prep = (trd->num_prep_blocks > 0 && !trd->degenerate_prep);
         has_nd_cool = (trd->num_cooldown_blocks > 0 && !trd->degenerate_cooldown);
         if (has_nd_prep || has_nd_cool) {
+            num_avgs = (desc->num_averages > 1) ? desc->num_averages : 1;
             rc = pulseqlib__build_pass_expanded_block_order(
                 desc,
                 start_block,
@@ -4025,7 +4238,7 @@ int pulseqlib_check_safety(
                     opts->peak_norm_scale,
                     opts->peak_eps,
                     opts->peak_prominence,
-                    desc, start_block, block_count, block_order);
+                    desc, sa_start_block, sa_block_count, num_avgs);
 
                 /* Safety path: fail fast on first violating candidate.
                  * Pattern: for each candidate, scan union of all bands. */
