@@ -176,6 +176,24 @@ A **violation** is flagged if *any single axis* exceeds the band limit.
 This per-axis check ensures that a resonance driven by one gradient channel
 is caught even if the other channels are quiet at that frequency.
 
+## Rotation invariance
+
+The analysis is invariant to both per-block rotation events and global FOV
+rotation (oblique prescriptions).  These operations redistribute gradient
+amplitude among the Gx, Gy, and Gz axes but do not change the total energy
+at any frequency.  Because:
+
+- Forbidden bands carry no axis tag — each band is defined solely by
+  $(f_\text{lo}, f_\text{hi}, A_\text{limit})$.
+- Every axis is checked against every band: the violation loop iterates
+  over all three axes for each (candidate, band) pair.
+- Event extraction, spectral evaluation, $G_\text{eff}$, and the tier
+  checks use identical logic and thresholds for all axes.
+
+energy cannot migrate to an unchecked axis.  A candidate that violates a
+band on any single axis is flagged regardless of which physical gradient
+channel carries it.
+
 ## Per-subsequence processing
 
 A sequence collection may contain multiple subsequences (e.g. a localiser
