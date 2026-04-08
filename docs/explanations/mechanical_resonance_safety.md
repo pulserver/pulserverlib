@@ -30,7 +30,7 @@ If a block contains a gradient event, an *occurrence* is recorded:
 - **def_id** — gradient definition index.
 - **start_time** — cumulative time from the start of the TR (µs).
 - **amplitude** — worst-case positional amplitude
-  $|\text{gte.amplitude}| \times |\text{gdef.max\_amplitude}|$ (Hz/m).
+  $|\mathrm{gte.amplitude}| \times |\mathrm{gdef.max\_amplitude}|$
 
 ### Stage 2 — waveform response model
 
