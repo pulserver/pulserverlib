@@ -1447,7 +1447,7 @@ static int sa_compute_fft_response(
     kiss_fft_cpx* spectrum = NULL;
     kiss_fftr_cfg cfg = NULL;
     float* mags = NULL;
-    float norm_val, mag;
+    float norm_val;
 
     *out_mags = NULL;
     *out_num_bins = 0;
@@ -2155,11 +2155,11 @@ static int sa_check_structural_violations(
     float* coherent_mag[3];
     float* incoherent_mag[3];
     int*   is_candidate_ax[3];
-    float max_fft_rss_sq, fft_promo_sq;
-    float max_ana_rss_sq, ana_gate_sq;
+    float max_fft_sq[3], fft_promo_sq[3];
+    float max_ana_sq[3], ana_gate_sq[3];
     int has_fft_data;
     int n_tr_harmonics;
-    int* fft_bypass_set;
+    int* fft_bypass_set_ax[3];
     float* cand_freqs;
     float* cand_amps[3];
     float* cand_grad_amps;
@@ -2190,7 +2190,7 @@ static int sa_check_structural_violations(
 
     memset(&se, 0, sizeof(se));
     eval_freqs = NULL;
-    fft_bypass_set = NULL;
+    fft_bypass_set_ax[0] = fft_bypass_set_ax[1] = fft_bypass_set_ax[2] = NULL;
     cand_freqs = NULL;
     n_tr_harmonics = 0;
     cand_grad_amps = NULL;
@@ -2285,24 +2285,28 @@ static int sa_check_structural_violations(
     freq_max = spectra->freq_min_hz +
                (float)(spectra->num_freq_bins - 1) * spectra->freq_spacing_hz;
 
-    /* --- Compute FFT power gate threshold ---
-     * Find peak RSS magnitude of the dense FFT and set the gate at
-     * SA_FFT_GATE_FRACTION of the peak.  Work in squared magnitudes to
-     * avoid sqrt in the inner loops. */
-    max_fft_rss_sq = 0.0f;
+    /* --- Compute per-axis FFT power gate threshold ---
+     * Find peak magnitude per axis of the dense FFT and set per-axis
+     * gates at SA_FFT_PROMOTION_POWER_FRAC of each axis's peak.
+     * Work in squared magnitudes to avoid sqrt in the inner loops. */
+    max_fft_sq[0] = max_fft_sq[1] = max_fft_sq[2] = 0.0f;
     has_fft_data = (spectra->spectrum_full_gx && spectra->spectrum_full_gy &&
                     spectra->spectrum_full_gz && spectra->num_freq_bins > 0 &&
                     spectra->freq_spacing_hz > 0.0f);
     if (has_fft_data) {
         for (i = 0; i < spectra->num_freq_bins; ++i) {
-            float sx = spectra->spectrum_full_gx[i];
-            float sy = spectra->spectrum_full_gy[i];
-            float sz = spectra->spectrum_full_gz[i];
-            float rss_sq = sx * sx + sy * sy + sz * sz;
-            if (rss_sq > max_fft_rss_sq) max_fft_rss_sq = rss_sq;
+            float s[3];
+            s[0] = spectra->spectrum_full_gx[i];
+            s[1] = spectra->spectrum_full_gy[i];
+            s[2] = spectra->spectrum_full_gz[i];
+            for (ax = 0; ax < 3; ++ax) {
+                float sq = s[ax] * s[ax];
+                if (sq > max_fft_sq[ax]) max_fft_sq[ax] = sq;
+            }
         }
     }
-    fft_promo_sq = SA_FFT_PROMOTION_POWER_FRAC * max_fft_rss_sq;
+    for (ax = 0; ax < 3; ++ax)
+        fft_promo_sq[ax] = SA_FFT_PROMOTION_POWER_FRAC * max_fft_sq[ax];
 
     /* --- Build evaluation frequency list ---
      * TR harmonics form the primary grid.  Additionally, any local maximum
@@ -2337,29 +2341,30 @@ static int sa_check_structural_violations(
             eval_freqs[num_freqs++] = (float)(m + 1) * tr_f1;
         n_tr_harmonics = num_freqs;
 
-        /* 2) FFT local maxima between TR harmonics (peak promotion) */
+        /* 2) FFT local maxima between TR harmonics (peak promotion)
+         * Per-axis: promote a frequency if ANY axis has a local max
+         * above its own per-axis threshold. */
         if (has_fft_data && m_max > 0) {
+            const float* spec_ax[3];
+            spec_ax[0] = spectra->spectrum_full_gx;
+            spec_ax[1] = spectra->spectrum_full_gy;
+            spec_ax[2] = spectra->spectrum_full_gz;
             for (fi = 1; fi < spectra->num_freq_bins - 1; ++fi) {
-                float sx = spectra->spectrum_full_gx[fi];
-                float sy = spectra->spectrum_full_gy[fi];
-                float sz = spectra->spectrum_full_gz[fi];
-                float rss_sq = sx * sx + sy * sy + sz * sz;
                 float f_peak, nearest, dist;
-                float spx, spy, spz, snx, sny, snz;
-                float rss_prev, rss_next;
-
-                if (rss_sq < fft_promo_sq) continue;
-
-                /* Local max check on RSS² */
-                spx = spectra->spectrum_full_gx[fi - 1];
-                spy = spectra->spectrum_full_gy[fi - 1];
-                spz = spectra->spectrum_full_gz[fi - 1];
-                snx = spectra->spectrum_full_gx[fi + 1];
-                sny = spectra->spectrum_full_gy[fi + 1];
-                snz = spectra->spectrum_full_gz[fi + 1];
-                rss_prev = spx * spx + spy * spy + spz * spz;
-                rss_next = snx * snx + sny * sny + snz * snz;
-                if (rss_sq <= rss_prev || rss_sq <= rss_next) continue;
+                int any_local_max = 0;
+                for (ax = 0; ax < 3; ++ax) {
+                    float cur = spec_ax[ax][fi];
+                    float cur_sq = cur * cur;
+                    float prev_sq, next_sq;
+                    if (cur_sq < fft_promo_sq[ax]) continue;
+                    prev_sq = spec_ax[ax][fi - 1] * spec_ax[ax][fi - 1];
+                    next_sq = spec_ax[ax][fi + 1] * spec_ax[ax][fi + 1];
+                    if (cur_sq > prev_sq && cur_sq > next_sq) {
+                        any_local_max = 1;
+                        break;
+                    }
+                }
+                if (!any_local_max) continue;
 
                 /* Not near a TR harmonic? (> 25% of harmonic spacing) */
                 f_peak = spectra->freq_min_hz
@@ -2402,18 +2407,19 @@ static int sa_check_structural_violations(
         }
     }
 
-    /* --- Analytical power gate threshold ---
-     * Compute peak cross-axis RSS² of the coherent inner-TR magnitude
-     * across all evaluation frequencies.  Gate at SA_ANALYTICAL_GATE_FRAC
-     * of peak to reject harmonics with negligible spectral weight. */
-    max_ana_rss_sq = 0.0f;
+    /* --- Per-axis analytical power gate threshold ---
+     * Compute peak coherent magnitude per axis across all evaluation
+     * frequencies.  Gate at SA_ANALYTICAL_GATE_FRAC of each axis's own
+     * peak to reject harmonics with negligible spectral weight. */
+    max_ana_sq[0] = max_ana_sq[1] = max_ana_sq[2] = 0.0f;
     for (i = 0; i < num_freqs; ++i) {
-        float rss_sq = 0.0f;
-        for (ax = 0; ax < 3; ++ax)
-            rss_sq += coherent_mag[ax][i] * coherent_mag[ax][i];
-        if (rss_sq > max_ana_rss_sq) max_ana_rss_sq = rss_sq;
+        for (ax = 0; ax < 3; ++ax) {
+            float sq = coherent_mag[ax][i] * coherent_mag[ax][i];
+            if (sq > max_ana_sq[ax]) max_ana_sq[ax] = sq;
+        }
     }
-    ana_gate_sq = SA_ANALYTICAL_GATE_FRAC * max_ana_rss_sq;
+    for (ax = 0; ax < 3; ++ax)
+        ana_gate_sq[ax] = SA_ANALYTICAL_GATE_FRAC * max_ana_sq[ax];
 
     /* --- Per-axis candidate selection --- */
     for (ax = 0; ax < 3; ++ax) {
@@ -2423,67 +2429,66 @@ static int sa_check_structural_violations(
             is_candidate_ax[ax][i] = 0;
     }
 
-    /* --- Pre-build FFT bypass set ---
-     * For each FFT local maximum above the promotion threshold, find the
-     * single closest TR harmonic and mark it for gate bypass.  This
-     * catches high-order harmonics where the PWL spectral model
-     * underestimates the true amplitude. */
-    fft_bypass_set = NULL;
+    /* --- Pre-build per-axis FFT bypass sets ---
+     * For each axis independently, find FFT local maxima above the
+     * per-axis promotion threshold and mark the nearest TR harmonic
+     * for gate bypass on that axis.  This catches high-order harmonics
+     * where the PWL spectral model underestimates the true amplitude. */
+    fft_bypass_set_ax[0] = fft_bypass_set_ax[1] = fft_bypass_set_ax[2] = NULL;
     if (has_fft_data && n_tr_harmonics > 0) {
         float tr_f1_byp = eval_freqs[0]; /* first TR harmonic = f1 */
-        fft_bypass_set = (int*)PULSEQLIB_ALLOC((size_t)num_freqs * sizeof(int));
-        if (fft_bypass_set) {
-            int fi;
-            for (i = 0; i < num_freqs; ++i) fft_bypass_set[i] = 0;
-            for (fi = 1; fi < spectra->num_freq_bins - 1; ++fi) {
-                float sx = spectra->spectrum_full_gx[fi];
-                float sy = spectra->spectrum_full_gy[fi];
-                float sz = spectra->spectrum_full_gz[fi];
-                float fft_rss_sq = sx * sx + sy * sy + sz * sz;
-                float spx, spy, spz, snx, sny, snz;
-                float rss_prev, rss_next;
-                float f_peak;
-                int m_nearest;
+        const float* spec_bypass[3];
+        spec_bypass[0] = spectra->spectrum_full_gx;
+        spec_bypass[1] = spectra->spectrum_full_gy;
+        spec_bypass[2] = spectra->spectrum_full_gz;
+        for (ax = 0; ax < 3; ++ax) {
+            fft_bypass_set_ax[ax] = (int*)PULSEQLIB_ALLOC(
+                (size_t)num_freqs * sizeof(int));
+            if (fft_bypass_set_ax[ax]) {
+                int fi;
+                for (i = 0; i < num_freqs; ++i)
+                    fft_bypass_set_ax[ax][i] = 0;
+                for (fi = 1; fi < spectra->num_freq_bins - 1; ++fi) {
+                    float cur = spec_bypass[ax][fi];
+                    float cur_sq = cur * cur;
+                    float prev_sq, next_sq;
+                    float f_peak;
+                    int m_nearest;
 
-                if (fft_rss_sq < fft_promo_sq) continue;
+                    if (cur_sq < fft_promo_sq[ax]) continue;
 
-                spx = spectra->spectrum_full_gx[fi - 1];
-                spy = spectra->spectrum_full_gy[fi - 1];
-                spz = spectra->spectrum_full_gz[fi - 1];
-                snx = spectra->spectrum_full_gx[fi + 1];
-                sny = spectra->spectrum_full_gy[fi + 1];
-                snz = spectra->spectrum_full_gz[fi + 1];
-                rss_prev = spx*spx + spy*spy + spz*spz;
-                rss_next = snx*snx + sny*sny + snz*snz;
-                if (fft_rss_sq < rss_prev || fft_rss_sq < rss_next)
-                    continue;
+                    prev_sq = spec_bypass[ax][fi - 1]
+                            * spec_bypass[ax][fi - 1];
+                    next_sq = spec_bypass[ax][fi + 1]
+                            * spec_bypass[ax][fi + 1];
+                    if (cur_sq <= prev_sq || cur_sq <= next_sq)
+                        continue;
 
-                /* FFT local max — find nearest TR harmonic index */
-                f_peak = spectra->freq_min_hz + (float)fi * spectra->freq_spacing_hz;
-                m_nearest = (int)(f_peak / tr_f1_byp + 0.5f) - 1;
-                if (m_nearest >= 0 && m_nearest < n_tr_harmonics)
-                    fft_bypass_set[m_nearest] = 1;
+                    /* FFT local max — find nearest TR harmonic index */
+                    f_peak = spectra->freq_min_hz
+                           + (float)fi * spectra->freq_spacing_hz;
+                    m_nearest = (int)(f_peak / tr_f1_byp + 0.5f) - 1;
+                    if (m_nearest >= 0 && m_nearest < n_tr_harmonics)
+                        fft_bypass_set_ax[ax][m_nearest] = 1;
+                }
             }
         }
     }
 
     for (i = 0; i < num_freqs; ++i) {
-        /* Analytical power gate: reject frequencies where the cross-axis
-         * RSS² of |H(f)| is below the gate threshold.
-         * FFT bypass: frequencies marked in fft_bypass_set skip the gate. */
-        {
-            float rss_sq = 0.0f;
-            for (ax = 0; ax < 3; ++ax)
-                rss_sq += coherent_mag[ax][i] * coherent_mag[ax][i];
-            if (rss_sq < ana_gate_sq) {
-                if (!fft_bypass_set || !fft_bypass_set[i])
-                    continue;
-            }
-        }
         for (ax = 0; ax < 3; ++ax) {
             float coh = coherent_mag[ax][i];
             float inc = incoherent_mag[ax][i];
-            int is_bypassed = (fft_bypass_set && fft_bypass_set[i]);
+            int is_bypassed = (fft_bypass_set_ax[ax] &&
+                               fft_bypass_set_ax[ax][i]);
+
+            /* Per-axis analytical power gate: reject this axis at this
+             * frequency if its coherent magnitude is below the per-axis
+             * gate threshold, unless FFT bypass is active for this axis. */
+            if (coh * coh < ana_gate_sq[ax]) {
+                if (!is_bypassed)
+                    continue;
+            }
 
             if (se.axes[ax].num_events == 0)
                 continue;
@@ -2522,7 +2527,9 @@ static int sa_check_structural_violations(
 
     }
 
-    if (fft_bypass_set) PULSEQLIB_FREE(fft_bypass_set);
+    for (ax = 0; ax < 3; ++ax) {
+        if (fft_bypass_set_ax[ax]) PULSEQLIB_FREE(fft_bypass_set_ax[ax]);
+    }
 
     /* Count candidates: a frequency is a candidate if any axis qualifies */
     num_candidates = 0;
@@ -2758,7 +2765,9 @@ alloc_fail:
     if (ana_peak_freqs)       PULSEQLIB_FREE(ana_peak_freqs);
     if (ana_peak_widths)      PULSEQLIB_FREE(ana_peak_widths);
     if (eval_freqs)           PULSEQLIB_FREE(eval_freqs);
-    if (fft_bypass_set)       PULSEQLIB_FREE(fft_bypass_set);
+    for (ax = 0; ax < 3; ++ax) {
+        if (fft_bypass_set_ax[ax]) PULSEQLIB_FREE(fft_bypass_set_ax[ax]);
+    }
     if (cand_freqs)           PULSEQLIB_FREE(cand_freqs);
     if (cand_grad_amps)       PULSEQLIB_FREE(cand_grad_amps);
     if (cand_violations)      PULSEQLIB_FREE(cand_violations);

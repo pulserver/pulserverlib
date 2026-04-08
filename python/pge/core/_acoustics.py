@@ -194,7 +194,7 @@ def _plot_grad_spectrum_for_subsequence(
         # band.
         for rd in all_rd:
             cf_arr = np.asarray(rd.get('candidate_freqs', []), dtype=np.float64)
-            ax_amps = {
+            {
                 n: np.asarray(rd.get(f'candidate_amps_{n}', []), dtype=np.float64)
                 for n in axis_names
             }
@@ -202,6 +202,23 @@ def _plot_grad_spectrum_for_subsequence(
                 n: np.asarray(rd.get(f'candidate_grad_amps_{n}', []), dtype=np.float64)
                 for n in axis_names
             }
+            # Within each forbidden band, suppress all but the highest Geff,ax
+            # candidate so that only the worst-case peak is displayed per band.
+            best_in_any_band: set = set()
+            in_any_band: set = set()
+            for blo, bhi, _blim, _ in plot_bands:
+                in_band = [
+                    c for c in range(len(cf_arr))
+                    if blo <= float(cf_arr[c]) <= bhi
+                    and c < len(grad_amp_per_ax[ax_name])
+                    and float(grad_amp_per_ax[ax_name][c]) > 0.0
+                ]
+                if not in_band:
+                    continue
+                in_any_band.update(in_band)
+                best = max(in_band, key=lambda c: float(grad_amp_per_ax[ax_name][c]))
+                best_in_any_band.add(best)
+            suppressed = in_any_band - best_in_any_band
             for ci in range(len(cf_arr)):
                 cf = float(cf_arr[ci])
                 if cf < freq_min or cf > freq_max:
@@ -223,8 +240,9 @@ def _plot_grad_spectrum_for_subsequence(
                     alpha=0.85,
                     zorder=3,
                 )
-                # Annotate effective amplitude only if this axis violates a band
-                if any(
+                # Annotate effective amplitude only if this axis violates a band,
+                # and annotate only the dominant candidate per band.
+                if ci not in suppressed and any(
                     blo <= cf <= bhi and gamp_hz > blim
                     for blo, bhi, blim, _ in plot_bands
                 ):

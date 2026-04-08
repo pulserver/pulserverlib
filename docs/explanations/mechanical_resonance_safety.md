@@ -29,11 +29,16 @@ If a block contains a gradient event, an *occurrence* is recorded:
 
 - **def_id** — gradient definition index.
 - **start_time** — cumulative time from the start of the TR (µs).
-- **amplitude** — positional gradient amplitude (Hz/m), signed.
-  This is the per-block `gte.amplitude` value directly from the block
-  table.  The sign is preserved so that opposite-polarity instances of
-  the same gradient definition (e.g. bipolar phase-encode steps)
-  contribute the correct phase to the coherent spectral sum.
+- **amplitude** — maximum positional gradient amplitude (Hz/m), signed.
+  For each gradient definition at each block position, the amplitude is
+  the TR instance whose absolute amplitude is largest across all
+  instances (e.g. if a phase-encode gradient takes amplitudes
+  {−5, 1, 0, 1} across TR instances, the value stored is −5).
+  Together, these per-position maximum amplitudes define a *virtual*
+  canonical TR that represents the worst-case spectral excitation.
+  The sign is preserved so that opposite-polarity instances of the same
+  gradient definition (e.g. bipolar phase-encode steps) contribute the
+  correct phase to the coherent spectral sum.
 
 ### Stage 2 — waveform response model
 
@@ -131,41 +136,47 @@ frequency grid:
 1. **TR harmonics**: $f_m = m \cdot f_1$ for
    $m = 1, \ldots, \lfloor f_\text{max}/f_1 \rfloor$, where
    $f_1 = 1/T_\text{TR}$ is the fundamental of the canonical TR.
-2. **FFT-promoted peaks**: any local maximum of the dense FFT RSS spectrum
-   that exceeds 15% of the global FFT peak and falls more than 25% of the
-   harmonic spacing away from the nearest TR harmonic is added as an extra
-   evaluation frequency.  This catches spectral features that land between
-   adjacent TR harmonics (e.g. bipolar-readout fundamentals in bSSFP).
+2. **FFT-promoted peaks**: for each axis independently, local maxima of the
+   dense FFT whose magnitude exceeds 15% of that axis's own peak are
+   identified.  If *any* axis has a qualifying local max at a given FFT bin
+   and that frequency falls more than 25% of the harmonic spacing away from
+   the nearest TR harmonic, it is added as an extra evaluation frequency.
+   This catches spectral features that land between adjacent TR harmonics
+   (e.g. bipolar-readout fundamentals in bSSFP).
 
 ## Candidate selection
 
 After computing magnitudes at every evaluation frequency, candidates are
 selected through a two-stage filter.
 
-### Analytical power gate
+### Per-axis analytical power gate
 
-The cross-axis RSS² of the coherent magnitudes,
+Each axis is gated independently.  The per-axis peak coherent magnitude
+squared is
 
-$$P(f) \;=\; \sum_\text{ax} M_\text{coh,ax}^2(f)$$
+$$P_\text{ax} \;=\; \max_f\, M_{\text{coh,ax}}^2(f)$$
 
-is computed.  Any frequency where $P(f) < 0.05 \times \max_f P(f)$ is
-rejected, unless it is present in the **FFT bypass set** (see below).
+At each evaluation frequency, axis `ax` is rejected if
+$M_{\text{coh,ax}}^2(f) < 0.05 \times P_\text{ax}$, unless the axis has
+a corresponding entry in its **per-axis FFT bypass set** (see below).
+Axes are never mixed: a weak axis cannot be rescued by a strong axis on
+a different gradient channel.
 
-### FFT bypass set
+### Per-axis FFT bypass set
 
 The analytical waveform response $W_k(f)$ — whether PWL or FFT-based —
 can underestimate power at high-order harmonics when using a coarse
 approximation (e.g., few PWL vertices for a complex shape).  To
-compensate, the dense FFT is scanned for local maxima whose RSS exceeds
-15% of the global FFT peak.  Each such FFT peak is snapped to its nearest
-TR harmonic, and that harmonic is marked to bypass the analytical power
-gate.  FFT-bypassed TR harmonics also use a relaxed tier check (amplitude
-floor only, no coherence ratio requirement), since the FFT already confirms
-a real spectral peak.
+compensate, for each axis independently the dense FFT is scanned for
+local maxima whose magnitude exceeds 15% of that axis's own FFT peak.
+Each such peak is snapped to its nearest TR harmonic, and that harmonic
+is marked to bypass the power gate on that axis only.  FFT-bypassed TR
+harmonics use a relaxed tier check (amplitude floor only, no coherence
+ratio requirement), since the FFT already confirms a real spectral peak.
 
 ### Per-axis tier checks
 
-Frequencies that survive the power gate are evaluated per axis through
+Frequencies that survive the per-axis power gate are evaluated per axis through
 three tiers:
 
 | Tier | Condition |
@@ -232,3 +243,28 @@ independently:
 3. In the safety-check path, the first violation triggers an immediate
    failure with a diagnostic message identifying the subsequence, TR
    variant, axis, frequency, amplitude, and band that was exceeded.
+
+## Computational efficiency
+
+The analysis is designed so that its cost depends on the *complexity* of a
+single canonical TR — not on the number of TRs in the sequence.
+
+- **One-time base-definition work.**  The expensive per-definition
+  operations — sub-period detection, PWL vertex construction, and
+  FFT-based response computation — are performed once per unique gradient
+  definition.  Because Pulseq encodes waveforms as reusable definitions,
+  a sequence with hundreds of TRs typically contains only a handful of
+  distinct gradient shapes.
+- **Reuse across blocks.**  Each block in the canonical TR references a
+  gradient definition that has already been processed.  Event extraction
+  simply records the definition ID, timing offset, and amplitude — no
+  waveform resampling or per-block FFT is needed.
+- **Analytical spectral evaluation.**  The inner-TR spectrum is evaluated
+  by summing closed-form phasor contributions from each event, not by
+  constructing and transforming a full time-domain waveform.  Evaluating
+  at $N_f$ frequencies with $K$ events costs $O(N_f \cdot K)$.
+- **Independence from sequence length.**  Because the method analyses the
+  canonical TR analytically rather than simulating the full time series,
+  a 10 000-TR scan costs the same as a 10-TR scan with the same TR
+  structure.  The only input that scales with sequence length is the
+  dense FFT spectrum, which is computed once by the caller and passed in.
