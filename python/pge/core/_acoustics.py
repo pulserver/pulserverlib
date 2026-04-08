@@ -150,9 +150,6 @@ def _plot_grad_spectrum_for_subsequence(
     title = f'[SS{subsequence_idx}, {title_suffix}] Mechanical Resonances'
     fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
 
-    # Threshold below which a candidate is not shown in a given panel.
-    rel_axis_thresh = 0.25
-
     for panel_idx, ax_name in enumerate(axis_names):
         ax = axes[panel_idx]
         color = colors[ax_name]
@@ -190,10 +187,11 @@ def _plot_grad_spectrum_for_subsequence(
             ax.axvspan(blo, bhi, alpha=0.10, color=colors[b_ax], zorder=0)
 
         # 3 — Structural candidate dotted vertical lines
-        # Each candidate is drawn only in panel(s) where its per-axis analytical
-        # amplitude is at least rel_axis_thresh of the cross-axis maximum.
-        # The effective gradient amplitude (mT/m) is annotated beside the line
-        # only when the candidate falls within a forbidden band.
+        # Each candidate is drawn only in panel(s) where its per-axis G_eff
+        # is nonzero (i.e. the axis was flagged as a candidate at that
+        # frequency).  The effective gradient amplitude (mT/m) is annotated
+        # beside the line only when the candidate falls within a forbidden
+        # band.
         for rd in all_rd:
             cf_arr = np.asarray(rd.get('candidate_freqs', []), dtype=np.float64)
             ax_amps = {
@@ -208,14 +206,13 @@ def _plot_grad_spectrum_for_subsequence(
                 cf = float(cf_arr[ci])
                 if cf < freq_min or cf > freq_max:
                     continue
-                amps = {
-                    n: float(ax_amps[n][ci]) if ci < len(ax_amps[n]) else 0.0
-                    for n in axis_names
-                }
-                a_max = max(amps.values())
-                if not np.isfinite(a_max) or a_max <= 0.0:
-                    continue
-                if amps[ax_name] < rel_axis_thresh * a_max:
+                # Skip this panel if the axis was not a candidate
+                gamp_hz = (
+                    float(grad_amp_per_ax[ax_name][ci])
+                    if ci < len(grad_amp_per_ax[ax_name])
+                    else 0.0
+                )
+                if gamp_hz <= 0.0:
                     continue
                 # Full-height dotted line
                 ax.axvline(
@@ -227,11 +224,6 @@ def _plot_grad_spectrum_for_subsequence(
                     zorder=3,
                 )
                 # Annotate effective amplitude only if this axis violates a band
-                gamp_hz = (
-                    float(grad_amp_per_ax[ax_name][ci])
-                    if ci < len(grad_amp_per_ax[ax_name])
-                    else 0.0
-                )
                 if any(
                     blo <= cf <= bhi and gamp_hz > blim
                     for blo, bhi, blim, _ in plot_bands

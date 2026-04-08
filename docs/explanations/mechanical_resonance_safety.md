@@ -29,8 +29,11 @@ If a block contains a gradient event, an *occurrence* is recorded:
 
 - **def_id** — gradient definition index.
 - **start_time** — cumulative time from the start of the TR (µs).
-- **amplitude** — worst-case positional amplitude
-  $|\mathrm{gte.amplitude}| \times |\mathrm{gdef.max\_amplitude}|$
+- **amplitude** — positional gradient amplitude (Hz/m), signed.
+  This is the per-block `gte.amplitude` value directly from the block
+  table.  The sign is preserved so that opposite-polarity instances of
+  the same gradient definition (e.g. bipolar phase-encode steps)
+  contribute the correct phase to the coherent spectral sum.
 
 ### Stage 2 — waveform response model
 
@@ -50,8 +53,23 @@ sub-periodicity via normalised autocorrelation.  If a repeating sub-period
 is detected (autocorrelation > 0.5, minimum 3 repetitions), the waveform
 is *decomposed*: each sub-period becomes a separate event whose PWL model
 is the sub-period shape, and consecutive sub-periods emit separate events
-at spaced start times.  If no sub-period is detected, the full waveform is
-approximated by a uniformly-sampled PWL with up to 16 vertices.
+at spaced start times.  If no sub-period is detected, the normalised
+waveform shape is transformed via a stored per-event FFT:
+
+1. If a time shape is present (non-uniform sampling), the waveform is
+   interpolated onto a uniform grid at `grad_raster_us` spacing.
+2. The uniform samples are zero-padded to the next power of 2.
+3. A real-to-complex FFT (`kiss_fftr`) produces the magnitude spectrum
+   $|F[k]|$ for $k = 0, \ldots, N/2$.
+4. Magnitudes are normalised by $|F[0]|$ (DC).  If DC $\approx 0$
+   (zero-mean waveform), the peak magnitude is used instead.
+
+At query time, $W_k(f)$ is obtained by linearly interpolating between
+the two nearest FFT bins, giving accurate spectral response for
+waveforms that lack detectable sub-periodicity (e.g., rosette with
+incommensurate frequencies, SPARKLING trajectories).  If the FFT
+computation fails (allocation), the code falls back to a coarse 16-vertex
+uniformly-sampled PWL approximation.
 
 **Arbitrary waveforms with few samples** (< 10) are treated as PWL
 directly from their sample values.
@@ -81,8 +99,9 @@ is:
 
 $$a_k(f) \;=\; A_k \; W_k(f) \; e^{-j\,2\pi f\, t_k}$$
 
-where $A_k$ is the signed amplitude (Hz/m), $W_k(f)$ the normalised PWL
-response, and $t_k$ the start time within the TR.
+where $A_k$ is the signed amplitude (Hz/m), $W_k(f)$ the normalised
+waveform response (PWL or FFT-interpolated), and $t_k$ the start time
+within the TR.
 
 When an event has `num_reps` $= N > 1$, its contribution is multiplied by
 the Dirichlet kernel:
@@ -134,8 +153,9 @@ rejected, unless it is present in the **FFT bypass set** (see below).
 
 ### FFT bypass set
 
-The analytical PWL response $W_k(f)$ can underestimate power at high-order
-harmonics where the true waveform differs from the PWL approximation.  To
+The analytical waveform response $W_k(f)$ — whether PWL or FFT-based —
+can underestimate power at high-order harmonics when using a coarse
+approximation (e.g., few PWL vertices for a complex shape).  To
 compensate, the dense FFT is scanned for local maxima whose RSS exceeds
 15% of the global FFT peak.  Each such FFT peak is snapped to its nearest
 TR harmonic, and that harmonic is marked to bypass the analytical power
@@ -160,7 +180,11 @@ tier.  The candidate list is shared across axes.
 ## Forbidden-band check and effective gradient amplitude
 
 For each candidate frequency $f_c$, the effective gradient amplitude
-$G_\text{eff}$ is computed **per axis**:
+$G_\text{eff}$ is computed only on axes that qualified as candidates at
+that frequency.  For non-candidate axes,
+$G_{\text{eff},\text{ax}}(f_c) = 0$.
+
+On a qualifying axis:
 
 $$G_{\text{eff},\text{ax}}(f_c) \;=\; \frac{\displaystyle\sum_k |A_k|\;|a_k(f_c)|\;|D_{N_k}(f_c,T_k)|}{\displaystyle\sum_k |a_k(f_c)|\;|D_{N_k}(f_c,T_k)|}$$
 
@@ -173,8 +197,9 @@ Each candidate is then checked against the union set of forbidden bands:
 $$f_\text{lo} \;\le\; f_c \;\le\; f_\text{hi} \quad\text{and}\quad G_{\text{eff},\text{ax}}(f_c) \;>\; A_\text{limit}$$
 
 A **violation** is flagged if *any single axis* exceeds the band limit.
-This per-axis check ensures that a resonance driven by one gradient channel
-is caught even if the other channels are quiet at that frequency.
+Because non-candidate axes have $G_\text{eff} = 0$, they never trigger a
+violation.  This ensures that only axes with genuine spectral activity at
+$f_c$ participate in the forbidden-band comparison.
 
 ## Rotation invariance
 

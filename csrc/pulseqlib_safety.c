@@ -1179,6 +1179,10 @@ typedef struct {
     float pwl_values[SA_MAX_PWL_VERTICES];   /**< vertex amplitudes (normalised)     */
     int   num_reps;         /**< repetition count (1=once, N=imaging repeat) */
     float rep_period_us;    /**< repetition period in us (0 if num_reps==1) */
+    /* FFT-based response model (for many-sample arb without sub-period) */
+    float* fft_magnitudes;      /**< normalised |F[k]|/|F[0]|, k=0..fft_num_bins-1 */
+    int    fft_num_bins;         /**< nfft/2+1 frequency bins (0 = not used)        */
+    float  fft_freq_spacing_hz;  /**< 1 / (nfft * raster_s)                         */
 } sa_event;
 
 /** Per-axis event list. */
@@ -1194,11 +1198,16 @@ typedef struct {
 
 static void sa_free_structural_events(sa_structural_events* se)
 {
-    int ax;
+    int ax, k;
     if (!se) return;
     for (ax = 0; ax < 3; ++ax) {
-        if (se->axes[ax].events)
+        if (se->axes[ax].events) {
+            for (k = 0; k < se->axes[ax].num_events; ++k) {
+                if (se->axes[ax].events[k].fft_magnitudes)
+                    PULSEQLIB_FREE(se->axes[ax].events[k].fft_magnitudes);
+            }
             PULSEQLIB_FREE(se->axes[ax].events);
+        }
         se->axes[ax].events = NULL;
         se->axes[ax].num_events = 0;
     }
@@ -1402,6 +1411,137 @@ static int sa_detect_sub_period(
 }
 
 /* ================================================================== */
+/*  Structural acoustic analysis — FFT-based response model           */
+/* ================================================================== */
+
+/**
+ * Compute the normalised FFT magnitude spectrum of a waveform.
+ *
+ * 1. If wave_time_us is non-NULL (non-uniform sampling), interpolate
+ *    onto a uniform grid at the given raster_us spacing.
+ * 2. Zero-pad to next power of 2.
+ * 3. Compute real FFT via kiss_fftr.
+ * 4. Normalise magnitudes by |F[0]| (DC).  If DC ≈ 0, normalise by peak.
+ *
+ * @param wave_vals      Waveform sample values (normalised shape, not physical amplitude).
+ * @param wave_time_us   Per-sample times in µs (may be NULL for uniform raster).
+ * @param num_samp       Number of samples.
+ * @param raster_us      Gradient raster in µs (used for uniform grid).
+ * @param out_mags       Receives allocated normalised magnitude array [nfft/2+1].
+ * @param out_num_bins   Receives nfft/2+1.
+ * @param out_freq_spacing_hz  Receives 1/(nfft*raster_s).
+ * @return 1 on success, 0 on failure (allocation or FFT).
+ */
+static int sa_compute_fft_response(
+    const float* wave_vals,
+    const float* wave_time_us,
+    int num_samp,
+    float raster_us,
+    float** out_mags,
+    int* out_num_bins,
+    float* out_freq_spacing_hz)
+{
+    int nfft, nfreq, i, n_uniform;
+    float* uniform_vals = NULL;
+    float* pad = NULL;
+    kiss_fft_cpx* spectrum = NULL;
+    kiss_fftr_cfg cfg = NULL;
+    float* mags = NULL;
+    float norm_val, mag;
+
+    *out_mags = NULL;
+    *out_num_bins = 0;
+    *out_freq_spacing_hz = 0.0f;
+
+    if (num_samp < 2 || raster_us <= 0.0f) return 0;
+
+    /* Step 1: interpolate to uniform raster if time shape is present */
+    if (wave_time_us) {
+        float duration_us = wave_time_us[num_samp - 1] - wave_time_us[0];
+        float* uniform_t;
+        if (duration_us <= 0.0f) return 0;
+        n_uniform = (int)(duration_us / raster_us) + 1;
+        if (n_uniform < 2) return 0;
+        uniform_t = (float*)PULSEQLIB_ALLOC((size_t)n_uniform * sizeof(float));
+        uniform_vals = (float*)PULSEQLIB_ALLOC((size_t)n_uniform * sizeof(float));
+        if (!uniform_t || !uniform_vals) {
+            if (uniform_t) PULSEQLIB_FREE(uniform_t);
+            if (uniform_vals) PULSEQLIB_FREE(uniform_vals);
+            return 0;
+        }
+        for (i = 0; i < n_uniform; ++i)
+            uniform_t[i] = wave_time_us[0] + (float)i * raster_us;
+        pulseqlib__interp1_linear(uniform_vals, uniform_t, n_uniform,
+                                  wave_time_us, wave_vals, num_samp);
+        PULSEQLIB_FREE(uniform_t);
+    } else {
+        n_uniform = num_samp;
+        uniform_vals = (float*)PULSEQLIB_ALLOC((size_t)n_uniform * sizeof(float));
+        if (!uniform_vals) return 0;
+        memcpy(uniform_vals, wave_vals, (size_t)n_uniform * sizeof(float));
+    }
+
+    /* Step 2: zero-pad to next power of 2 */
+    nfft = (int)pulseqlib__next_pow2((size_t)n_uniform);
+    if (nfft < n_uniform) nfft = n_uniform;
+    nfreq = nfft / 2 + 1;
+
+    pad = (float*)PULSEQLIB_ALLOC((size_t)nfft * sizeof(float));
+    spectrum = (kiss_fft_cpx*)PULSEQLIB_ALLOC((size_t)nfreq * sizeof(kiss_fft_cpx));
+    mags = (float*)PULSEQLIB_ALLOC((size_t)nfreq * sizeof(float));
+    if (!pad || !spectrum || !mags) goto fail;
+
+    memcpy(pad, uniform_vals, (size_t)n_uniform * sizeof(float));
+    for (i = n_uniform; i < nfft; ++i) pad[i] = 0.0f;
+
+    /* Step 3: FFT */
+    cfg = kiss_fftr_alloc(nfft, 0, NULL, NULL);
+    if (!cfg) goto fail;
+    kiss_fftr(cfg, pad, spectrum);
+
+    /* Step 4: compute magnitudes and normalise */
+    for (i = 0; i < nfreq; ++i) {
+        float r = spectrum[i].r;
+        float im = spectrum[i].i;
+        mags[i] = (float)sqrt((double)(r * r + im * im));
+    }
+
+    /* Normalise by DC; fall back to peak if DC ≈ 0 */
+    norm_val = mags[0];
+    if (norm_val < 1.0e-20f) {
+        norm_val = 0.0f;
+        for (i = 0; i < nfreq; ++i)
+            if (mags[i] > norm_val) norm_val = mags[i];
+    }
+    if (norm_val > 1.0e-20f) {
+        for (i = 0; i < nfreq; ++i)
+            mags[i] /= norm_val;
+    } else {
+        /* Essentially zero waveform */
+        for (i = 0; i < nfreq; ++i)
+            mags[i] = 1.0f;
+    }
+
+    *out_mags = mags; mags = NULL;
+    *out_num_bins = nfreq;
+    *out_freq_spacing_hz = 1.0e6f / ((float)nfft * raster_us);
+
+    PULSEQLIB_FREE(uniform_vals);
+    PULSEQLIB_FREE(pad);
+    PULSEQLIB_FREE(spectrum);
+    kiss_fftr_free(cfg);
+    return 1;
+
+fail:
+    if (uniform_vals) PULSEQLIB_FREE(uniform_vals);
+    if (pad) PULSEQLIB_FREE(pad);
+    if (spectrum) PULSEQLIB_FREE(spectrum);
+    if (mags) PULSEQLIB_FREE(mags);
+    if (cfg) kiss_fftr_free(cfg);
+    return 0;
+}
+
+/* ================================================================== */
 /*  Structural acoustic analysis — build events per axis              */
 /* ================================================================== */
 
@@ -1465,6 +1605,11 @@ static int sa_build_axis_events(
         float sub_pwl_t[SA_MAX_PWL_VERTICES];
         float sub_pwl_v[SA_MAX_PWL_VERTICES];
         float sub_period_us;
+        /* Shared FFT template (for many-sample arb without sub-period) */
+        float* shared_fft_mags;
+        int    shared_fft_nbins;
+        float  shared_fft_spacing;
+        int    use_fft;
 
         did = unique_ids[idx];
         gdef = NULL;
@@ -1473,6 +1618,10 @@ static int sa_build_axis_events(
         sub_reps = 0;
         sub_pwl_nv = 0;
         sub_period_us = 0.0f;
+        shared_fft_mags = NULL;
+        shared_fft_nbins = 0;
+        shared_fft_spacing = 0.0f;
+        use_fft = 0;
 
         /* Find first occurrence of this def to get gdef */
         for (j = 0; j < num_occ; ++j) {
@@ -1582,18 +1731,31 @@ static int sa_build_axis_events(
                             }
                         }
                         else {
-                            /* No sub-period: build PWL approximation of full waveform.
-                             * Use SA_MAX_PWL_VERTICES uniformly sampled points. */
-                            nv = SA_MAX_PWL_VERTICES;
-                            if (nv > num_samp) nv = num_samp;
-                            pwl_nv = nv;
-                            for (s_idx = 0; s_idx < nv; ++s_idx) {
-                                int si = (nv > 1) ? (s_idx * (num_samp - 1)) / (nv - 1) : 0;
-                                if (has_time && time_us)
-                                    pwl_t[s_idx] = time_us[si];
-                                else
-                                    pwl_t[s_idx] = 0.5f * raster + (float)si * raster;
-                                pwl_v[s_idx] = wave_samp[si];
+                            /* No sub-period: compute per-event FFT response */
+                            if (sa_compute_fft_response(
+                                    wave_samp,
+                                    has_time ? time_us : NULL,
+                                    num_samp, raster,
+                                    &shared_fft_mags,
+                                    &shared_fft_nbins,
+                                    &shared_fft_spacing))
+                            {
+                                use_fft = 1;
+                                pwl_nv = 0;
+                            }
+                            else {
+                                /* FFT failed: fall back to coarse PWL */
+                                nv = SA_MAX_PWL_VERTICES;
+                                if (nv > num_samp) nv = num_samp;
+                                pwl_nv = nv;
+                                for (s_idx = 0; s_idx < nv; ++s_idx) {
+                                    int si = (nv > 1) ? (s_idx * (num_samp - 1)) / (nv - 1) : 0;
+                                    if (has_time && time_us)
+                                        pwl_t[s_idx] = time_us[si];
+                                    else
+                                        pwl_t[s_idx] = 0.5f * raster + (float)si * raster;
+                                    pwl_v[s_idx] = wave_samp[si];
+                                }
                             }
                         }
                     }
@@ -1616,7 +1778,7 @@ static int sa_build_axis_events(
                         sa_event* tmp;
                         cap *= 2;
                         tmp = (sa_event*)PULSEQLIB_ALLOC((size_t)cap * sizeof(sa_event));
-                        if (!tmp) { PULSEQLIB_FREE(unique_ids); PULSEQLIB_FREE(ae->events); ae->events = NULL; return PULSEQLIB_ERR_ALLOC_FAILED; }
+                        if (!tmp) { if (shared_fft_mags) PULSEQLIB_FREE(shared_fft_mags); PULSEQLIB_FREE(unique_ids); PULSEQLIB_FREE(ae->events); ae->events = NULL; return PULSEQLIB_ERR_ALLOC_FAILED; }
                         memcpy(tmp, ae->events, (size_t)n_events * sizeof(sa_event));
                         PULSEQLIB_FREE(ae->events);
                         ae->events = tmp;
@@ -1632,6 +1794,9 @@ static int sa_build_axis_events(
                            (size_t)sub_pwl_nv * sizeof(float));
                     memcpy(ae->events[n_events].pwl_values, sub_pwl_v,
                            (size_t)sub_pwl_nv * sizeof(float));
+                    ae->events[n_events].fft_magnitudes = NULL;
+                    ae->events[n_events].fft_num_bins = 0;
+                    ae->events[n_events].fft_freq_spacing_hz = 0.0f;
                     n_events++;
                 }
             }
@@ -1641,7 +1806,7 @@ static int sa_build_axis_events(
                     sa_event* tmp;
                     cap *= 2;
                     tmp = (sa_event*)PULSEQLIB_ALLOC((size_t)cap * sizeof(sa_event));
-                    if (!tmp) { PULSEQLIB_FREE(unique_ids); PULSEQLIB_FREE(ae->events); ae->events = NULL; return PULSEQLIB_ERR_ALLOC_FAILED; }
+                    if (!tmp) { if (shared_fft_mags) PULSEQLIB_FREE(shared_fft_mags); PULSEQLIB_FREE(unique_ids); PULSEQLIB_FREE(ae->events); ae->events = NULL; return PULSEQLIB_ERR_ALLOC_FAILED; }
                     memcpy(tmp, ae->events, (size_t)n_events * sizeof(sa_event));
                     PULSEQLIB_FREE(ae->events);
                     ae->events = tmp;
@@ -1651,16 +1816,33 @@ static int sa_build_axis_events(
                 ae->events[n_events].start_time_us = occ[j].start_time_us
                     + (float)gdef->delay;
                 ae->events[n_events].amplitude = occ[j].amplitude;
-                ae->events[n_events].pwl_num_vertices = pwl_nv;
-                if (pwl_nv > 0) {
-                    memcpy(ae->events[n_events].pwl_times_us, pwl_t,
-                           (size_t)pwl_nv * sizeof(float));
-                    memcpy(ae->events[n_events].pwl_values, pwl_v,
-                           (size_t)pwl_nv * sizeof(float));
+                if (use_fft && shared_fft_mags) {
+                    float* fft_copy = (float*)PULSEQLIB_ALLOC(
+                        (size_t)shared_fft_nbins * sizeof(float));
+                    if (!fft_copy) { PULSEQLIB_FREE(shared_fft_mags); PULSEQLIB_FREE(unique_ids); PULSEQLIB_FREE(ae->events); ae->events = NULL; return PULSEQLIB_ERR_ALLOC_FAILED; }
+                    memcpy(fft_copy, shared_fft_mags,
+                           (size_t)shared_fft_nbins * sizeof(float));
+                    ae->events[n_events].fft_magnitudes = fft_copy;
+                    ae->events[n_events].fft_num_bins = shared_fft_nbins;
+                    ae->events[n_events].fft_freq_spacing_hz = shared_fft_spacing;
+                    ae->events[n_events].pwl_num_vertices = 0;
+                } else {
+                    ae->events[n_events].pwl_num_vertices = pwl_nv;
+                    if (pwl_nv > 0) {
+                        memcpy(ae->events[n_events].pwl_times_us, pwl_t,
+                               (size_t)pwl_nv * sizeof(float));
+                        memcpy(ae->events[n_events].pwl_values, pwl_v,
+                               (size_t)pwl_nv * sizeof(float));
+                    }
+                    ae->events[n_events].fft_magnitudes = NULL;
+                    ae->events[n_events].fft_num_bins = 0;
+                    ae->events[n_events].fft_freq_spacing_hz = 0.0f;
                 }
                 n_events++;
             }
         }
+        /* Free shared FFT template for this def_id */
+        if (shared_fft_mags) { PULSEQLIB_FREE(shared_fft_mags); shared_fft_mags = NULL; }
     }
 
     ae->num_events = n_events;
@@ -1782,6 +1964,19 @@ static float sa_eval_pwl_response(
  */
 static float sa_eval_event_response(const sa_event* ev, float f_hz)
 {
+    /* FFT-based response: interpolate into stored magnitude spectrum */
+    if (ev->fft_num_bins > 0 && ev->fft_magnitudes) {
+        float bin_f = f_hz / ev->fft_freq_spacing_hz;
+        int bin_lo = (int)bin_f;
+        float frac;
+        if (bin_lo < 0) return 1.0f;
+        if (bin_lo >= ev->fft_num_bins - 1)
+            return ev->fft_magnitudes[ev->fft_num_bins - 1];
+        frac = bin_f - (float)bin_lo;
+        return ev->fft_magnitudes[bin_lo] * (1.0f - frac)
+             + ev->fft_magnitudes[bin_lo + 1] * frac;
+    }
+    /* PWL-based response */
     if (ev->pwl_num_vertices >= 2)
         return sa_eval_pwl_response(f_hz, ev->pwl_times_us, ev->pwl_values,
                                     ev->pwl_num_vertices);

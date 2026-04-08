@@ -109,8 +109,9 @@ static int count_grad_samples_for_block(
 /* ================================================================== */
 
 /*
- * Computes per-position worst-case |amplitude| for each shot index,
- * considering only TR instances whose group label matches target_group.
+ * Computes per-position worst-case amplitude for each shot index,
+ * preserving the sign of the instance with the largest absolute value.
+ * Considering only TR instances whose group label matches target_group.
  * If tr_group_labels is NULL, all TRs are included (unfiltered).
  *
  * Output arrays must be pre-allocated to tr_size * PULSEQLIB_MAX_GRAD_SHOTS.
@@ -169,8 +170,8 @@ static int compute_position_max_amplitudes_filtered(
                         abs_amp = gte->amplitude;
                         if (abs_amp < 0.0f) abs_amp = -abs_amp;
                         arr_idx = pos * PULSEQLIB_MAX_GRAD_SHOTS + shot_idx;
-                        if (abs_amp > pos_max_gx[arr_idx])
-                            pos_max_gx[arr_idx] = abs_amp;
+                        if (abs_amp > (float)fabs((double)pos_max_gx[arr_idx]))
+                            pos_max_gx[arr_idx] = gte->amplitude;
                     }
                 }
 
@@ -182,8 +183,8 @@ static int compute_position_max_amplitudes_filtered(
                         abs_amp = gte->amplitude;
                         if (abs_amp < 0.0f) abs_amp = -abs_amp;
                         arr_idx = pos * PULSEQLIB_MAX_GRAD_SHOTS + shot_idx;
-                        if (abs_amp > pos_max_gy[arr_idx])
-                            pos_max_gy[arr_idx] = abs_amp;
+                        if (abs_amp > (float)fabs((double)pos_max_gy[arr_idx]))
+                            pos_max_gy[arr_idx] = gte->amplitude;
                     }
                 }
 
@@ -195,8 +196,8 @@ static int compute_position_max_amplitudes_filtered(
                         abs_amp = gte->amplitude;
                         if (abs_amp < 0.0f) abs_amp = -abs_amp;
                         arr_idx = pos * PULSEQLIB_MAX_GRAD_SHOTS + shot_idx;
-                        if (abs_amp > pos_max_gz[arr_idx])
-                            pos_max_gz[arr_idx] = abs_amp;
+                        if (abs_amp > (float)fabs((double)pos_max_gz[arr_idx]))
+                            pos_max_gz[arr_idx] = gte->amplitude;
                     }
                 }
             }
@@ -224,8 +225,8 @@ static int compute_position_max_amplitudes_filtered(
                     abs_amp = gte->amplitude;
                     if (abs_amp < 0.0f) abs_amp = -abs_amp;
                     arr_idx = pos * PULSEQLIB_MAX_GRAD_SHOTS + shot_idx;
-                    if (abs_amp > pos_max_gx[arr_idx])
-                        pos_max_gx[arr_idx] = abs_amp;
+                    if (abs_amp > (float)fabs((double)pos_max_gx[arr_idx]))
+                        pos_max_gx[arr_idx] = gte->amplitude;
                 }
             }
 
@@ -238,8 +239,8 @@ static int compute_position_max_amplitudes_filtered(
                     abs_amp = gte->amplitude;
                     if (abs_amp < 0.0f) abs_amp = -abs_amp;
                     arr_idx = pos * PULSEQLIB_MAX_GRAD_SHOTS + shot_idx;
-                    if (abs_amp > pos_max_gy[arr_idx])
-                        pos_max_gy[arr_idx] = abs_amp;
+                    if (abs_amp > (float)fabs((double)pos_max_gy[arr_idx]))
+                        pos_max_gy[arr_idx] = gte->amplitude;
                 }
             }
 
@@ -252,8 +253,8 @@ static int compute_position_max_amplitudes_filtered(
                     abs_amp = gte->amplitude;
                     if (abs_amp < 0.0f) abs_amp = -abs_amp;
                     arr_idx = pos * PULSEQLIB_MAX_GRAD_SHOTS + shot_idx;
-                    if (abs_amp > pos_max_gz[arr_idx])
-                        pos_max_gz[arr_idx] = abs_amp;
+                    if (abs_amp > (float)fabs((double)pos_max_gz[arr_idx]))
+                        pos_max_gz[arr_idx] = gte->amplitude;
                 }
             }
         }
@@ -504,9 +505,10 @@ static int fill_grad_waveform_for_block(
     }
 
     last_written = t0;
-    sign     = (gte->amplitude >= 0.0f) ? 1.0f : -1.0f;
     shot_idx = gte->shot_index;
     max_amp  = pos_max_amp[shot_idx];
+    sign     = (max_amp >= 0.0f) ? 1.0f : -1.0f;
+    if (max_amp < 0.0f) max_amp = -max_amp;
     delay_us = (float)gdef->delay;
 
     if (delay_us > 0.0f) {
@@ -881,7 +883,6 @@ int pulseqlib__get_gradient_waveforms_range(
                 k = gx_tab->shot_index;
                 if (k >= 0 && k < PULSEQLIB_MAX_GRAD_SHOTS) {
                     actual_amp[k] = gx_tab->amplitude;
-                    if (actual_amp[k] < 0.0f) actual_amp[k] = -actual_amp[k];
                 }
             }
             idx_gx += fill_grad_waveform_for_block(desc,
@@ -893,7 +894,6 @@ int pulseqlib__get_gradient_waveforms_range(
                 k = gy_tab->shot_index;
                 if (k >= 0 && k < PULSEQLIB_MAX_GRAD_SHOTS) {
                     actual_amp[k] = gy_tab->amplitude;
-                    if (actual_amp[k] < 0.0f) actual_amp[k] = -actual_amp[k];
                 }
             }
             idx_gy += fill_grad_waveform_for_block(desc,
@@ -905,7 +905,6 @@ int pulseqlib__get_gradient_waveforms_range(
                 k = gz_tab->shot_index;
                 if (k >= 0 && k < PULSEQLIB_MAX_GRAD_SHOTS) {
                     actual_amp[k] = gz_tab->amplitude;
-                    if (actual_amp[k] < 0.0f) actual_amp[k] = -actual_amp[k];
                 }
             }
             idx_gz += fill_grad_waveform_for_block(desc,
@@ -1839,7 +1838,6 @@ int pulseqlib_get_tr_waveforms(
                 k = gx_tab->shot_index;
                 if (k >= 0 && k < PULSEQLIB_MAX_GRAD_SHOTS) {
                     actual_amp[k] = gx_tab->amplitude;
-                    if (actual_amp[k] < 0.0f) actual_amp[k] = -actual_amp[k];
                 }
             }
             idx_gx += fill_grad_waveform_for_block(desc, out->gx.time_us, out->gx.amplitude, idx_gx, gx_def, gx_tab, t0, actual_amp, block_dur_us);
@@ -1849,7 +1847,6 @@ int pulseqlib_get_tr_waveforms(
                 k = gy_tab->shot_index;
                 if (k >= 0 && k < PULSEQLIB_MAX_GRAD_SHOTS) {
                     actual_amp[k] = gy_tab->amplitude;
-                    if (actual_amp[k] < 0.0f) actual_amp[k] = -actual_amp[k];
                 }
             }
             idx_gy += fill_grad_waveform_for_block(desc, out->gy.time_us, out->gy.amplitude, idx_gy, gy_def, gy_tab, t0, actual_amp, block_dur_us);
@@ -1859,7 +1856,6 @@ int pulseqlib_get_tr_waveforms(
                 k = gz_tab->shot_index;
                 if (k >= 0 && k < PULSEQLIB_MAX_GRAD_SHOTS) {
                     actual_amp[k] = gz_tab->amplitude;
-                    if (actual_amp[k] < 0.0f) actual_amp[k] = -actual_amp[k];
                 }
             }
             idx_gz += fill_grad_waveform_for_block(desc, out->gz.time_us, out->gz.amplitude, idx_gz, gz_def, gz_tab, t0, actual_amp, block_dur_us);
