@@ -34,15 +34,15 @@ typedef int pulseqlib_param_id;
 /* Timing */
 #define PULSEQLIB_PARAM_TE              0
 #define PULSEQLIB_PARAM_TR              1
-#define PULSEQLIB_PARAM_TI              2
+#define PULSEQLIB_PARAM_TI              2   /* wire: "prep_time" */
 /* Spatial */
 #define PULSEQLIB_PARAM_FOV             3
 #define PULSEQLIB_PARAM_SLICE_THICKNESS 4
 #define PULSEQLIB_PARAM_NSLICES         5
-#define PULSEQLIB_PARAM_MATRIX          6
-#define PULSEQLIB_PARAM_NECHOES         7
+#define PULSEQLIB_PARAM_MATRIX          6   /* wire: "nx" */
+#define PULSEQLIB_PARAM_NECHOES         7   /* wire: "num_echoes" */
 /* Contrast */
-#define PULSEQLIB_PARAM_FLIP_ANGLE      8
+#define PULSEQLIB_PARAM_FLIP_ANGLE      8   /* wire: "flip" */
 #define PULSEQLIB_PARAM_BANDWIDTH       9
 /* Flags */
 #define PULSEQLIB_PARAM_FAT_SAT         10
@@ -70,7 +70,55 @@ typedef int pulseqlib_param_id;
 #define PULSEQLIB_PARAM_USER17          30
 #define PULSEQLIB_PARAM_USER18          31
 #define PULSEQLIB_PARAM_USER19          32
-#define PULSEQLIB_PARAM_COUNT           33  /* sentinel -- number of known params */
+/* --- Extended timing --- */
+#define PULSEQLIB_PARAM_TE2             33
+#define PULSEQLIB_PARAM_TRECOVERY       34
+/* --- Extended spatial --- */
+#define PULSEQLIB_PARAM_PHASE_FOV       35
+#define PULSEQLIB_PARAM_SLICE_SPACING   36
+#define PULSEQLIB_PARAM_NY              37
+#define PULSEQLIB_PARAM_NUM_SLABS       38
+#define PULSEQLIB_PARAM_OVERLAP_LOCS    39
+/* --- Acquisition --- */
+#define PULSEQLIB_PARAM_NEX             40
+#define PULSEQLIB_PARAM_NUM_SHOTS       41
+#define PULSEQLIB_PARAM_ETL             42
+/* --- Enum / stringlist --- */
+#define PULSEQLIB_PARAM_SEQUENCE_TYPE   43
+#define PULSEQLIB_PARAM_IMAGING_MODE    44
+#define PULSEQLIB_PARAM_PREP_TYPE       45
+#define PULSEQLIB_PARAM_TRIGGER_TYPE    46
+/* --- Extended flags --- */
+#define PULSEQLIB_PARAM_SWAP_PF         47
+#define PULSEQLIB_PARAM_ENABLE_SAT_UI   48
+#define PULSEQLIB_PARAM_RECORD_PHYSIO   49
+/* --- Acceleration --- */
+#define PULSEQLIB_PARAM_RY              50
+#define PULSEQLIB_PARAM_RZ              51
+#define PULSEQLIB_PARAM_COMPRESSED_SENS 52
+#define PULSEQLIB_PARAM_MULTIBAND       53
+/* --- Cine / trigger --- */
+#define PULSEQLIB_PARAM_NUM_FRAMES      54
+#define PULSEQLIB_PARAM_DELAY_TIME      55
+#define PULSEQLIB_PARAM_TRIGGER_DELAY   56
+#define PULSEQLIB_PARAM_TRIGGER_WINDOW  57
+/* --- Diffusion --- */
+#define PULSEQLIB_PARAM_DIFF_BVALUES    58
+#define PULSEQLIB_PARAM_DIFF_DIRECTIONS 59
+/* --- Saturation bands --- */
+#define PULSEQLIB_PARAM_SAT_X           60
+#define PULSEQLIB_PARAM_SAT_Y           61
+#define PULSEQLIB_PARAM_SAT_Z           62
+#define PULSEQLIB_PARAM_SAT_X_LOC1      63
+#define PULSEQLIB_PARAM_SAT_X_LOC2      64
+#define PULSEQLIB_PARAM_SAT_Y_LOC1      65
+#define PULSEQLIB_PARAM_SAT_Y_LOC2      66
+#define PULSEQLIB_PARAM_SAT_Z_LOC1      67
+#define PULSEQLIB_PARAM_SAT_Z_LOC2      68
+#define PULSEQLIB_PARAM_SAT_X_THICK     69
+#define PULSEQLIB_PARAM_SAT_Y_THICK     70
+#define PULSEQLIB_PARAM_SAT_Z_THICK     71
+#define PULSEQLIB_PARAM_COUNT           72  /* sentinel */
 
 /* ------------------------------------------------------------------ */
 /*  Parameter types                                                   */
@@ -221,6 +269,12 @@ int pulseqlib_protocol_set_int(pulseqlib_protocol* p,
                                 int param_id, int value);
 int pulseqlib_protocol_set_bool(pulseqlib_protocol* p,
                                  int param_id, int value);
+
+int pulseqlib_protocol_get_stringlist(const pulseqlib_protocol* p,
+                                      int param_id, int* idx_out);
+int pulseqlib_protocol_set_stringlist(pulseqlib_protocol* p,
+                                      int param_id, int idx,
+                                      const char* options);
 
 #ifdef __cplusplus
 }

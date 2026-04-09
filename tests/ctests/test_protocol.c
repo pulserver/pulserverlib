@@ -22,7 +22,7 @@ MU_TEST(test_param_lookup)
     mu_assert_string_eq("TE", pulseqlib_param_wire_name(id));
     mu_assert_int_eq(PULSEQLIB_PTYPE_FLOAT, pulseqlib_param_get_type(id));
 
-    id = pulseqlib_param_find("NSlices");
+    id = pulseqlib_param_find("nslices");
     mu_assert_int_eq(PULSEQLIB_PARAM_NSLICES, id);
     mu_assert_int_eq(PULSEQLIB_PTYPE_INT, pulseqlib_param_get_type(id));
 
@@ -43,9 +43,9 @@ MU_TEST(test_param_lookup)
 
 MU_TEST(test_no_user0)
 {
-    mu_assert_int_eq(-1, pulseqlib_param_find("User0"));
-    /* User1 should exist */
-    mu_assert(pulseqlib_param_find("User1") >= 0, "User1 should exist");
+    mu_assert_int_eq(-1, pulseqlib_param_find("user0_value"));
+    /* user1_value should exist */
+    mu_assert(pulseqlib_param_find("user1_value") >= 0, "user1_value should exist");
 }
 
 /* ================================================================== */
@@ -56,9 +56,9 @@ static const char* PREAMBLE =
     "[NimPulseqGUI Protocol]\n"
     "TE: 5.0\n"
     "TR: 500.0\n"
-    "NSlices: 10\n"
+    "nslices: 10\n"
     "FatSat: true\n"
-    "User3: 42.5\n"
+    "user3_value: 42.5\n"
     "[NimPulseqGUI Protocol End]\n";
 
 MU_TEST(test_parse)
@@ -89,7 +89,7 @@ MU_TEST(test_parse)
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
                          PULSEQLIB_PARAM_USER3, &fval));
-    mu_assert(fabsf(fval - 42.5f) < 1e-6f, "User3 value");
+    mu_assert(fabsf(fval - 42.5f) < 1e-6f, "user3 value");
 }
 
 /* ================================================================== */
@@ -136,7 +136,7 @@ MU_TEST(test_setters)
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
                          PULSEQLIB_PARAM_FOV, &fval));
-    mu_assert(fabsf(fval - 240.0f) < 1e-6f, "FOV");
+    mu_assert(fabsf(fval - 240.0f) < 1e-6f, "fov");
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_int(&proto,
                          PULSEQLIB_PARAM_MATRIX, &ival));
@@ -191,9 +191,9 @@ static const char* PREAMBLE_RICH =
     "[NimPulseqGUI Protocol]\n"
     "TE: float|5.0|0.5|100.0|0.1|ms\n"
     "TR: float|500.0|10.0|10000.0|1.0|ms\n"
-    "NSlices: int|10|1|256|1|slices\n"
+    "nslices: int|10|1|256|1|slices\n"
     "FatSat: bool|1\n"
-    "User3: float|42.5|-100.0|100.0|0.5|\n"
+    "user3_value: float|42.5|-100.0|100.0|0.5|\n"
     "[NimPulseqGUI Protocol End]\n";
 
 MU_TEST(test_parse_rich)
@@ -248,15 +248,15 @@ MU_TEST(test_parse_rich)
                          PULSEQLIB_PARAM_FAT_SAT, &bval));
     mu_assert_int_eq(1, bval);
 
-    /* User3: float with schema, empty unit */
+    /* user3_value: float with schema, empty unit */
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
                          PULSEQLIB_PARAM_USER3, &fval));
-    mu_assert(fabsf(fval - 42.5f) < 1e-6f, "User3 (rich)");
+    mu_assert(fabsf(fval - 42.5f) < 1e-6f, "user3 (rich)");
 
     idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_USER3);
     pv = &proto.values[idx];
     mu_assert_int_eq(1, pv->has_schema);
-    mu_assert(fabsf(pv->range_min - (-100.0f)) < 1e-4f, "User3 min");
+    mu_assert(fabsf(pv->range_min - (-100.0f)) < 1e-4f, "user3 min");
 }
 
 /* ================================================================== */
@@ -267,7 +267,7 @@ static const char* PREAMBLE_MIXED =
     "[NimPulseqGUI Protocol]\n"
     "TE: float|5.0|0.5|100.0|0.1|ms\n"
     "TR: 500.0\n"
-    "NSlices: int|10|1|256|1|\n"
+    "nslices: int|10|1|256|1|\n"
     "FatSat: true\n"
     "[NimPulseqGUI Protocol End]\n";
 
@@ -318,9 +318,9 @@ static const char* PREAMBLE_DROPDOWN =
     "[NimPulseqGUI Protocol]\n"
     "TE: float|dropdown|12.0|5.0|80.0|1.0|ms|8.0|12.0|16.0\n"
     "TR: float|typein|500.0|10.0|10000.0|1.0|ms\n"
-    "Matrix: int|dropdown|128|64|512|1||64|128|256\n"
-    "Bandwidth: float|off|125000.0|10000.0|500000.0|1000.0|Hz/px\n"
-    "NSlices: int|10|1|256|1|\n"
+    "nx: int|dropdown|128|64|512|1||64|128|256\n"
+    "bandwidth: float|off|125000.0|10000.0|500000.0|1000.0|Hz/px\n"
+    "nslices: int|10|1|256|1|\n"
     "[NimPulseqGUI Protocol End]\n";
 
 MU_TEST(test_parse_dropdown)
@@ -358,30 +358,30 @@ MU_TEST(test_parse_dropdown)
     mu_assert_int_eq(1, pv->has_schema);
     mu_assert_int_eq(0, pv->num_options);
 
-    /* Matrix: int dropdown with 3 options */
+    /* nx: int dropdown with 3 options */
     idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_MATRIX);
-    mu_assert(idx >= 0, "Matrix found");
+    mu_assert(idx >= 0, "nx found");
     pv = &proto.values[idx];
     mu_assert_int_eq(PULSEQLIB_MODE_DROPDOWN, (int)pv->mode);
     mu_assert_int_eq(PULSEQLIB_PTYPE_INT, (int)pv->type);
     mu_assert_int_eq(128, pv->v.i);
     mu_assert_int_eq(3, pv->num_options);
-    mu_assert(fabsf(pv->options[0] - 64.0f) < 1e-6f, "Matrix opt[0]");
-    mu_assert(fabsf(pv->options[1] - 128.0f) < 1e-6f, "Matrix opt[1]");
-    mu_assert(fabsf(pv->options[2] - 256.0f) < 1e-6f, "Matrix opt[2]");
+    mu_assert(fabsf(pv->options[0] - 64.0f) < 1e-6f, "nx opt[0]");
+    mu_assert(fabsf(pv->options[1] - 128.0f) < 1e-6f, "nx opt[1]");
+    mu_assert(fabsf(pv->options[2] - 256.0f) < 1e-6f, "nx opt[2]");
 
-    /* Bandwidth: off mode */
+    /* bandwidth: off mode */
     idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_BANDWIDTH);
-    mu_assert(idx >= 0, "BW found");
+    mu_assert(idx >= 0, "bandwidth found");
     pv = &proto.values[idx];
     mu_assert_int_eq(PULSEQLIB_MODE_OFF, (int)pv->mode);
-    mu_assert(fabsf(pv->v.f - 125000.0f) < 1.0f, "BW value");
+    mu_assert(fabsf(pv->v.f - 125000.0f) < 1.0f, "bandwidth value");
     mu_assert_int_eq(1, pv->has_schema);
     mu_assert_int_eq(0, pv->num_options);
 
-    /* NSlices: old format (no explicit mode) — defaults to TYPEIN */
+    /* nslices: old format (no explicit mode) — defaults to TYPEIN */
     idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_NSLICES);
-    mu_assert(idx >= 0, "NSlices found");
+    mu_assert(idx >= 0, "nslices found");
     pv = &proto.values[idx];
     mu_assert_int_eq(PULSEQLIB_MODE_TYPEIN, (int)pv->mode);
     mu_assert_int_eq(10, pv->v.i);
