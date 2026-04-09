@@ -12,6 +12,13 @@
 #ifndef PULSEQLIB_CONFIG_H
 #define PULSEQLIB_CONFIG_H
 
+/* Suppress -Wfloat-equal for intentional exact float comparisons
+ * (shape decompression RLE, zero-detection, etc.).
+ * Required when building with GE EPIC's -Werror -Wfloat-equal. */
+#if defined(__GNUC__)
+#pragma GCC diagnostic ignored "-Wfloat-equal"
+#endif
+
 #include <stdlib.h>
 
 /* ------------------------------------------------------------------ */

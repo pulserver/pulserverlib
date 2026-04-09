@@ -13,6 +13,7 @@ set(PULSEQLIB_SOURCES
     pulseqlib_safety.c
     pulseqlib_getters.c
     pulseqlib_freqmod.c
+    pulseqlib_protocol.c
 )
 
 # MD5 source (needed by pulseqlib_parse for signature verification)
@@ -43,4 +44,14 @@ add_library(pulseqlib STATIC
 # Include the current directory so #include "pulseqlib.h" works
 target_include_directories(pulseqlib
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Bridge module (POSIX-only, uses fork/exec/pipe)
+set(BRIDGE_SOURCES
+    pulseqlib_bridge.c
+)
+add_library(pulseqlib_bridge STATIC ${BRIDGE_SOURCES})
+target_link_libraries(pulseqlib_bridge PUBLIC pulseqlib)
+target_include_directories(pulseqlib_bridge
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
 )

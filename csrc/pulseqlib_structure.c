@@ -38,7 +38,7 @@
 /*  Tiny helpers                                                      */
 /* ================================================================== */
 
-static int array_equal(const int* a, const int* b, int len)
+static int struct_array_equal(const int* a, const int* b, int len)
 {
     int i;
     for (i = 0; i < len; ++i)
@@ -1772,7 +1772,7 @@ int pulseqlib__get_scan_table_segments(
 
             if (!n_is_pure_delay && !i_is_pure_delay &&
                 exp_segs[n].num_blocks == uniq_segs[i].num_blocks) {
-                if (array_equal(exp_segs[n].unique_block_indices,
+                if (struct_array_equal(exp_segs[n].unique_block_indices,
                                 uniq_segs[i].unique_block_indices,
                                 exp_segs[n].num_blocks)) {
                     found = i; break;

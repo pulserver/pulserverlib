@@ -9,6 +9,11 @@
 #ifndef external_kiss_fft_log_h
 #define external_kiss_fft_log_h
 
+/* Avoid conflict with VxWorks ERROR macro */
+#ifdef ERROR
+#undef ERROR
+#endif
+
 #define ERROR 1
 #define WARNING 2
 #define INFO 3
