@@ -125,16 +125,13 @@ static int read_preamble_block(int fd, char* buf, int bufsz)
 /*  Lifecycle                                                         */
 /* ------------------------------------------------------------------ */
 
-int pulseqlib_bridge_open(pulseqlib_bridge* b,
-                           const char* exe_path,
-                           const char* script_path)
+/* Private helper: fork + exec with caller-provided argv. */
+static int bridge_do_open(pulseqlib_bridge* b, const char* exe_path,
+                           const char** argv)
 {
-    int to_child[2];   /* host writes to_child[1], child reads to_child[0] */
-    int from_child[2]; /* child writes from_child[1], host reads from_child[0] */
+    int to_child[2];
+    int from_child[2];
     pid_t pid;
-
-    if (!b || !exe_path || !script_path) return -1;
-    memset(b, 0, sizeof(*b));
 
     if (pipe(to_child) < 0) return -1;
     if (pipe(from_child) < 0) {
@@ -145,7 +142,7 @@ int pulseqlib_bridge_open(pulseqlib_bridge* b,
 
     pid = fork();
     if (pid < 0) {
-        close(to_child[0]);  close(to_child[1]);
+        close(to_child[0]);   close(to_child[1]);
         close(from_child[0]); close(from_child[1]);
         return -1;
     }
@@ -155,16 +152,13 @@ int pulseqlib_bridge_open(pulseqlib_bridge* b,
         close(to_child[1]);
         close(from_child[0]);
 
-        dup2(to_child[0], STDIN_FILENO);
+        dup2(to_child[0],   STDIN_FILENO);
         dup2(from_child[1], STDOUT_FILENO);
         close(to_child[0]);
         close(from_child[1]);
 
-        execl(exe_path, exe_path,
-              "--persistent",
-              "--script", script_path,
-              (char*)NULL);
-        /* If we get here, exec failed */
+        execv(exe_path, (char* const*)argv);
+        /* exec failed */
         _exit(127);
     }
 
@@ -176,6 +170,100 @@ int pulseqlib_bridge_open(pulseqlib_bridge* b,
     b->to_child   = to_child[1];
     b->from_child = from_child[0];
     return 0;
+}
+
+int pulseqlib_bridge_open(pulseqlib_bridge* b,
+                           const char* exe_path,
+                           const char* script_path)
+{
+    const char* argv[6];
+
+    if (!b || !exe_path || !script_path) return -1;
+    memset(b, 0, sizeof(*b));
+
+    argv[0] = exe_path;
+    argv[1] = "--persistent";
+    argv[2] = "--script";
+    argv[3] = script_path;
+    argv[4] = (const char*)NULL;
+
+    return bridge_do_open(b, exe_path, argv);
+}
+
+int pulseqlib_bridge_open_with_opts(pulseqlib_bridge* b,
+                                     const char* exe_path,
+                                     const char* script_path,
+                                     const pulseqlib_opts* opts)
+{
+    /* All declarations at top (C89) */
+    const char* argv[24];
+    int n;
+    /* Per-flag string buffers (64 bytes each) */
+    char buf_gamma[64];
+    char buf_b0[64];
+    char buf_maxgrad[64];
+    char buf_maxslew[64];
+    char buf_rfraster[64];
+    char buf_gradraster[64];
+    char buf_adcraster[64];
+    char buf_blockraster[64];
+
+    if (!b || !exe_path || !script_path) return -1;
+    memset(b, 0, sizeof(*b));
+
+    if (!opts) {
+        /* No limits available: fall back to plain open */
+        return pulseqlib_bridge_open(b, exe_path, script_path);
+    }
+
+    n = 0;
+    argv[n++] = exe_path;
+    argv[n++] = "--persistent";
+    argv[n++] = "--script";
+    argv[n++] = script_path;
+
+    if (opts->gamma_hz_per_t > 0.0f) {
+        sprintf(buf_gamma, "--gamma=%.8g", (double)opts->gamma_hz_per_t);
+        argv[n++] = buf_gamma;
+    }
+    if (opts->b0_t > 0.0f) {
+        sprintf(buf_b0, "--B0=%.8g", (double)opts->b0_t);
+        argv[n++] = buf_b0;
+    }
+    if (opts->max_grad_hz_per_m > 0.0f) {
+        sprintf(buf_maxgrad, "--maxGrad=%.8g", (double)opts->max_grad_hz_per_m);
+        argv[n++] = buf_maxgrad;
+        argv[n++] = "--gradUnit=Hz/m";
+    }
+    if (opts->max_slew_hz_per_m_per_s > 0.0f) {
+        sprintf(buf_maxslew, "--maxSlew=%.8g",
+                (double)opts->max_slew_hz_per_m_per_s);
+        argv[n++] = buf_maxslew;
+        argv[n++] = "--slewUnit=Hz/m/s";
+    }
+    if (opts->rf_raster_us > 0.0f) {
+        sprintf(buf_rfraster, "--rfRasterTime=%.8g",
+                (double)(opts->rf_raster_us * 1.0e-6f));
+        argv[n++] = buf_rfraster;
+    }
+    if (opts->grad_raster_us > 0.0f) {
+        sprintf(buf_gradraster, "--gradRasterTime=%.8g",
+                (double)(opts->grad_raster_us * 1.0e-6f));
+        argv[n++] = buf_gradraster;
+    }
+    if (opts->adc_raster_us > 0.0f) {
+        sprintf(buf_adcraster, "--adcRasterTime=%.8g",
+                (double)(opts->adc_raster_us * 1.0e-6f));
+        argv[n++] = buf_adcraster;
+    }
+    if (opts->block_raster_us > 0.0f) {
+        sprintf(buf_blockraster, "--blockDurationRaster=%.8g",
+                (double)(opts->block_raster_us * 1.0e-6f));
+        argv[n++] = buf_blockraster;
+    }
+    argv[n] = (const char*)NULL;
+
+    return bridge_do_open(b, exe_path, argv);
 }
 
 void pulseqlib_bridge_close(pulseqlib_bridge* b)

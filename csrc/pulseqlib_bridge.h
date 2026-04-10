@@ -10,6 +10,7 @@
 #define PULSEQLIB_BRIDGE_H
 
 #include "pulseqlib_protocol.h"
+#include "pulseqlib_types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +44,21 @@ typedef struct pulseqlib_bridge {
 int pulseqlib_bridge_open(pulseqlib_bridge* b,
                            const char* exe_path,
                            const char* script_path);
+
+/**
+ * Spawn the bridge child process, passing scanner system limits as CLI
+ * flags to nimpulseqgui (--gamma, --B0, --maxGrad, --maxSlew, rasters).
+ *
+ * @param b           Bridge handle (caller allocates, will be zeroed).
+ * @param exe_path    Path to pypulseq_host executable.
+ * @param script_path Path to the Python plugin script.
+ * @param opts        Scanner limits (may be NULL, falls back to plain open).
+ * @return 0 on success, -1 on error (errno set).
+ */
+int pulseqlib_bridge_open_with_opts(pulseqlib_bridge* b,
+                                     const char* exe_path,
+                                     const char* script_path,
+                                     const pulseqlib_opts* opts);
 
 /**
  * Send QUIT and close the bridge.  Waits for child to exit.
