@@ -438,9 +438,14 @@ int pulseqlib_get_rf_array(
         num_instances = num_passes;
         use_scan_table = 1;
     } else {
+        int num_avgs = (desc->num_averages > 1) ? desc->num_averages : 1;
         start = trd->num_prep_blocks + trd->imaging_tr_start;
         count = trd->tr_size;
-        num_instances = trd->num_trs;
+        /* Total TR instances: imaging TRs replicated by NEX,
+         * plus degenerate prep/cooldown TRs (played once each). */
+        num_instances = num_avgs * trd->num_trs
+                      + trd->num_prep_trs
+                      + trd->num_cooldown_trs;
         if (num_instances < 0) num_instances = 0;
     }
 
@@ -470,8 +475,8 @@ int pulseqlib_get_rf_array(
     if (num_rf == 0)
         return 0;
 
-    /* Allocate output array */
-    *out_pulses = (pulseqlib_rf_stats*)malloc(
+    /* Allocate output array (caller frees with PULSEQLIB_FREE) */
+    *out_pulses = (pulseqlib_rf_stats*)PULSEQLIB_ALLOC(
         (size_t)num_rf * sizeof(pulseqlib_rf_stats));
     if (!*out_pulses)
         return PULSEQLIB_ERR_ALLOC_FAILED;
@@ -503,7 +508,8 @@ int pulseqlib_get_rf_array(
         act_amp = desc->rf_table[bte->rf_id].amplitude;
         (*out_pulses)[n].act_amplitude_hz = (act_amp >= 0.0f)
             ? act_amp : -act_amp;
-        (*out_pulses)[n].base_amplitude_hz = (*out_pulses)[n].act_amplitude_hz;
+        /* base_amplitude_hz retains definition-level nominal amplitude
+         * from the hard-copy above (rfdef->stats.base_amplitude_hz). */
 
         ratio = 0.0f;
         if (rfdef->stats.base_amplitude_hz > 0.0f) {

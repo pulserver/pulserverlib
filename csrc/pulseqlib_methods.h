@@ -730,8 +730,8 @@ int pulseqlib_get_tr_rf_ids(const pulseqlib_collection* coll,
  *   - Non-degenerate prep/cooldown subsequences use one full pass including
  *     average expansion.
  *
- * The library allocates @p *out_pulses via malloc(); the caller must
- * free() it when done.  On return @p *out_pulses is NULL if the canonical
+ * The library allocates @p *out_pulses via PULSEQLIB_ALLOC(); the caller
+ * must release it with PULSEQLIB_FREE() when done.  On return @p *out_pulses is NULL if the canonical
  * unit contains no RF events.
  *
  * @param[in]  coll          Loaded collection.

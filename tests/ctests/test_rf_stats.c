@@ -100,10 +100,10 @@ MU_TEST(test_rf_array_nondegenerate_fullpass_expanded)
 
     npulses = pulseqlib_get_rf_array(coll, &pulses, 0);
     mu_assert_int_eq(8, npulses);
-    mu_assert_float_near("prep base_amp_hz",
-        125.0f, pulses[0].base_amplitude_hz, 1.0f);
-    mu_assert_float_near("cooldown base_amp_hz",
-        500.0f, pulses[npulses - 1].base_amplitude_hz, 1.0f);
+    mu_assert_float_near("prep act_amp_hz",
+        125.0f, pulses[0].act_amplitude_hz, 1.0f);
+    mu_assert_float_near("cooldown act_amp_hz",
+        500.0f, pulses[npulses - 1].act_amplitude_hz, 1.0f);
     for (i = 0; i < npulses; ++i)
         mu_assert_int_eq(1, pulses[i].num_instances);
 
