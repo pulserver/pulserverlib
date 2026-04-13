@@ -532,6 +532,7 @@ typedef struct pulseqlib_block_instance {
 
     /* Digital output */
     int   digitalout_flag;      /**< 1 = digital output event present  */
+    int   digitalout_channel;   /**< trigger channel, -1 if absent     */
 
     /* ADC */
     int   adc_flag;             /**< 1 = ADC acquisition active        */
@@ -546,7 +547,7 @@ typedef struct pulseqlib_block_instance {
     0, 0, 0, \
     0, 0, 0, \
     {1,0,0, 0,1,0, 0,0,1}, 0, 0, \
-    0, \
+    0, -1, \
     0, 0.0f, 0.0f, \
 }
 
@@ -727,6 +728,7 @@ typedef struct pulseqlib_block_info {
     int   has_digitalout;         /**< 1 if digital output present       */
     int   digitalout_delay_us;    /**< delay (us), -1 if absent          */
     int   digitalout_duration_us; /**< duration (us), -1 if absent       */
+    int   digitalout_channel;     /**< trigger channel, -1 if absent     */
 
     /* Flags */
     int   has_rotation;           /**< 1 if rotation event present       */
@@ -740,7 +742,7 @@ typedef struct pulseqlib_block_info {
     {0,0,0}, {0,0,0}, {-1,-1,-1}, {-1,-1,-1}, {-1,-1,-1}, \
     0, -1, -1, -1, -1, 0, 0, \
     0, -1, -1, \
-    0, -1, -1, \
+    0, -1, -1, -1, \
     0, 0, 0, 0 \
 }
 

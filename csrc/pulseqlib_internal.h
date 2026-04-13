@@ -299,6 +299,11 @@ typedef struct pulseqlib_freq_mod_library {
     float* plan_phase;          /* [num_plan_instances] phase comp (rad)
                                  * from all 3 channels                     */
 
+    /* Hardware-format waveforms: short DAC units with WEOS_BIT on last.
+     * Conversion: sample = (int16)(Hz / (4 * TARDIS_FREQ_RES))          */
+    short* plan_hw_data;        /* flat [num_plan_instances * max_samples] */
+    short** plan_hw_waveforms;  /* [num_plan_instances] row pointers       */
+
     /* O(1) accessor by scan-table position. */
     int  scan_table_len;
     int* scan_to_plan;          /* [scan_table_len] -> plan instance, -1   */

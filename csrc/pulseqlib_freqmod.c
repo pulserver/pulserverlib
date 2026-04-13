@@ -21,8 +21,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* OMEGA DAC conversion: Hz → short DAC units.
+ * PULSEQLIB_FREQ_CONVERSION and PULSEQLIB_WAVEFORM_END are defined
+ * in pulseqlib_config.h (vendor-overridable).  The OMEGA board uses
+ * 4× oversampled DAC:
+ *   dac_value = freq_hz / (4 * PULSEQLIB_FREQ_CONVERSION)
+ * PULSEQLIB_WAVEFORM_END marks the last waveform sample. */
+#define PULSEQLIB_OMEGA_SCALE  (1.0f / (4.0f * PULSEQLIB_FREQ_CONVERSION))
+
 /* Forward declarations (used in error paths). */
 static void freq_mod_library_free(pulseqlib_freq_mod_library* lib);
+static void convert_plan_to_hw(pulseqlib_freq_mod_library* lib);
 void pulseqlib_freq_mod_collection_free(pulseqlib_freq_mod_collection* fmc);
 
 /* ================================================================== */
@@ -417,6 +426,32 @@ static void compute_plan_waveforms(
         for (ch = 0; ch < 3; ++ch)
             lib->plan_phase[p] += lib->entry_ref_3ch[eidx * 3 + ch] * u[ch];
     }
+
+    /* Convert float Hz waveforms → short DAC units for hardware DMA */
+    convert_plan_to_hw(lib);
+}
+
+/* Convert plan_waveforms (float Hz) → plan_hw_waveforms (short DAC).
+ * Sets WEOS_BIT on the last sample of each plan instance. */
+static void convert_plan_to_hw(pulseqlib_freq_mod_library* lib)
+{
+    int p, s;
+    for (p = 0; p < lib->num_plan_instances; ++p) {
+        int ns = lib->plan_num_samples[p];
+        const float* src = lib->plan_waveforms[p];
+        short* dst = lib->plan_hw_waveforms[p];
+        for (s = 0; s < ns; ++s) {
+            int v = (int)(src[s] * PULSEQLIB_OMEGA_SCALE + 0.5f);
+            if (v > 32767)  v = 32767;
+            if (v < -32767) v = -32767;
+            dst[s] = (short)(v & ~PULSEQLIB_WAVEFORM_END);
+        }
+        if (ns > 0)
+            dst[ns - 1] |= PULSEQLIB_WAVEFORM_END;
+        /* zero-pad remainder */
+        for (s = ns; s < lib->max_samples; ++s)
+            dst[s] = 0;
+    }
 }
 
 /* Recompute per-scan extra phase from inactive-axis areas. */
@@ -460,15 +495,20 @@ static int alloc_plan(pulseqlib_freq_mod_library* lib)
 
     lib->plan_waveform_data = (float*)PULSEQLIB_ALLOC(np * ms * sizeof(float));
     lib->plan_waveforms     = (float**)PULSEQLIB_ALLOC(np * sizeof(float*));
+    lib->plan_hw_data       = (short*)PULSEQLIB_ALLOC(np * ms * sizeof(short));
+    lib->plan_hw_waveforms  = (short**)PULSEQLIB_ALLOC(np * sizeof(short*));
     lib->plan_num_samples   = (int*)PULSEQLIB_ALLOC(np * sizeof(int));
     lib->plan_phase         = (float*)PULSEQLIB_ALLOC(np * sizeof(float));
 
     if (!lib->plan_waveform_data || !lib->plan_waveforms ||
+        !lib->plan_hw_data       || !lib->plan_hw_waveforms ||
         !lib->plan_num_samples   || !lib->plan_phase)
         return PULSEQLIB_ERR_ALLOC_FAILED;
 
-    for (r = 0; r < lib->num_plan_instances; ++r)
-        lib->plan_waveforms[r] = lib->plan_waveform_data + (size_t)r * ms;
+    for (r = 0; r < lib->num_plan_instances; ++r) {
+        lib->plan_waveforms[r]    = lib->plan_waveform_data + (size_t)r * ms;
+        lib->plan_hw_waveforms[r] = lib->plan_hw_data       + (size_t)r * ms;
+    }
 
     return PULSEQLIB_SUCCESS;
 }
@@ -1461,14 +1501,6 @@ static int build_freq_mod_library(
     /* Keep accessor-only semantics for phase: all channel contributions
      * are precomputed in plan_phase from the 3-channel definition itself. */
 
-    /* ==== For non-PMC: discard 3-channel data ==== */
-    if (!desc->enable_pmc) {
-        PULSEQLIB_FREE(lib->entry_waveform_3ch);
-        lib->entry_waveform_3ch = NULL;
-        PULSEQLIB_FREE(lib->entry_ref_3ch);
-        lib->entry_ref_3ch = NULL;
-    }
-
     /* ==== Free temporary working arrays ==== */
     free_base_defs(base_defs, num_base);
     PULSEQLIB_FREE(block_indices);
@@ -1534,19 +1566,19 @@ static int update_freq_mod_library(
 static int freq_mod_library_get(
     const pulseqlib_freq_mod_library* lib,
     int scan_table_pos,
-    const float** out_waveform,
+    const short** out_hw_waveform,
     int* out_num_samples,
     float* out_phase_rad)
 {
     int pi;
-    if (!lib || !out_waveform || !out_num_samples || !out_phase_rad)
+    if (!lib || !out_hw_waveform || !out_num_samples || !out_phase_rad)
         return 0;
     if (scan_table_pos < 0 || scan_table_pos >= lib->scan_table_len)
         return 0;
     pi = lib->scan_to_plan[scan_table_pos];
     if (pi < 0)
         return 0;
-    *out_waveform    = lib->plan_waveforms[pi];
+    *out_hw_waveform = lib->plan_hw_waveforms[pi];
     *out_num_samples = lib->plan_num_samples[pi];
     *out_phase_rad   = lib->plan_phase[pi]
         + ((lib->scan_phase_extra && scan_table_pos < lib->scan_table_len)
@@ -1558,25 +1590,17 @@ static int freq_mod_library_get(
 /*  Cache write                                                       */
 /* ================================================================== */
 
-#define FMOD_CACHE_MAGIC   0x464D4F44   /* "FMOD" */
-#define FMOD_CACHE_VERSION 1
-
 static int freq_mod_library_write_cache(
     const pulseqlib_freq_mod_library* lib,
     FILE* f)
 {
-    int has_3ch;
-
     if (!lib || !f)
         return PULSEQLIB_ERR_NULL_POINTER;
-
-    has_3ch = (lib->entry_waveform_3ch != NULL && lib->entry_ref_3ch != NULL);
 
     /* Entry metadata */
     if (fwrite(&lib->num_entries,  sizeof(int),   1, f) != 1) goto write_fail;
     if (fwrite(&lib->max_samples,  sizeof(int),   1, f) != 1) goto write_fail;
     if (fwrite(&lib->raster_us,    sizeof(float), 1, f) != 1) goto write_fail;
-    if (fwrite(&has_3ch,           sizeof(int),   1, f) != 1) goto write_fail;
 
     if (lib->num_entries > 0) {
         if (fwrite(lib->entry_num_samples,
@@ -1584,8 +1608,8 @@ static int freq_mod_library_write_cache(
             != (size_t)lib->num_entries) goto write_fail;
     }
 
-    /* 3-channel waveforms (PMC-enabled only) */
-    if (has_3ch && lib->num_entries > 0) {
+    /* 3-channel waveforms (always present) */
+    if (lib->num_entries > 0 && lib->max_samples > 0) {
         size_t total = (size_t)lib->num_entries * lib->max_samples * 3;
         if (fwrite(lib->entry_waveform_3ch, sizeof(float), total, f) != total)
             goto write_fail;
@@ -1659,11 +1683,10 @@ write_fail:
 static int freq_mod_library_read_cache(
     pulseqlib_freq_mod_library** out_lib,
     FILE* f,
-    const float* shift_m,
-    int pmc_enabled)
+    const float* shift_m)
 {
     pulseqlib_freq_mod_library* lib = NULL;
-    int result, has_3ch;
+    int result;
 
     if (!out_lib || !f || !shift_m)
         return PULSEQLIB_ERR_NULL_POINTER;
@@ -1677,7 +1700,6 @@ static int freq_mod_library_read_cache(
     if (fread(&lib->num_entries,  sizeof(int),   1, f) != 1) goto read_fail;
     if (fread(&lib->max_samples,  sizeof(int),   1, f) != 1) goto read_fail;
     if (fread(&lib->raster_us,    sizeof(float), 1, f) != 1) goto read_fail;
-    if (fread(&has_3ch,           sizeof(int),   1, f) != 1) goto read_fail;
 
     if (lib->num_entries > 0) {
         lib->entry_num_samples = (int*)PULSEQLIB_ALLOC(
@@ -1688,8 +1710,8 @@ static int freq_mod_library_read_cache(
             != (size_t)lib->num_entries) goto read_fail;
     }
 
-    /* 3-channel waveforms (present only if written with has_3ch) */
-    if (has_3ch && lib->num_entries > 0 && lib->max_samples > 0) {
+    /* 3-channel waveforms (always present) */
+    if (lib->num_entries > 0 && lib->max_samples > 0) {
         size_t total = (size_t)lib->num_entries * lib->max_samples * 3;
         lib->entry_waveform_3ch = (float*)PULSEQLIB_ALLOC(
             total * sizeof(float));
@@ -1790,22 +1812,9 @@ static int freq_mod_library_read_cache(
         }
     }
 
-    /* If 3ch data present and PMC enabled: recompute plan for new shift.
-     * Otherwise plan waveforms from cache are used as-is. */
-    if (has_3ch && lib->num_plan_instances > 0 && lib->entry_waveform_3ch)
+    /* Recompute plan waveforms from 3-channel data for current shift */
+    if (lib->num_plan_instances > 0 && lib->entry_waveform_3ch)
         compute_plan_waveforms(lib, shift_m);
-
-    /* If not PMC-enabled: discard 3-channel data */
-    if (!pmc_enabled) {
-        if (lib->entry_waveform_3ch) {
-            PULSEQLIB_FREE(lib->entry_waveform_3ch);
-            lib->entry_waveform_3ch = NULL;
-        }
-        if (lib->entry_ref_3ch) {
-            PULSEQLIB_FREE(lib->entry_ref_3ch);
-            lib->entry_ref_3ch = NULL;
-        }
-    }
 
     *out_lib = lib;
     return PULSEQLIB_SUCCESS;
@@ -1832,6 +1841,8 @@ static void freq_mod_library_free(pulseqlib_freq_mod_library* lib)
     if (lib->pi_rotation_idx)     PULSEQLIB_FREE(lib->pi_rotation_idx);
     if (lib->plan_waveform_data)  PULSEQLIB_FREE(lib->plan_waveform_data);
     if (lib->plan_waveforms)      PULSEQLIB_FREE(lib->plan_waveforms);
+    if (lib->plan_hw_data)        PULSEQLIB_FREE(lib->plan_hw_data);
+    if (lib->plan_hw_waveforms)   PULSEQLIB_FREE(lib->plan_hw_waveforms);
     if (lib->plan_num_samples)    PULSEQLIB_FREE(lib->plan_num_samples);
     if (lib->plan_phase)          PULSEQLIB_FREE(lib->plan_phase);
 
@@ -1911,29 +1922,50 @@ int pulseqlib_freq_mod_collection_get(
     const pulseqlib_freq_mod_collection* fmc,
     int subseq_idx,
     int scan_table_pos,
-    const float** out_waveform,
+    const short** out_hw_waveform,
     int* out_num_samples,
     float* out_phase_rad)
 {
     if (!fmc || subseq_idx < 0 || subseq_idx >= fmc->num_subsequences)
         return 0;
     return freq_mod_library_get(fmc->libs[subseq_idx], scan_table_pos,
-                                out_waveform, out_num_samples, out_phase_rad);
+                                out_hw_waveform, out_num_samples, out_phase_rad);
 }
 
 /* ================================================================== */
-/*  Public: collection cache write (single file)                      */
+/*  Public: collection cache write (FILE* variant)                    */
 /* ================================================================== */
 
-#define FMCOL_CACHE_MAGIC   0x464D434F  /* "FMCO" */
-#define FMCOL_CACHE_VERSION 2
+int pulseqlib_freq_mod_collection_write_cache_f(
+    const pulseqlib_freq_mod_collection* fmc,
+    FILE* f)
+{
+    int s;
+
+    if (!fmc || !f)
+        return PULSEQLIB_ERR_NULL_POINTER;
+
+    if (fwrite(&fmc->num_subsequences, sizeof(int), 1, f) != 1)
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+
+    for (s = 0; s < fmc->num_subsequences; ++s) {
+        int rc = freq_mod_library_write_cache(fmc->libs[s], f);
+        if (PULSEQLIB_FAILED(rc)) return rc;
+    }
+
+    return PULSEQLIB_SUCCESS;
+}
+
+/* ================================================================== */
+/*  Public: collection cache write (path-based wrapper)               */
+/* ================================================================== */
 
 int pulseqlib_freq_mod_collection_write_cache(
     const pulseqlib_freq_mod_collection* fmc,
     const char* path)
 {
     FILE* f;
-    int magic, version, s;
+    int rc;
 
     if (!fmc || !path)
         return PULSEQLIB_ERR_NULL_POINTER;
@@ -1941,29 +1973,58 @@ int pulseqlib_freq_mod_collection_write_cache(
     f = fopen(path, "wb");
     if (!f) return PULSEQLIB_ERR_FILE_READ_FAILED;
 
-    magic   = FMCOL_CACHE_MAGIC;
-    version = FMCOL_CACHE_VERSION;
-
-    if (fwrite(&magic,   sizeof(int), 1, f) != 1) goto col_write_fail;
-    if (fwrite(&version, sizeof(int), 1, f) != 1) goto col_write_fail;
-    if (fwrite(&fmc->num_subsequences, sizeof(int), 1, f) != 1)
-        goto col_write_fail;
-
-    for (s = 0; s < fmc->num_subsequences; ++s) {
-        int rc = freq_mod_library_write_cache(fmc->libs[s], f);
-        if (PULSEQLIB_FAILED(rc)) goto col_write_fail;
-    }
-
+    rc = pulseqlib_freq_mod_collection_write_cache_f(fmc, f);
     fclose(f);
-    return PULSEQLIB_SUCCESS;
-
-col_write_fail:
-    fclose(f);
-    return PULSEQLIB_ERR_FILE_READ_FAILED;
+    return rc;
 }
 
 /* ================================================================== */
-/*  Public: collection cache read (single file)                       */
+/*  Public: collection cache read (FILE* variant)                     */
+/* ================================================================== */
+
+int pulseqlib_freq_mod_collection_read_cache_f(
+    pulseqlib_freq_mod_collection** out_fmc,
+    FILE* f,
+    const pulseqlib_collection* coll,
+    const float* shift_m)
+{
+    pulseqlib_freq_mod_collection* fmc = NULL;
+    int nsub, s;
+
+    if (!out_fmc || !f || !coll || !shift_m)
+        return PULSEQLIB_ERR_NULL_POINTER;
+    *out_fmc = NULL;
+
+    if (fread(&nsub, sizeof(int), 1, f) != 1 || nsub != coll->num_subsequences)
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+
+    fmc = (pulseqlib_freq_mod_collection*)PULSEQLIB_ALLOC(sizeof(*fmc));
+    if (!fmc) return PULSEQLIB_ERR_ALLOC_FAILED;
+    memset(fmc, 0, sizeof(*fmc));
+
+    fmc->num_subsequences = nsub;
+    fmc->libs = (pulseqlib_freq_mod_library**)PULSEQLIB_ALLOC(
+        (size_t)nsub * sizeof(*fmc->libs));
+    if (!fmc->libs) {
+        PULSEQLIB_FREE(fmc);
+        return PULSEQLIB_ERR_ALLOC_FAILED;
+    }
+    memset(fmc->libs, 0, (size_t)nsub * sizeof(*fmc->libs));
+
+    for (s = 0; s < nsub; ++s) {
+        int rc = freq_mod_library_read_cache(&fmc->libs[s], f, shift_m);
+        if (PULSEQLIB_FAILED(rc)) {
+            pulseqlib_freq_mod_collection_free(fmc);
+            return rc;
+        }
+    }
+
+    *out_fmc = fmc;
+    return PULSEQLIB_SUCCESS;
+}
+
+/* ================================================================== */
+/*  Public: collection cache read (path-based wrapper)                */
 /* ================================================================== */
 
 int pulseqlib_freq_mod_collection_read_cache(
@@ -1973,50 +2034,18 @@ int pulseqlib_freq_mod_collection_read_cache(
     const float* shift_m)
 {
     FILE* f;
-    pulseqlib_freq_mod_collection* fmc = NULL;
-    int magic, version, nsub, s;
+    int rc;
 
     if (!out_fmc || !path || !coll || !shift_m)
         return PULSEQLIB_ERR_NULL_POINTER;
-    *out_fmc = NULL;
 
     f = fopen(path, "rb");
     if (!f) return PULSEQLIB_ERR_FILE_READ_FAILED;
 
-    if (fread(&magic, sizeof(int), 1, f) != 1 || magic != FMCOL_CACHE_MAGIC)
-        { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
-    if (fread(&version, sizeof(int), 1, f) != 1 || version != FMCOL_CACHE_VERSION)
-        { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
-    if (fread(&nsub, sizeof(int), 1, f) != 1 || nsub != coll->num_subsequences)
-        { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
-
-    fmc = (pulseqlib_freq_mod_collection*)PULSEQLIB_ALLOC(sizeof(*fmc));
-    if (!fmc) { fclose(f); return PULSEQLIB_ERR_ALLOC_FAILED; }
-    memset(fmc, 0, sizeof(*fmc));
-
-    fmc->num_subsequences = nsub;
-    fmc->libs = (pulseqlib_freq_mod_library**)PULSEQLIB_ALLOC(
-        (size_t)nsub * sizeof(*fmc->libs));
-    if (!fmc->libs) {
-        PULSEQLIB_FREE(fmc);
-        fclose(f);
-        return PULSEQLIB_ERR_ALLOC_FAILED;
-    }
-    memset(fmc->libs, 0, (size_t)nsub * sizeof(*fmc->libs));
-
-    for (s = 0; s < nsub; ++s) {
-        int pmc = coll->descriptors[s].enable_pmc;
-        int rc = freq_mod_library_read_cache(&fmc->libs[s], f, shift_m, pmc);
-        if (PULSEQLIB_FAILED(rc)) {
-            fclose(f);
-            pulseqlib_freq_mod_collection_free(fmc);
-            return rc;
-        }
-    }
-
+    rc = pulseqlib_freq_mod_collection_read_cache_f(out_fmc, f, coll, shift_m);
     fclose(f);
-    *out_fmc = fmc;
-    return PULSEQLIB_SUCCESS;
+    if (PULSEQLIB_FAILED(rc)) *out_fmc = NULL;
+    return rc;
 }
 
 /* ================================================================== */
@@ -2067,14 +2096,14 @@ int pulseqlib_get_freq_mod(
     const pulseqlib_collection* coll,
     int subseq_idx,
     int scan_table_pos,
-    const float** out_waveform,
+    const short** out_hw_waveform,
     int* out_num_samples,
     float* out_phase_rad)
 {
     if (!coll || !coll->freq_mod) return 0;
     return pulseqlib_freq_mod_collection_get(
         coll->freq_mod, subseq_idx, scan_table_pos,
-        out_waveform, out_num_samples, out_phase_rad);
+        out_hw_waveform, out_num_samples, out_phase_rad);
 }
 
 /* ================================================================== */
@@ -2165,6 +2194,21 @@ int pulseqlib_update_freq_mod_for_tr(
         lib->plan_phase[p] = 0.0f;
         for (ch = 0; ch < 3; ++ch)
             lib->plan_phase[p] += lib->entry_ref_3ch[eidx * 3 + ch] * u[ch];
+
+        /* Convert this dirty plan instance to hw format */
+        {
+            short* hw = lib->plan_hw_waveforms[p];
+            for (s = 0; s < ns; ++s) {
+                int v = (int)(row[s] * PULSEQLIB_OMEGA_SCALE + 0.5f);
+                if (v > 32767)  v = 32767;
+                if (v < -32767) v = -32767;
+                hw[s] = (short)(v & ~PULSEQLIB_WAVEFORM_END);
+            }
+            if (ns > 0)
+                hw[ns - 1] |= PULSEQLIB_WAVEFORM_END;
+            for (s = ns; s < lib->max_samples; ++s)
+                hw[s] = 0;
+        }
     }
 
     /* Recompute scan_phase_extra only for the TR range */

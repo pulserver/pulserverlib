@@ -1966,6 +1966,27 @@ static int pulseqlib__get_digitalout_duration_us(
     return (int)desc->trigger_events[digitalout_id].duration;
 }
 
+static int pulseqlib__get_digitalout_channel(
+    const pulseqlib_collection* coll,
+    int seg_idx, int blk_idx)
+{
+    const pulseqlib_sequence_descriptor* desc;
+    const pulseqlib_tr_segment* seg;
+    int local_blk, digitalout_id;
+    const pulseqlib_block_table_element* bte;
+
+    if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
+        return -1;
+
+    if (!seg->has_digitalout[local_blk]) return -1;
+
+    bte = &desc->block_table[seg->start_block + local_blk];
+    digitalout_id = bte->digitalout_id;
+    if (digitalout_id == -1 || digitalout_id >= desc->num_triggers) return -1;
+
+    return desc->trigger_events[digitalout_id].trigger_channel;
+}
+
 /* ---- Segment-level physio trigger queries ------------------------ */
 
 static int pulseqlib__segment_has_trigger(
@@ -2512,6 +2533,11 @@ int pulseqlib_get_block_instance(
 
     /* Digital output */
     inst->digitalout_flag = (bte->digitalout_id >= 0) ? 1 : 0;
+    if (inst->digitalout_flag && bte->digitalout_id < desc->num_triggers) {
+        inst->digitalout_channel = desc->trigger_events[bte->digitalout_id].trigger_channel;
+    } else {
+        inst->digitalout_channel = -1;
+    }
 
     /* ADC */
     if (bte->adc_id >= 0 && bte->adc_id < desc->adc_table_size) {
@@ -2827,6 +2853,8 @@ int pulseqlib_get_block_info(
         pulseqlib__get_digitalout_delay_us(coll, seg_idx, blk_idx) : -1;
     info->digitalout_duration_us = info->has_digitalout ?
         pulseqlib__get_digitalout_duration_us(coll, seg_idx, blk_idx) : -1;
+    info->digitalout_channel = info->has_digitalout ?
+        pulseqlib__get_digitalout_channel(coll, seg_idx, blk_idx) : -1;
 
     /* Flags */
     info->has_rotation = pulseqlib__block_has_rotation(coll, seg_idx, blk_idx);

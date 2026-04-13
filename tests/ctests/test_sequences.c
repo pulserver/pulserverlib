@@ -995,7 +995,7 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
 
     for (pos = 0; pos < scan->num_entries; ++pos) {
         const scan_table_entry* se = &scan->entries[pos];
-        const float* waveform = NULL;
+        const short* waveform = NULL;
         int ns = 0, s;
         float phase_rad = 0.0f;
         int has;
@@ -1013,8 +1013,6 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
 
         {
             const fmod_def* fd;
-            float max_val = 0.0f;
-            float tol;
             int def_idx = se->freq_mod_id - 1;
             int plan_idx = lib->scan_to_plan[pos];
             int ref_plan_idx = (plan && pos < plan->scan_len) ? plan->scan_to_plan[pos] : -1;
@@ -1049,22 +1047,16 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
                     u[0] = rot_u[0]; u[1] = rot_u[1]; u[2] = rot_u[2];
                 }
 
-                max_val = 0.0f;
+                /* API returns short DAC units (OMEGA_SCALE = 1/(4*FREQ_CONVERSION)).
+                 * With the default FREQ_CONVERSION = 0.25, OMEGA_SCALE = 1.0 so
+                 * short values ≈ round(expected_hz).  Allow ±1 for rounding. */
                 for (s = 0; s < ns; ++s) {
                     float expected = fd->waveform_gx[s] * u[0]
                                    + fd->waveform_gy[s] * u[1]
                                    + fd->waveform_gz[s] * u[2];
-                    if ((float)fabs(expected) > max_val)
-                        max_val = (float)fabs(expected);
-                }
-                tol = max_val * 1e-4f;
-                if (tol < 1e-6f) tol = 1e-6f;
-
-                for (s = 0; s < ns; ++s) {
-                    float expected = fd->waveform_gx[s] * u[0]
-                                   + fd->waveform_gy[s] * u[1]
-                                   + fd->waveform_gz[s] * u[2];
-                    mu_assert((float)fabs(waveform[s] - expected) <= tol,
+                    int expected_hw = (int)(expected + 0.5f);
+                    int actual_hw = (int)waveform[s];
+                    mu_assert(abs(actual_hw - expected_hw) <= 1,
                               "freq_mod waveform sample mismatch");
                 }
             }
@@ -1092,7 +1084,9 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
 
                 for (s = 0; s < ns; ++s) {
                     float pexp = pe->waveforms[probe_idx][s] * alpha;
-                    mu_assert((float)fabs(waveform[s] - pexp) <= tol,
+                    int pexp_hw = (int)(pexp + 0.5f);
+                    int act_hw = (int)waveform[s];
+                    mu_assert(abs(act_hw - pexp_hw) <= 1,
                               "supplemental projected waveform mismatch");
                 }
 

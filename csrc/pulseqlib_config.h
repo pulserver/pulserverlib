@@ -84,4 +84,24 @@
 #define PULSEQLIB_FREE(ptr) free(ptr)
 #endif
 
+/* ------------------------------------------------------------------ */
+/*  Hardware frequency-conversion overrides                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Override PULSEQLIB_FREQ_CONVERSION / PULSEQLIB_WAVEFORM_END before
+ * including this header for vendor-specific DAC parameters, e.g.:
+ *
+ *   #define PULSEQLIB_FREQ_CONVERSION  VendorFreqRes
+ *   #define PULSEQLIB_WAVEFORM_END     VendorWeosBit
+ *   #include "pulseqlib_config.h"
+ */
+#ifndef PULSEQLIB_FREQ_CONVERSION
+#define PULSEQLIB_FREQ_CONVERSION 0.25f
+#endif
+
+#ifndef PULSEQLIB_WAVEFORM_END
+#define PULSEQLIB_WAVEFORM_END 0
+#endif
+
 #endif /* PULSEQLIB_CONFIG_H */

@@ -19,6 +19,7 @@
 #define PULSEQLIB_CACHE_SECTION_CHECK            1
 #define PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS  2
 #define PULSEQLIB_CACHE_SECTION_SCANLOOP         3
+#define PULSEQLIB_CACHE_SECTION_FREQMOD          4
 
 typedef struct pulseqlib_cache_section_entry {
     int section_id;
@@ -74,26 +75,6 @@ static char* make_cache_path(const char* seq_path)
         strcpy((char*)(out + (dot - out)), ".bin");
     } else {
         strcat(out, ".bin");
-    }
-    return out;
-}
-
-static char* make_fmbin_path(const char* seq_path)
-{
-    size_t len;
-    char* out;
-    const char* dot;
-
-    len = strlen(seq_path);
-    out = (char*)PULSEQLIB_ALLOC(len + 7); /* worst case: no dot, append ".fmbin\0" */
-    if (!out) return NULL;
-
-    strcpy(out, seq_path);
-    dot = strrchr(out, '.');
-    if (dot && dot > strrchr(out, '/') && dot > strrchr(out, '\\')) {
-        strcpy((char*)(out + (dot - out)), ".fmbin");
-    } else {
-        strcat(out, ".fmbin");
     }
     return out;
 }
@@ -1178,7 +1159,6 @@ int pulseqlib_load_scanloop_cache(
 int pulseqlib_clear_cache(const char* seq_path)
 {
     char* cache_path;
-    char* fmbin_path;
     int rc;
 
     if (!seq_path) return PULSEQLIB_ERR_NULL_POINTER;
@@ -1189,46 +1169,133 @@ int pulseqlib_clear_cache(const char* seq_path)
     rc = remove(cache_path);
     PULSEQLIB_FREE(cache_path);
 
-    /* Also remove freq-mod companion cache (.fmbin) */
-    fmbin_path = make_fmbin_path(seq_path);
-    if (fmbin_path) {
-        remove(fmbin_path);   /* best-effort; ignore missing */
-        PULSEQLIB_FREE(fmbin_path);
-    }
-
     if (rc == 0 || errno == ENOENT) return PULSEQLIB_SUCCESS;
     return PULSEQLIB_ERR_FILE_READ_FAILED;
 }
 
 /* ================================================================== */
-/*  Freq-mod unified cache (companion .fmbin file)                    */
+/*  Freq-mod unified cache (section 4 of .bin)                        */
 /* ================================================================== */
 
 int pulseqlib_write_freq_mod_cache(
     const pulseqlib_collection* coll,
     const char* seq_path)
 {
-    char* fmbin_path;
-    int rc;
+    char* cache_path;
+    FILE* f;
+    int marker, num_sections;
+    int version_major, version_minor, vendor, stored_size;
+    int do_swap;
+    long entries_pos, data_start, data_end, hdr_ns_pos;
+    int i, found_idx;
+    pulseqlib_cache_section_entry entries[16];
 
     if (!coll || !seq_path) return PULSEQLIB_ERR_NULL_POINTER;
     if (!coll->freq_mod) return PULSEQLIB_ERR_NULL_POINTER;
 
-    fmbin_path = make_fmbin_path(seq_path);
-    if (!fmbin_path) return PULSEQLIB_ERR_ALLOC_FAILED;
+    cache_path = make_cache_path(seq_path);
+    if (!cache_path) return PULSEQLIB_ERR_ALLOC_FAILED;
 
-    rc = pulseqlib_freq_mod_collection_write_cache(coll->freq_mod, fmbin_path);
-    PULSEQLIB_FREE(fmbin_path);
-    return rc;
+    f = fopen(cache_path, "r+b");
+    if (!f) { PULSEQLIB_FREE(cache_path); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+
+    /* Read header */
+    if (!read4(f, &marker, 1)) goto fm_write_fail;
+    do_swap = 0;
+    if (marker != PULSEQLIB_CACHE_ENDIAN_MARKER) {
+        swap4(&marker);
+        if (marker != PULSEQLIB_CACHE_ENDIAN_MARKER) goto fm_write_fail;
+        do_swap = 1;
+    }
+    if (!read4(f, &version_major, 1)) goto fm_write_fail;
+    if (!read4(f, &version_minor, 1)) goto fm_write_fail;
+    if (!read4(f, &vendor, 1))        goto fm_write_fail;
+    if (!read4(f, &stored_size, 1))   goto fm_write_fail;
+    hdr_ns_pos = ftell(f);  /* position of num_sections in file */
+    if (!read4(f, &num_sections, 1))  goto fm_write_fail;
+    if (do_swap) {
+        swap4(&version_major); swap4(&version_minor);
+        swap4(&vendor); swap4(&stored_size); swap4(&num_sections);
+    }
+    if (num_sections <= 0 || num_sections > 15) goto fm_write_fail;
+
+    entries_pos = ftell(f);
+    if (entries_pos < 0) goto fm_write_fail;
+
+    for (i = 0; i < num_sections; ++i) {
+        if (!read4(f, &entries[i].section_id, 1)) goto fm_write_fail;
+        if (!read4(f, &entries[i].offset, 1))     goto fm_write_fail;
+        if (!read4(f, &entries[i].size, 1))       goto fm_write_fail;
+        if (do_swap) {
+            swap4(&entries[i].section_id);
+            swap4(&entries[i].offset);
+            swap4(&entries[i].size);
+        }
+    }
+
+    /* Check if section 4 already exists */
+    found_idx = -1;
+    for (i = 0; i < num_sections; ++i) {
+        if (entries[i].section_id == PULSEQLIB_CACHE_SECTION_FREQMOD) {
+            found_idx = i;
+            break;
+        }
+    }
+
+    if (found_idx < 0) {
+        found_idx = num_sections;
+        entries[found_idx].section_id = PULSEQLIB_CACHE_SECTION_FREQMOD;
+        num_sections++;
+    }
+
+    /* Seek to end, write freq-mod data */
+    fseek(f, 0, SEEK_END);
+    data_start = ftell(f);
+    if (data_start < 0) goto fm_write_fail;
+
+    if (pulseqlib_freq_mod_collection_write_cache_f(coll->freq_mod, f)
+        != PULSEQLIB_SUCCESS)
+        goto fm_write_fail;
+
+    data_end = ftell(f);
+    if (data_end < 0) goto fm_write_fail;
+
+    entries[found_idx].offset = (int)data_start;
+    entries[found_idx].size   = (int)(data_end - data_start);
+
+    /* Patch num_sections */
+    if (fseek(f, hdr_ns_pos, SEEK_SET) != 0) goto fm_write_fail;
+    if (!write4(f, &num_sections, 1)) goto fm_write_fail;
+
+    /* Rewrite all section entries (at the same position, but extend if needed) */
+    if (fseek(f, entries_pos, SEEK_SET) != 0) goto fm_write_fail;
+    for (i = 0; i < num_sections; ++i) {
+        if (!write4(f, &entries[i].section_id, 1)) goto fm_write_fail;
+        if (!write4(f, &entries[i].offset, 1))     goto fm_write_fail;
+        if (!write4(f, &entries[i].size, 1))       goto fm_write_fail;
+    }
+
+    fclose(f);
+    PULSEQLIB_FREE(cache_path);
+    return PULSEQLIB_SUCCESS;
+
+fm_write_fail:
+    fclose(f);
+    PULSEQLIB_FREE(cache_path);
+    return PULSEQLIB_ERR_FILE_READ_FAILED;
 }
 
 int pulseqlib_load_freq_mod_cache(
     pulseqlib_collection* coll,
     const char* seq_path)
 {
-    char* fmbin_path;
+    char* cache_path;
+    FILE* f;
+    int marker, num_sections;
+    int version_major, version_minor, vendor, stored_size;
+    int do_swap, i, found;
     float zero_shift[3] = {0.0f, 0.0f, 0.0f};
-    int rc;
+    pulseqlib_cache_section_entry section;
 
     if (!coll || !seq_path) return PULSEQLIB_ERR_NULL_POINTER;
 
@@ -1237,11 +1304,61 @@ int pulseqlib_load_freq_mod_cache(
         coll->freq_mod = NULL;
     }
 
-    fmbin_path = make_fmbin_path(seq_path);
-    if (!fmbin_path) return PULSEQLIB_ERR_ALLOC_FAILED;
+    cache_path = make_cache_path(seq_path);
+    if (!cache_path) return PULSEQLIB_ERR_ALLOC_FAILED;
 
-    rc = pulseqlib_freq_mod_collection_read_cache(
-             &coll->freq_mod, fmbin_path, coll, zero_shift);
-    PULSEQLIB_FREE(fmbin_path);
-    return rc;
+    f = fopen(cache_path, "rb");
+    PULSEQLIB_FREE(cache_path);
+    if (!f) return PULSEQLIB_ERR_FILE_READ_FAILED;
+
+    /* Read header */
+    if (!read4(f, &marker, 1)) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+    do_swap = 0;
+    if (marker != PULSEQLIB_CACHE_ENDIAN_MARKER) {
+        swap4(&marker);
+        if (marker != PULSEQLIB_CACHE_ENDIAN_MARKER) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+        do_swap = 1;
+    }
+    if (!read4(f, &version_major, 1)) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+    if (!read4(f, &version_minor, 1)) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+    if (!read4(f, &vendor, 1))        { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+    if (!read4(f, &stored_size, 1))   { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+    if (!read4(f, &num_sections, 1))  { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+    if (do_swap) {
+        swap4(&version_major); swap4(&version_minor);
+        swap4(&vendor); swap4(&stored_size); swap4(&num_sections);
+    }
+    if (num_sections <= 0 || num_sections > 16) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+
+    /* Find section 4 (freq-mod) */
+    found = 0;
+    memset(&section, 0, sizeof(section));
+    for (i = 0; i < num_sections; ++i) {
+        pulseqlib_cache_section_entry entry;
+        if (!read4(f, &entry.section_id, 1)) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+        if (!read4(f, &entry.offset, 1))     { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+        if (!read4(f, &entry.size, 1))       { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+        if (do_swap) { swap4(&entry.section_id); swap4(&entry.offset); swap4(&entry.size); }
+        if (entry.section_id == PULSEQLIB_CACHE_SECTION_FREQMOD) {
+            section = entry;
+            found = 1;
+        }
+    }
+
+    if (!found || section.offset <= 0 || section.size <= 0) {
+        fclose(f);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
+
+    if (fseek(f, (long)section.offset, SEEK_SET) != 0) {
+        fclose(f);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
+
+    {
+        int rc = pulseqlib_freq_mod_collection_read_cache_f(
+                     &coll->freq_mod, f, coll, zero_shift);
+        fclose(f);
+        return rc;
+    }
 }

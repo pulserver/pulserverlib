@@ -18,6 +18,8 @@
 #ifndef PULSEQLIB_METHODS_H
 #define PULSEQLIB_METHODS_H
 
+#include <stdio.h>
+
 #include "pulseqlib_config.h"
 #include "pulseqlib_types.h"
 
@@ -971,7 +973,7 @@ int pulseqlib_update_freq_mod_collection(
  * @param[in]  fmc             Freq-mod collection.
  * @param[in]  subseq_idx     0-based subsequence index.
  * @param[in]  scan_table_pos Position in the subsequence scan table.
- * @param[out] out_waveform   Pointer into library (do NOT free).
+ * @param[out] out_hw_waveform Pointer to short DAC waveform (do NOT free).
  * @param[out] out_num_samples Waveform length.
  * @param[out] out_phase_rad  Phase compensation (rad) computed from the
  *                            full 3-channel definition (no axis masking).
@@ -981,21 +983,29 @@ int pulseqlib_freq_mod_collection_get(
     const pulseqlib_freq_mod_collection* fmc,
     int subseq_idx,
     int scan_table_pos,
-    const float** out_waveform,
+    const short** out_hw_waveform,
     int* out_num_samples,
     float* out_phase_rad);
 
 /**
  * @brief Write all per-subsequence freq-mod data to a single cache file.
  *
- * @param[in]  fmc   Built collection (3-channel data must be resident
- *                    for at least one subsequence).
+ * @param[in]  fmc   Built collection (3-channel data must be resident).
  * @param[in]  path  Output file path (e.g. "seq.fmod.bin").
  * @return PULSEQLIB_SUCCESS on success.
  */
 int pulseqlib_freq_mod_collection_write_cache(
     const pulseqlib_freq_mod_collection* fmc,
     const char* path);
+
+/**
+ * @brief Write freq-mod collection data to an already-open FILE.
+ *
+ * Used by the unified cache writer to embed freq-mod as a section.
+ */
+int pulseqlib_freq_mod_collection_write_cache_f(
+    const pulseqlib_freq_mod_collection* fmc,
+    FILE* f);
 
 /**
  * @brief Read freq-mod collection from cache and compute plans.
@@ -1010,6 +1020,17 @@ int pulseqlib_freq_mod_collection_write_cache(
 int pulseqlib_freq_mod_collection_read_cache(
     pulseqlib_freq_mod_collection** out_fmc,
     const char* path,
+    const pulseqlib_collection* coll,
+    const float* shift_m);
+
+/**
+ * @brief Read freq-mod collection data from an already-open FILE.
+ *
+ * Used by the unified cache loader to read freq-mod from a section.
+ */
+int pulseqlib_freq_mod_collection_read_cache_f(
+    pulseqlib_freq_mod_collection** out_fmc,
+    FILE* f,
     const pulseqlib_collection* coll,
     const float* shift_m);
 
@@ -1051,7 +1072,7 @@ int pulseqlib_get_freq_mod(
     const pulseqlib_collection* coll,
     int subseq_idx,
     int scan_table_pos,
-    const float** out_waveform,
+    const short** out_hw_waveform,
     int* out_num_samples,
     float* out_phase_rad);
 
