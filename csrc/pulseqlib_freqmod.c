@@ -2034,3 +2034,160 @@ void pulseqlib_freq_mod_collection_free(pulseqlib_freq_mod_collection* fmc)
     }
     PULSEQLIB_FREE(fmc);
 }
+
+/* ================================================================== */
+/*  Collection-level wrappers (operate on coll->freq_mod)             */
+/* ================================================================== */
+
+int pulseqlib_build_freq_mod(
+    pulseqlib_collection* coll,
+    const float* shift_m,
+    const float* fov_rotation)
+{
+    if (!coll) return PULSEQLIB_ERR_NULL_POINTER;
+    if (coll->freq_mod) {
+        pulseqlib_freq_mod_collection_free(coll->freq_mod);
+        coll->freq_mod = NULL;
+    }
+    return pulseqlib_build_freq_mod_collection(
+        &coll->freq_mod, coll, shift_m, fov_rotation);
+}
+
+int pulseqlib_update_freq_mod(
+    pulseqlib_collection* coll,
+    int subseq_idx,
+    const float* shift_m)
+{
+    if (!coll || !coll->freq_mod) return PULSEQLIB_ERR_NULL_POINTER;
+    return pulseqlib_update_freq_mod_collection(
+        coll->freq_mod, subseq_idx, shift_m);
+}
+
+int pulseqlib_get_freq_mod(
+    const pulseqlib_collection* coll,
+    int subseq_idx,
+    int scan_table_pos,
+    const float** out_waveform,
+    int* out_num_samples,
+    float* out_phase_rad)
+{
+    if (!coll || !coll->freq_mod) return 0;
+    return pulseqlib_freq_mod_collection_get(
+        coll->freq_mod, subseq_idx, scan_table_pos,
+        out_waveform, out_num_samples, out_phase_rad);
+}
+
+/* ================================================================== */
+/*  Per-TR targeted update (PMC mode)                                 */
+/*                                                                     */
+/*  Recomputes plan waveforms + phase ONLY for plan instances that    */
+/*  are referenced by scan-table positions in a given TR range.       */
+/*  Cost: O(plans_in_TR × max_samples) instead of full library.      */
+/* ================================================================== */
+
+int pulseqlib_update_freq_mod_for_tr(
+    pulseqlib_collection* coll,
+    int subseq_idx,
+    int current_scan_pos,
+    const float* shift_m)
+{
+    pulseqlib_freq_mod_library* lib;
+    int tr_scan_start, tr_scan_count;
+    int pos, pi, p, s, ch, ns;
+    int* dirty;  /* boolean flag per plan instance */
+    float identity[9] = {1,0,0, 0,1,0, 0,0,1};
+
+    if (!coll || !coll->freq_mod || !shift_m)
+        return PULSEQLIB_ERR_NULL_POINTER;
+    if (subseq_idx < 0 || subseq_idx >= coll->freq_mod->num_subsequences)
+        return PULSEQLIB_ERR_INVALID_ARGUMENT;
+
+    /* Derive TR scan-table range from current position + TR size */
+    {
+        int tr_size = coll->descriptors[subseq_idx].tr_descriptor.tr_size;
+        if (tr_size <= 0) return PULSEQLIB_ERR_INVALID_ARGUMENT;
+        tr_scan_start = (current_scan_pos / tr_size) * tr_size;
+        tr_scan_count = tr_size;
+    }
+
+    lib = coll->freq_mod->libs[subseq_idx];
+    if (!lib) return PULSEQLIB_ERR_NULL_POINTER;
+    if (!lib->entry_waveform_3ch || !lib->entry_ref_3ch)
+        return PULSEQLIB_ERR_INVALID_ARGUMENT;  /* 3ch data not retained */
+    if (lib->num_plan_instances == 0)
+        return PULSEQLIB_SUCCESS;
+
+    /* Mark which plan instances are used by the current TR */
+    dirty = (int*)PULSEQLIB_ALLOC(
+        (size_t)lib->num_plan_instances * sizeof(int));
+    if (!dirty) return PULSEQLIB_ERR_ALLOC_FAILED;
+    for (p = 0; p < lib->num_plan_instances; ++p) dirty[p] = 0;
+
+    for (pos = tr_scan_start;
+         pos < tr_scan_start + tr_scan_count && pos < lib->scan_table_len;
+         ++pos) {
+        if (pos < 0) continue;
+        pi = lib->scan_to_plan[pos];
+        if (pi >= 0 && pi < lib->num_plan_instances)
+            dirty[pi] = 1;
+    }
+
+    /* Recompute only dirty plan waveforms */
+    for (p = 0; p < lib->num_plan_instances; ++p) {
+        int eidx, ridx;
+        float* row;
+        const float* R;
+        float u[3];
+
+        if (!dirty[p]) continue;
+
+        eidx = lib->pi_entry_idx[p];
+        ridx = lib->pi_rotation_idx[p];
+        ns   = lib->plan_num_samples[p];
+        row  = lib->plan_waveforms[p];
+
+        R = (ridx >= 0 && ridx < lib->num_rotations)
+            ? (const float*)lib->rotations[ridx] : identity;
+        pulseqlib__apply_rotation(u, R, shift_m, 1);
+
+        for (s = 0; s < ns; ++s) {
+            float val = 0.0f;
+            for (ch = 0; ch < 3; ++ch)
+                val += lib->entry_waveform_3ch[
+                    (size_t)eidx * lib->max_samples * 3
+                    + (size_t)ch * lib->max_samples + s
+                ] * u[ch];
+            row[s] = val;
+        }
+        for (s = ns; s < lib->max_samples; ++s)
+            row[s] = 0.0f;
+
+        lib->plan_phase[p] = 0.0f;
+        for (ch = 0; ch < 3; ++ch)
+            lib->plan_phase[p] += lib->entry_ref_3ch[eidx * 3 + ch] * u[ch];
+    }
+
+    /* Recompute scan_phase_extra only for the TR range */
+    if (lib->scan_phase_extra && lib->scan_inactive_area_3ch) {
+        for (pos = tr_scan_start;
+             pos < tr_scan_start + tr_scan_count && pos < lib->scan_table_len;
+             ++pos) {
+            int ridx = -1;
+            const float* R;
+            float u[3];
+            const float* ia;
+            if (pos < 0) continue;
+            pi = lib->scan_to_plan[pos];
+            if (pi >= 0 && pi < lib->num_plan_instances)
+                ridx = lib->pi_rotation_idx[pi];
+            R = (ridx >= 0 && ridx < lib->num_rotations)
+                ? (const float*)lib->rotations[ridx] : identity;
+            pulseqlib__apply_rotation(u, R, shift_m, 1);
+            ia = lib->scan_inactive_area_3ch + (size_t)pos * 3;
+            lib->scan_phase_extra[pos] = ia[0]*u[0] + ia[1]*u[1] + ia[2]*u[2];
+        }
+    }
+
+    PULSEQLIB_FREE(dirty);
+    return PULSEQLIB_SUCCESS;
+}

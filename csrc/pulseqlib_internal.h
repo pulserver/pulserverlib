@@ -321,6 +321,9 @@ struct pulseqlib_freq_mod_collection {
     pulseqlib_freq_mod_library** libs;   /* [num_subsequences] (owned) */
 };
 
+/* Free a freq-mod collection (used by pulseqlib_collection_free). */
+void pulseqlib_freq_mod_collection_free(struct pulseqlib_freq_mod_collection* fmc);
+
 /* ================================================================== */
 /*  Block definitions and table                                       */
 /* ================================================================== */
@@ -560,9 +563,10 @@ struct pulseqlib_collection {
     int total_unique_adcs;
     int total_blocks;
     float total_duration_us;
+    struct pulseqlib_freq_mod_collection* freq_mod;  /* owned, may be NULL */
 };
 
-#define PULSEQLIB_COLLECTION_INIT {0, 1, PULSEQLIB_BLOCK_CURSOR_INIT, NULL, NULL, 0, 0, 0, 0.0f}
+#define PULSEQLIB_COLLECTION_INIT {0, 1, PULSEQLIB_BLOCK_CURSOR_INIT, NULL, NULL, 0, 0, 0, 0.0f, NULL}
 
 /* ================================================================== */
 /*  Uniform-raster gradient waveforms (internal, post-interpolation)  */

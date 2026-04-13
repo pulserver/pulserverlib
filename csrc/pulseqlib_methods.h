@@ -1017,6 +1017,84 @@ int pulseqlib_freq_mod_collection_read_cache(
 void pulseqlib_freq_mod_collection_free(pulseqlib_freq_mod_collection* fmc);
 
 /* ================================================================== */
+/*  Collection-level freq-mod wrappers                                */
+/* ================================================================== */
+
+/**
+ * @brief Build freq-mod library and store in coll->freq_mod.
+ *
+ * Replaces any previously stored freq-mod collection.  For non-PMC
+ * sequences the 3-channel data is freed after construction.
+ */
+int pulseqlib_build_freq_mod(
+    pulseqlib_collection* coll,
+    const float* shift_m,
+    const float* fov_rotation);
+
+/**
+ * @brief Recompute freq-mod waveforms for one subsequence.
+ *
+ * Forwards to coll->freq_mod.  Only valid for PMC-enabled subsequences
+ * where 3-channel data was retained.
+ */
+int pulseqlib_update_freq_mod(
+    pulseqlib_collection* coll,
+    int subseq_idx,
+    const float* shift_m);
+
+/**
+ * @brief Fetch freq-mod waveform for a scan-table position.
+ *
+ * @return 1 if freq-mod data is available; 0 otherwise.
+ */
+int pulseqlib_get_freq_mod(
+    const pulseqlib_collection* coll,
+    int subseq_idx,
+    int scan_table_pos,
+    const float** out_waveform,
+    int* out_num_samples,
+    float* out_phase_rad);
+
+/**
+ * @brief Targeted per-TR freq-mod update (PMC mode).
+ *
+ * Recomputes plan waveforms and phase ONLY for plan instances that
+ * are referenced by scan-table positions in [tr_scan_start,
+ * tr_scan_start + tr_scan_count).  Cost: O(plans_in_TR * max_samples).
+ *
+ * Requires retained 3-channel data (PMC-enabled subsequence).
+ */
+int pulseqlib_update_freq_mod_for_tr(
+    pulseqlib_collection* coll,
+    int subseq_idx,
+    int current_scan_pos,
+    const float* shift_m);
+
+/* ================================================================== */
+/*  Freq-mod unified cache (embedded in collection cache)             */
+/* ================================================================== */
+
+/**
+ * @brief Load freq-mod data from the collection cache (section 4).
+ *
+ * On success, populates coll->freq_mod.  Returns an error code if the
+ * freq-mod section is absent or empty.
+ */
+int pulseqlib_load_freq_mod_cache(
+    pulseqlib_collection* coll,
+    const char* seq_path);
+
+/**
+ * @brief Append freq-mod data to an existing collection cache.
+ *
+ * Opens the cache file for the given .seq path, writes freq-mod data
+ * at the end, and updates the section-4 index entry.
+ */
+int pulseqlib_write_freq_mod_cache(
+    const pulseqlib_collection* coll,
+    const char* seq_path);
+
+/* ================================================================== */
 /*  Unique-block and segment-block getters                            */
 /* ================================================================== */
 

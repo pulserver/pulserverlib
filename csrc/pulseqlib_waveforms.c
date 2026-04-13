@@ -278,8 +278,7 @@ static int compute_position_max_amplitudes_filtered(
  */
 int pulseqlib__compute_variable_grad_flags(pulseqlib_sequence_descriptor* desc)
 {
-    const pulseqlib_tr_descriptor* tr;
-    int tr_size, num_trs, n, pos, block_idx, raw_id, tr_idx;
+    int tr_size, n, pos, block_idx, raw_id;
     const pulseqlib_block_table_element* bte;
     const pulseqlib_grad_table_element* gte;
     float first_amp[3];  /* per axis: amplitude from first TR */
@@ -287,9 +286,7 @@ int pulseqlib__compute_variable_grad_flags(pulseqlib_sequence_descriptor* desc)
 
     if (!desc) return PULSEQLIB_ERR_NULL_POINTER;
 
-    tr      = &desc->tr_descriptor;
-    tr_size = tr->tr_size;
-    num_trs = tr->num_trs;
+    tr_size = desc->tr_descriptor.tr_size;
 
     /* free any prior allocation */
     if (desc->variable_grad_flags) {
@@ -297,7 +294,7 @@ int pulseqlib__compute_variable_grad_flags(pulseqlib_sequence_descriptor* desc)
         desc->variable_grad_flags = NULL;
     }
 
-    if (tr_size <= 0 || num_trs <= 0)
+    if (tr_size <= 0 || desc->num_blocks <= 0)
         return PULSEQLIB_SUCCESS;
 
     n = tr_size * 3;
@@ -311,9 +308,8 @@ int pulseqlib__compute_variable_grad_flags(pulseqlib_sequence_descriptor* desc)
         first_amp[0] = 0.0f; first_amp[1] = 0.0f; first_amp[2] = 0.0f;
         seen[0] = 0; seen[1] = 0; seen[2] = 0;
 
-        for (tr_idx = 0; tr_idx < num_trs; ++tr_idx) {
-            block_idx = tr->num_prep_blocks + tr_idx * tr_size + pos;
-            if (block_idx < 0 || block_idx >= desc->num_blocks) continue;
+        for (block_idx = pos; block_idx < desc->num_blocks;
+             block_idx += tr_size) {
             bte = &desc->block_table[block_idx];
 
             /* axis 0 = gx, 1 = gy, 2 = gz */

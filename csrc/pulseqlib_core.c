@@ -114,6 +114,10 @@ void pulseqlib_collection_free(
 {
     int i;
     if (!c) return;
+    if (c->freq_mod) {
+        pulseqlib_freq_mod_collection_free(c->freq_mod);
+        c->freq_mod = NULL;
+    }
     if (c->descriptors) {
         for (i = 0; i < c->num_subsequences; ++i)
             pulseqlib_sequence_descriptor_free(&c->descriptors[i]);

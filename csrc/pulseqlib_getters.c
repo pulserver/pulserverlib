@@ -2527,6 +2527,22 @@ int pulseqlib_get_block_instance(
     /* RF shimming */
     inst->rf_shim_id = bte->rf_shim_id;
 
+    /* Variable-amplitude flags (TR-level) */
+    {
+        int vg_tr_size = desc->tr_descriptor.tr_size;
+        int vg_pos;
+        if (vg_tr_size > 0 && desc->variable_grad_flags) {
+            vg_pos = cursor->scan_table_position % vg_tr_size;
+            inst->gx_variable = desc->variable_grad_flags[vg_pos * 3 + 0];
+            inst->gy_variable = desc->variable_grad_flags[vg_pos * 3 + 1];
+            inst->gz_variable = desc->variable_grad_flags[vg_pos * 3 + 2];
+        } else {
+            inst->gx_variable = 0;
+            inst->gy_variable = 0;
+            inst->gz_variable = 0;
+        }
+    }
+
     return PULSEQLIB_SUCCESS;
 }
 

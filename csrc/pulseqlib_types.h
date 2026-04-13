@@ -521,6 +521,9 @@ typedef struct pulseqlib_block_instance {
     int   gx_shot_idx;          /**< GX multi-shot index               */
     int   gy_shot_idx;          /**< GY multi-shot index               */
     int   gz_shot_idx;          /**< GZ multi-shot index               */
+    int   gx_variable;          /**< 1 if GX amplitude varies across TRs */
+    int   gy_variable;          /**< 1 if GY amplitude varies across TRs */
+    int   gz_variable;          /**< 1 if GZ amplitude varies across TRs */
 
     /* Rotation */
     float rotmat[9];            /**< 3x3 rotation matrix (row-major)   */
@@ -540,6 +543,7 @@ typedef struct pulseqlib_block_instance {
     0, \
     0.0f, 0.0f, 0.0f, -1, \
     0.0f, 0.0f, 0.0f, \
+    0, 0, 0, \
     0, 0, 0, \
     {1,0,0, 0,1,0, 0,0,1}, 0, 0, \
     0, \

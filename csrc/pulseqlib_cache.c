@@ -78,6 +78,26 @@ static char* make_cache_path(const char* seq_path)
     return out;
 }
 
+static char* make_fmbin_path(const char* seq_path)
+{
+    size_t len;
+    char* out;
+    const char* dot;
+
+    len = strlen(seq_path);
+    out = (char*)PULSEQLIB_ALLOC(len + 7); /* worst case: no dot, append ".fmbin\0" */
+    if (!out) return NULL;
+
+    strcpy(out, seq_path);
+    dot = strrchr(out, '.');
+    if (dot && dot > strrchr(out, '/') && dot > strrchr(out, '\\')) {
+        strcpy((char*)(out + (dot - out)), ".fmbin");
+    } else {
+        strcat(out, ".fmbin");
+    }
+    return out;
+}
+
 /* ------ File size helper (C89) ------ */
 
 static long get_file_size(const char* path)
@@ -1158,6 +1178,7 @@ int pulseqlib_load_scanloop_cache(
 int pulseqlib_clear_cache(const char* seq_path)
 {
     char* cache_path;
+    char* fmbin_path;
     int rc;
 
     if (!seq_path) return PULSEQLIB_ERR_NULL_POINTER;
@@ -1168,6 +1189,59 @@ int pulseqlib_clear_cache(const char* seq_path)
     rc = remove(cache_path);
     PULSEQLIB_FREE(cache_path);
 
+    /* Also remove freq-mod companion cache (.fmbin) */
+    fmbin_path = make_fmbin_path(seq_path);
+    if (fmbin_path) {
+        remove(fmbin_path);   /* best-effort; ignore missing */
+        PULSEQLIB_FREE(fmbin_path);
+    }
+
     if (rc == 0 || errno == ENOENT) return PULSEQLIB_SUCCESS;
     return PULSEQLIB_ERR_FILE_READ_FAILED;
+}
+
+/* ================================================================== */
+/*  Freq-mod unified cache (companion .fmbin file)                    */
+/* ================================================================== */
+
+int pulseqlib_write_freq_mod_cache(
+    const pulseqlib_collection* coll,
+    const char* seq_path)
+{
+    char* fmbin_path;
+    int rc;
+
+    if (!coll || !seq_path) return PULSEQLIB_ERR_NULL_POINTER;
+    if (!coll->freq_mod) return PULSEQLIB_ERR_NULL_POINTER;
+
+    fmbin_path = make_fmbin_path(seq_path);
+    if (!fmbin_path) return PULSEQLIB_ERR_ALLOC_FAILED;
+
+    rc = pulseqlib_freq_mod_collection_write_cache(coll->freq_mod, fmbin_path);
+    PULSEQLIB_FREE(fmbin_path);
+    return rc;
+}
+
+int pulseqlib_load_freq_mod_cache(
+    pulseqlib_collection* coll,
+    const char* seq_path)
+{
+    char* fmbin_path;
+    float zero_shift[3] = {0.0f, 0.0f, 0.0f};
+    int rc;
+
+    if (!coll || !seq_path) return PULSEQLIB_ERR_NULL_POINTER;
+
+    if (coll->freq_mod) {
+        pulseqlib_freq_mod_collection_free(coll->freq_mod);
+        coll->freq_mod = NULL;
+    }
+
+    fmbin_path = make_fmbin_path(seq_path);
+    if (!fmbin_path) return PULSEQLIB_ERR_ALLOC_FAILED;
+
+    rc = pulseqlib_freq_mod_collection_read_cache(
+             &coll->freq_mod, fmbin_path, coll, zero_shift);
+    PULSEQLIB_FREE(fmbin_path);
+    return rc;
 }
