@@ -2013,6 +2013,22 @@ static int pulseqlib__get_segment_trigger_duration_us(
     return (int)desc->trigger_events[tid].duration;
 }
 
+static int pulseqlib__get_segment_trigger_type(
+    const pulseqlib_collection* coll,
+    int seg_idx)
+{
+    const pulseqlib_sequence_descriptor* desc;
+    int local_seg, tid;
+
+    if (!pulseqlib__resolve_segment(&desc, &local_seg, coll, seg_idx))
+        return 0;
+
+    tid = desc->segment_definitions[local_seg].trigger_id;
+    if (tid < 0 || tid >= desc->num_triggers) return 0;
+
+    return desc->trigger_events[tid].trigger_type;
+}
+
 /* ---- Navigator flag query ---------------------------------------- */
 
 static int pulseqlib__segment_is_nav(
@@ -2730,6 +2746,7 @@ int pulseqlib_get_segment_info(
     info->start_block          = pulseqlib__get_segment_start_block(coll, seg_idx);
     info->pure_delay           = pulseqlib__is_segment_pure_delay(coll, seg_idx);
     info->has_trigger          = pulseqlib__segment_has_trigger(coll, seg_idx);
+    info->trigger_type         = pulseqlib__get_segment_trigger_type(coll, seg_idx);
     info->trigger_delay_us     = pulseqlib__get_segment_trigger_delay_us(coll, seg_idx);
     info->trigger_duration_us  = pulseqlib__get_segment_trigger_duration_us(coll, seg_idx);
     info->is_nav               = pulseqlib__segment_is_nav(coll, seg_idx);

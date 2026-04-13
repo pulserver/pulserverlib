@@ -666,6 +666,7 @@ typedef struct pulseqlib_segment_info {
     int   start_block;          /**< start block index in the sequence   */
     int   pure_delay;           /**< 1 if segment is a bare delay        */
     int   has_trigger;          /**< 1 if physio trigger attached        */
+    int   trigger_type;         /**< trigger type (1=output/TTL, 2=input/ECG), 0 if none */
     int   trigger_delay_us;     /**< trigger delay (us), -1 if none      */
     int   trigger_duration_us;  /**< trigger duration (us), -1 if none   */
     int   is_nav;               /**< 1 if navigator segment              */
@@ -675,8 +676,12 @@ typedef struct pulseqlib_segment_info {
 } pulseqlib_segment_info;
 
 #define PULSEQLIB_SEGMENT_INFO_INIT { \
-    0, 0, 0, 0, 0, -1, -1, 0, 0, -1, -1 \
+    0, 0, 0, 0, 0, 0, -1, -1, 0, 0, -1, -1 \
 }
+
+/** Trigger type constants (public, matching internal definitions). */
+#define PULSEQLIB_TRIGGER_TYPE_OUTPUT  1  /**< TTL / digital output */
+#define PULSEQLIB_TRIGGER_TYPE_INPUT   2  /**< ECG / cardiac gating */
 
 /* ================================================================== */
 /*  Block info (replaces per-block has/get accessor pairs)            */
