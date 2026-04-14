@@ -3598,10 +3598,9 @@ int pulseqlib__find_unique_shot_passes(
 /*  Acoustic spectra (public wrapper)                                 */
 /* ================================================================== */
 
-int pulseqlib_calc_mech_resonances(
+int pulseqlib_calc_mech_resonances(const pulseqlib_collection* coll,
     pulseqlib_mech_resonances_spectra* spectra,
     pulseqlib_diagnostic* diag,
-    const pulseqlib_collection* coll,
     int subseq_idx,
     int canonical_tr_idx,
     const pulseqlib_opts* opts,
@@ -3925,10 +3924,9 @@ fail:
 /*  PNS (public wrapper)                                              */
 /* ================================================================== */
 
-int pulseqlib_calc_pns(
+int pulseqlib_calc_pns(const pulseqlib_collection* coll,
     pulseqlib_pns_result* result,
     pulseqlib_diagnostic* diag,
-    const pulseqlib_collection* coll,
     int subseq_idx,
     int canonical_tr_idx,
     const pulseqlib_opts* opts,

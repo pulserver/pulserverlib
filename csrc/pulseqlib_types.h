@@ -762,4 +762,24 @@ typedef struct pulseqlib_adc_def {
 
 #define PULSEQLIB_ADC_DEF_INIT {0, 0}
 
+/* ================================================================== */
+/*  RF shim definition (parallel-transmit channel weights)            */
+/* ================================================================== */
+
+#define PULSEQLIB_MAX_RF_SHIM_CHANNELS 64
+
+/**
+ * @brief Per-channel amplitude and phase weights for parallel transmit.
+ *
+ * Returned by pulseqlib_get_rf_shim_def().  The rf_shim_id field in
+ * pulseqlib_block_instance indexes into this table.
+ */
+typedef struct pulseqlib_rf_shim_def {
+    int   num_channels;                                /**< Tx channel count       */
+    float magnitudes[PULSEQLIB_MAX_RF_SHIM_CHANNELS];  /**< per-ch magnitude [0,1] */
+    float phases[PULSEQLIB_MAX_RF_SHIM_CHANNELS];      /**< per-ch phase (rad)     */
+} pulseqlib_rf_shim_def;
+
+#define PULSEQLIB_RF_SHIM_DEF_INIT {0, {0}, {0}}
+
 #endif /* PULSEQLIB_TYPES_H */

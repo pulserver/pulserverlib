@@ -119,33 +119,45 @@ public:
 
     pulseqlib_subseq_info subseq_info(int ss = 0) const {
         pulseqlib_subseq_info info = PULSEQLIB_SUBSEQ_INFO_INIT;
-        check(pulseqlib_get_subseq_info(coll_, ss, &info));
+        check(pulseqlib_get_subseq_info(coll_, &info, ss));
         return info;
     }
 
     pulseqlib_segment_info segment_info(int seg) const {
         pulseqlib_segment_info info = PULSEQLIB_SEGMENT_INFO_INIT;
-        check(pulseqlib_get_segment_info(coll_, seg, &info));
+        check(pulseqlib_get_segment_info(coll_, &info, seg));
         return info;
     }
 
     pulseqlib_block_info block_info(int seg, int blk) const {
         pulseqlib_block_info info = PULSEQLIB_BLOCK_INFO_INIT;
-        check(pulseqlib_get_block_info(coll_, seg, blk, &info));
+        check(pulseqlib_get_block_info(coll_, &info, seg, blk));
         return info;
     }
 
     pulseqlib_adc_def adc_def(int adc_idx) const {
         pulseqlib_adc_def def = PULSEQLIB_ADC_DEF_INIT;
-        check(pulseqlib_get_adc_def(coll_, adc_idx, &def));
+        check(pulseqlib_get_adc_def(coll_, &def, adc_idx));
         return def;
+    }
+
+    pulseqlib_rf_shim_def rf_shim_def(int shim_idx) const {
+        pulseqlib_rf_shim_def def = PULSEQLIB_RF_SHIM_DEF_INIT;
+        check(pulseqlib_get_rf_shim_def(coll_, &def, shim_idx));
+        return def;
+    }
+
+    int num_rf_shims(int subseq_idx) const {
+        int n = pulseqlib_get_num_rf_shims(coll_, subseq_idx);
+        if (n < 0) check(n);
+        return n;
     }
 
     // ── Scan time ────────────────────────────────────────────────
 
     ScanTimeInfo get_scan_time(int num_reps) const {
         pulseqlib_scan_time_info cinfo = PULSEQLIB_SCAN_TIME_INFO_INIT;
-        check(pulseqlib_get_scan_time(coll_, num_reps, &cinfo));
+        check(pulseqlib_get_scan_time(coll_, &cinfo, num_reps));
         return ScanTimeInfo::from_c(cinfo);
     }
 
@@ -209,14 +221,14 @@ public:
 
     LabelLimits get_label_limits(int ss = 0) const {
         pulseqlib_label_limits cl;
-        check(pulseqlib_get_label_limits(coll_, ss, &cl));
+        check(pulseqlib_get_label_limits(coll_, &cl, ss));
         return LabelLimits::from_c(cl);
     }
 
     std::vector<int> get_adc_label(int ss, int occurrence) const {
         pulseqlib_subseq_info si = subseq_info(ss);
         std::vector<int> vals(si.num_label_columns);
-        check(pulseqlib_get_adc_label(coll_, ss, occurrence, vals.data()));
+        check(pulseqlib_get_adc_label(coll_, vals.data(), ss, occurrence));
         return vals;
     }
 
@@ -226,7 +238,7 @@ public:
         pulseqlib_tr_gradient_waveforms cw = PULSEQLIB_TR_GRADIENT_WAVEFORMS_INIT;
         pulseqlib_diagnostic diag;
         pulseqlib_diagnostic_init(&diag);
-        int code = pulseqlib_get_tr_gradient_waveforms(coll_, subseq_idx, canonical_tr_idx, &cw, &diag);
+        int code = pulseqlib_get_tr_gradient_waveforms(coll_, &cw, &diag, subseq_idx, canonical_tr_idx);
         check(code, diag);
 
         TrGradientWaveforms w;
@@ -259,11 +271,14 @@ public:
         memset(&cw, 0, sizeof(cw));
         pulseqlib_diagnostic_init(&diag);
 
-        int code = pulseqlib_get_tr_waveforms(
-            coll_, ss, amplitude_mode, tr_index,
+        int code = pulseqlib_get_tr_waveforms(coll_,
+            &cw,
+            &diag,
+            ss,
+            amplitude_mode,
+            tr_index,
             collapse_delays ? 1 : 0,
-            num_averages,
-            &cw, &diag);
+            num_averages);
         check(code, diag);
 
         TrWaveforms w;
@@ -338,9 +353,15 @@ public:
         pulseqlib_mech_resonances_spectra cs = PULSEQLIB_MECH_RESONANCES_SPECTRA_INIT;
         pulseqlib_diagnostic diag;
         pulseqlib_diagnostic_init(&diag);
-        int code = pulseqlib_calc_mech_resonances(
-            &cs, &diag, coll_, ss, canonical_tr_idx, &run_opts,
-            target_window_size, target_resolution_hz, max_freq_hz,
+        int code = pulseqlib_calc_mech_resonances(coll_,
+            &cs,
+            &diag,
+            ss,
+            canonical_tr_idx,
+            &run_opts,
+            target_window_size,
+            target_resolution_hz,
+            max_freq_hz,
             static_cast<int>(cbands.size()),
             cbands.empty() ? nullptr : cbands.data());
         check(code, diag);
@@ -426,7 +447,7 @@ public:
         pulseqlib_pns_result cr = PULSEQLIB_PNS_RESULT_INIT;
         pulseqlib_diagnostic diag;
         pulseqlib_diagnostic_init(&diag);
-        int code = pulseqlib_calc_pns(&cr, &diag, coll_, ss, canonical_tr_idx, &opts_, &cp);
+        int code = pulseqlib_calc_pns(coll_, &cr, &diag, ss, canonical_tr_idx, &opts_, &cp);
         check(code, diag);
 
         PnsResult r;

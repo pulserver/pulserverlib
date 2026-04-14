@@ -220,12 +220,11 @@ int pulseqlib_peek_scan_time(
  * @param[out] diag             Diagnostic on failure.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
-int pulseqlib_get_tr_gradient_waveforms(
-    const pulseqlib_collection*    coll,
-    int                            subseq_idx,
-    int                            canonical_tr_idx,
+int pulseqlib_get_tr_gradient_waveforms(const pulseqlib_collection*    coll,
     pulseqlib_tr_gradient_waveforms* waveforms,
-    pulseqlib_diagnostic*          diag);
+    pulseqlib_diagnostic*          diag,
+    int                            subseq_idx,
+    int                            canonical_tr_idx);
 void pulseqlib_collection_free(pulseqlib_collection* coll);
 
 /* ================================================================== */
@@ -379,15 +378,14 @@ void pulseqlib_tr_gradient_waveforms_free(pulseqlib_tr_gradient_waveforms* w);
  * @param[out] diag               Diagnostic on error.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
-int pulseqlib_get_tr_waveforms(
-    const pulseqlib_collection*     coll,
+int pulseqlib_get_tr_waveforms(const pulseqlib_collection*     coll,
+    pulseqlib_tr_waveforms*         out,
+    pulseqlib_diagnostic*           diag,
     int                             subseq_idx,
     int                             amplitude_mode,
     int                             tr_index,
     int                             collapse_delays,
-    int                             num_averages,
-    pulseqlib_tr_waveforms*         out,
-    pulseqlib_diagnostic*           diag);
+    int                             num_averages);
 
 /** @brief Free all arrays inside a pulseqlib_tr_waveforms. */
 void pulseqlib_tr_waveforms_free(pulseqlib_tr_waveforms* w);
@@ -468,10 +466,9 @@ int pulseqlib_check_safety(
  * @param[in]  forbidden_bands          Array of forbidden bands.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
-int pulseqlib_calc_mech_resonances(
+int pulseqlib_calc_mech_resonances(const pulseqlib_collection*    coll,
     pulseqlib_mech_resonances_spectra*    spectra,
     pulseqlib_diagnostic*          diag,
-    const pulseqlib_collection*    coll,
     int                            subseq_idx,
     int                            canonical_tr_idx,
     const pulseqlib_opts*          opts,
@@ -519,10 +516,9 @@ void pulseqlib_mech_resonances_spectra_free(pulseqlib_mech_resonances_spectra* s
  * @param[in]  params       PNS model parameters.
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
-int pulseqlib_calc_pns(
+int pulseqlib_calc_pns(const pulseqlib_collection* coll,
     pulseqlib_pns_result*       result,
     pulseqlib_diagnostic*       diag,
-    const pulseqlib_collection* coll,
     int                         subseq_idx,
     int                         canonical_tr_idx,
     const pulseqlib_opts*       opts,
@@ -552,8 +548,8 @@ int pulseqlib_get_collection_info(const pulseqlib_collection* coll,
  * prep/cooldown counts, degenerate flags, segment counts, label info).
  */
 int pulseqlib_get_subseq_info(const pulseqlib_collection* coll,
-                              int                         subseq_idx,
-                              pulseqlib_subseq_info*      info);
+                              pulseqlib_subseq_info*      info,
+                              int                         subseq_idx);
 
 /**
  * @brief Fill a pulseqlib_segment_info for one segment.
@@ -562,8 +558,8 @@ int pulseqlib_get_subseq_info(const pulseqlib_collection* coll,
  * trigger, NAV, timing gaps).
  */
 int pulseqlib_get_segment_info(const pulseqlib_collection* coll,
-                               int                         seg_idx,
-                               pulseqlib_segment_info*     info);
+                               pulseqlib_segment_info*     info,
+                               int                         seg_idx);
 
 /**
  * @brief Fill a pulseqlib_block_info for one block within a segment.
@@ -573,9 +569,9 @@ int pulseqlib_get_segment_info(const pulseqlib_collection* coll,
  * keyed by metadata from this struct.
  */
 int pulseqlib_get_block_info(const pulseqlib_collection* coll,
+                             pulseqlib_block_info*       info,
                              int                         seg_idx,
-                             int                         blk_idx,
-                             pulseqlib_block_info*       info);
+                             int                         blk_idx);
 
 /**
  * @brief Fill a pulseqlib_adc_def for a unique ADC definition.
@@ -584,8 +580,24 @@ int pulseqlib_get_block_info(const pulseqlib_collection* coll,
  * block_info.adc_def_id).
  */
 int pulseqlib_get_adc_def(const pulseqlib_collection* coll,
-                          int                         adc_idx,
-                          pulseqlib_adc_def*          def);
+                          pulseqlib_adc_def*          def,
+                          int                         adc_idx);
+
+/**
+ * @brief Fill a pulseqlib_rf_shim_def for one RF shim definition.
+ *
+ * @p shim_idx is the rf_shim_id from pulseqlib_block_instance.  Returns
+ * PULSEQLIB_ERR_INDEX if the index is out of range.
+ */
+int pulseqlib_get_rf_shim_def(const pulseqlib_collection* coll,
+                              pulseqlib_rf_shim_def*      def,
+                              int                         shim_idx);
+
+/**
+ * @brief Return the number of RF shim definitions in a subsequence.
+ */
+int pulseqlib_get_num_rf_shims(const pulseqlib_collection* coll,
+                               int                         subseq_idx);
 
 /**
  * @brief Check if a block needs frequency modulation.
@@ -602,10 +614,10 @@ int pulseqlib_get_adc_def(const pulseqlib_collection* coll,
  * is rf_raster_us when triggered by an RF overlap, or adc_raster_us when
  * triggered by an ADC overlap.
  */
-int pulseqlib_block_needs_freq_mod(
-    const pulseqlib_collection* coll,
-    int seg_idx, int blk_idx,
-    int* num_samples);
+int pulseqlib_block_needs_freq_mod(const pulseqlib_collection* coll,
+    int* num_samples,
+    int seg_idx,
+    int blk_idx);
 
 /**
  * @brief Return the RF isocenter time (us) relative to segment start.
@@ -647,8 +659,8 @@ float pulseqlib_get_adc_kzero_us(
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
 int pulseqlib_get_scan_time(const pulseqlib_collection* coll,
-                           int                        num_reps,
-                           pulseqlib_scan_time_info*  info);
+                           pulseqlib_scan_time_info*  info,
+                           int                        num_reps);
 
 /* ================================================================== */
 /*  Segment table getters (copy to caller buffer)                     */
@@ -756,9 +768,10 @@ int pulseqlib_get_rf_array(const pulseqlib_collection* coll,
  * free the result pointer itself with PULSEQLIB_FREE.
  */
 float** pulseqlib_get_rf_magnitude(const pulseqlib_collection* coll,
-                                   int seg_idx, int blk_idx,
                                    int* num_channels,
-                                   int* num_samples);
+                                   int* num_samples,
+                                   int seg_idx,
+                                   int blk_idx);
 
 /**
  * @brief Return decompressed RF phase waveform (rad, multi-channel).
@@ -768,9 +781,10 @@ float** pulseqlib_get_rf_magnitude(const pulseqlib_collection* coll,
  * PULSEQLIB_FREE, then the result pointer with PULSEQLIB_FREE.
  */
 float** pulseqlib_get_rf_phase(const pulseqlib_collection* coll,
-                               int seg_idx, int blk_idx,
                                int* num_channels,
-                               int* num_samples);
+                               int* num_samples,
+                               int seg_idx,
+                               int blk_idx);
 
 /**
  * @brief Return RF time-point array (us, per-channel).
@@ -807,9 +821,11 @@ float pulseqlib_get_rf_max_amplitude_hz(
  * Caller must free the returned array with PULSEQLIB_FREE.
  */
 float** pulseqlib_get_grad_amplitude(const pulseqlib_collection* coll,
-                                     int seg_idx, int blk_idx, int axis,
                                      int* num_shots,
-                                     int* num_samples);
+                                     int* num_samples,
+                                     int seg_idx,
+                                     int blk_idx,
+                                     int axis);
 
 /** @brief Return initial amplitude of a gradient event (Hz/m). */
 float pulseqlib_get_grad_initial_amplitude_hz_per_m(
@@ -841,8 +857,8 @@ float* pulseqlib_get_grad_time_us(const pulseqlib_collection* coll,
 
 /** @brief Return label limits (min/max per label type) for a subsequence. */
 int pulseqlib_get_label_limits(const pulseqlib_collection* coll,
-                               int subseq_idx,
-                               pulseqlib_label_limits* limits);
+                               pulseqlib_label_limits* limits,
+                               int subseq_idx);
 
 /**
  * @brief Get label values for a specific ADC occurrence.
@@ -853,9 +869,9 @@ int pulseqlib_get_label_limits(const pulseqlib_collection* coll,
  * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
  */
 int pulseqlib_get_adc_label(const pulseqlib_collection* coll,
+                            int* out_values,
                             int subseq_idx,
-                            int occurrence_idx,
-                            int* out_values);
+                            int occurrence_idx);
 
 /* ================================================================== */
 /*  Block cursor / iterator                                           */
@@ -979,13 +995,12 @@ int pulseqlib_update_freq_mod_collection(
  *                            full 3-channel definition (no axis masking).
  * @return 1 if the block has a freq-mod event, 0 if not.
  */
-int pulseqlib_freq_mod_collection_get(
-    const pulseqlib_freq_mod_collection* fmc,
-    int subseq_idx,
-    int scan_table_pos,
+int pulseqlib_freq_mod_collection_get(const pulseqlib_freq_mod_collection* fmc,
     const short** out_hw_waveform,
     int* out_num_samples,
-    float* out_phase_rad);
+    float* out_phase_rad,
+    int subseq_idx,
+    int scan_table_pos);
 
 /**
  * @brief Write all per-subsequence freq-mod data to a single cache file.

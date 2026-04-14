@@ -283,10 +283,9 @@ static float pulseqlib__get_total_duration_us(
     return coll->total_duration_us;
 }
 
-int pulseqlib_get_scan_time(
-    const pulseqlib_collection* coll,
-    int                        num_reps,
-    pulseqlib_scan_time_info*  info)
+int pulseqlib_get_scan_time(const pulseqlib_collection* coll,
+    pulseqlib_scan_time_info*  info,
+    int                        num_reps)
 {
     int i, n, bt_idx;
     const pulseqlib_sequence_descriptor* desc;
@@ -671,7 +670,7 @@ static int pulseqlib__is_segment_pure_delay(
         bdef = &desc->block_definitions[seg->unique_block_indices[0]];
         if (bdef->rf_id == -1 && bdef->gx_id == -1 &&
             bdef->gy_id == -1 && bdef->gz_id == -1 &&
-            bdef->adc_id == -1)
+            bdef->adc_id == -1 && !seg->has_digitalout[0])
             return 1;
     }
     return 0;
@@ -1220,10 +1219,11 @@ static int pulseqlib__get_rf_num_channels(
     return (rdef->num_channels > 1) ? rdef->num_channels : 1;
 }
 
-float** pulseqlib_get_rf_magnitude(
-    const pulseqlib_collection* coll,
-    int seg_idx, int blk_idx,
-    int* num_channels, int* num_samples)
+float** pulseqlib_get_rf_magnitude(const pulseqlib_collection* coll,
+    int* num_channels,
+    int* num_samples,
+    int seg_idx,
+    int blk_idx)
 {
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
@@ -1285,10 +1285,11 @@ float** pulseqlib_get_rf_magnitude(
     return result;
 }
 
-float** pulseqlib_get_rf_phase(
-    const pulseqlib_collection* coll,
-    int seg_idx, int blk_idx,
-    int* num_channels, int* num_samples)
+float** pulseqlib_get_rf_phase(const pulseqlib_collection* coll,
+    int* num_channels,
+    int* num_samples,
+    int seg_idx,
+    int blk_idx)
 {
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
@@ -1571,10 +1572,12 @@ static int pulseqlib__get_grad_delay_us(
     return desc->grad_definitions[grad_id].delay;
 }
 
-float** pulseqlib_get_grad_amplitude(
-    const pulseqlib_collection* coll,
-    int seg_idx, int blk_idx, int axis,
-    int* num_shots, int* num_samples)
+float** pulseqlib_get_grad_amplitude(const pulseqlib_collection* coll,
+    int* num_shots,
+    int* num_samples,
+    int seg_idx,
+    int blk_idx,
+    int axis)
 {
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
@@ -2262,10 +2265,10 @@ static int any_grad_overlaps_window(
     return 0;
 }
 
-int pulseqlib_block_needs_freq_mod(
-    const pulseqlib_collection* coll,
-    int seg_idx, int blk_idx,
-    int* num_samples)
+int pulseqlib_block_needs_freq_mod(const pulseqlib_collection* coll,
+    int* num_samples,
+    int seg_idx,
+    int blk_idx)
 {
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_segment* seg;
@@ -2653,8 +2656,8 @@ int pulseqlib_get_freq_mod_count_tr(
 /* ================================================================== */
 
 int pulseqlib_get_label_limits(const pulseqlib_collection* coll,
-                               int subseq_idx,
-                               pulseqlib_label_limits* limits)
+                               pulseqlib_label_limits* limits,
+                               int subseq_idx)
 {
     if (!coll || !limits) return PULSEQLIB_ERR_NULL_POINTER;
     if (subseq_idx < 0 || subseq_idx >= coll->num_subsequences)
@@ -2680,9 +2683,9 @@ static int pulseqlib__get_num_label_columns(const pulseqlib_collection* coll,
 }
 
 int pulseqlib_get_adc_label(const pulseqlib_collection* coll,
+                            int* out_values,
                             int subseq_idx,
-                            int occurrence_idx,
-                            int* out_values)
+                            int occurrence_idx)
 {
     const pulseqlib_sequence_descriptor* desc;
     int ncols, row_start, c;
@@ -2724,10 +2727,9 @@ int pulseqlib_get_collection_info(
     return PULSEQLIB_SUCCESS;
 }
 
-int pulseqlib_get_subseq_info(
-    const pulseqlib_collection* coll,
-    int                         subseq_idx,
-    pulseqlib_subseq_info*      info)
+int pulseqlib_get_subseq_info(const pulseqlib_collection* coll,
+    pulseqlib_subseq_info*      info,
+    int                         subseq_idx)
 {
     if (!coll || !info) return PULSEQLIB_ERR_NULL_POINTER;
     if (subseq_idx < 0 || subseq_idx >= coll->num_subsequences)
@@ -2776,10 +2778,9 @@ int pulseqlib_get_subseq_info(
     return PULSEQLIB_SUCCESS;
 }
 
-int pulseqlib_get_segment_info(
-    const pulseqlib_collection* coll,
-    int                         seg_idx,
-    pulseqlib_segment_info*     info)
+int pulseqlib_get_segment_info(const pulseqlib_collection* coll,
+    pulseqlib_segment_info*     info,
+    int                         seg_idx)
 {
     if (!coll || !info) return PULSEQLIB_ERR_NULL_POINTER;
 
@@ -2799,11 +2800,10 @@ int pulseqlib_get_segment_info(
     return PULSEQLIB_SUCCESS;
 }
 
-int pulseqlib_get_block_info(
-    const pulseqlib_collection* coll,
+int pulseqlib_get_block_info(const pulseqlib_collection* coll,
+    pulseqlib_block_info*       info,
     int                         seg_idx,
-    int                         blk_idx,
-    pulseqlib_block_info*       info)
+    int                         blk_idx)
 {
     int axis;
 
@@ -2865,10 +2865,9 @@ int pulseqlib_get_block_info(
     return PULSEQLIB_SUCCESS;
 }
 
-int pulseqlib_get_adc_def(
-    const pulseqlib_collection* coll,
-    int                         adc_idx,
-    pulseqlib_adc_def*          def)
+int pulseqlib_get_adc_def(const pulseqlib_collection* coll,
+    pulseqlib_adc_def*          def,
+    int                         adc_idx)
 {
     if (!coll || !def) return PULSEQLIB_ERR_NULL_POINTER;
 
@@ -2876,6 +2875,44 @@ int pulseqlib_get_adc_def(
     def->num_samples = pulseqlib__get_adc_num_samples(coll, adc_idx);
 
     return PULSEQLIB_SUCCESS;
+}
+
+int pulseqlib_get_rf_shim_def(const pulseqlib_collection* coll,
+    pulseqlib_rf_shim_def*      def,
+    int                         shim_idx)
+{
+    const pulseqlib_sequence_descriptor* desc;
+    int ss, offset, i;
+    const pulseqlib_rf_shim_definition* src;
+
+    if (!coll || !def) return PULSEQLIB_ERR_NULL_POINTER;
+
+    /* Search across all subsequences for the matching shim index.
+     * rf_shim_id values are globally unique within a collection. */
+    offset = 0;
+    for (ss = 0; ss < coll->num_subsequences; ss++) {
+        desc = &coll->descriptors[ss];
+        if (shim_idx >= offset && shim_idx < offset + desc->num_rf_shims) {
+            src = &desc->rf_shim_definitions[shim_idx - offset];
+            def->num_channels = src->num_channels;
+            for (i = 0; i < src->num_channels && i < PULSEQLIB_MAX_RF_SHIM_CHANNELS; i++) {
+                def->magnitudes[i] = src->magnitudes[i];
+                def->phases[i]     = src->phases[i];
+            }
+            return PULSEQLIB_SUCCESS;
+        }
+        offset += desc->num_rf_shims;
+    }
+    return PULSEQLIB_ERR_INDEX;
+}
+
+int pulseqlib_get_num_rf_shims(const pulseqlib_collection* coll,
+    int                         subseq_idx)
+{
+    if (!coll) return PULSEQLIB_ERR_NULL_POINTER;
+    if (subseq_idx < 0 || subseq_idx >= coll->num_subsequences)
+        return PULSEQLIB_ERR_INDEX;
+    return coll->descriptors[subseq_idx].num_rf_shims;
 }
 
 /* ================================================================== */

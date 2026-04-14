@@ -977,12 +977,11 @@ int pulseqlib__get_gradient_waveforms_range(
 /*  get_tr_gradient_waveforms                                         */
 /* ================================================================== */
 
-int pulseqlib_get_tr_gradient_waveforms(
-    const pulseqlib_collection* coll,
-    int subseq_idx,
-    int canonical_tr_idx,
+int pulseqlib_get_tr_gradient_waveforms(const pulseqlib_collection* coll,
     pulseqlib_tr_gradient_waveforms* waveforms,
-    pulseqlib_diagnostic* diag)
+    pulseqlib_diagnostic* diag,
+    int subseq_idx,
+    int canonical_tr_idx)
 {
     const pulseqlib_sequence_descriptor* desc;
     pulseqlib__uniform_grad_waveforms uw;
@@ -1313,15 +1312,14 @@ static int find_segment_for_block_pos(
 }
 
 /* ---- public: get_tr_waveforms ---- */
-int pulseqlib_get_tr_waveforms(
-    const pulseqlib_collection* coll,
+int pulseqlib_get_tr_waveforms(const pulseqlib_collection* coll,
+    pulseqlib_tr_waveforms* out,
+    pulseqlib_diagnostic* diag,
     int subseq_idx,
     int amplitude_mode,
     int tr_index,
     int collapse_delays,
-    int num_averages,
-    pulseqlib_tr_waveforms* out,
-    pulseqlib_diagnostic* diag)
+    int num_averages)
 {
     const pulseqlib_sequence_descriptor* desc;
     const pulseqlib_tr_descriptor* tr;

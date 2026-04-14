@@ -1918,13 +1918,12 @@ int pulseqlib_update_freq_mod_collection(
 /*  Public: collection accessor                                       */
 /* ================================================================== */
 
-int pulseqlib_freq_mod_collection_get(
-    const pulseqlib_freq_mod_collection* fmc,
-    int subseq_idx,
-    int scan_table_pos,
+int pulseqlib_freq_mod_collection_get(const pulseqlib_freq_mod_collection* fmc,
     const short** out_hw_waveform,
     int* out_num_samples,
-    float* out_phase_rad)
+    float* out_phase_rad,
+    int subseq_idx,
+    int scan_table_pos)
 {
     if (!fmc || subseq_idx < 0 || subseq_idx >= fmc->num_subsequences)
         return 0;
@@ -2101,9 +2100,12 @@ int pulseqlib_get_freq_mod(
     float* out_phase_rad)
 {
     if (!coll || !coll->freq_mod) return 0;
-    return pulseqlib_freq_mod_collection_get(
-        coll->freq_mod, subseq_idx, scan_table_pos,
-        out_hw_waveform, out_num_samples, out_phase_rad);
+    return pulseqlib_freq_mod_collection_get(coll->freq_mod,
+        out_hw_waveform,
+        out_num_samples,
+        out_phase_rad,
+        subseq_idx,
+        scan_table_pos);
 }
 
 /* ================================================================== */
