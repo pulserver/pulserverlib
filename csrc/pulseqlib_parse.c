@@ -599,6 +599,24 @@ static void read_definitions(pulseqlib__seq_file* seq)
                 seq->reserved_definitions_library.fov[1] = temp[1] * 100.0f;
                 seq->reserved_definitions_library.fov[2] = temp[2] * 100.0f;
             }
+        } else if (strcmp(key, "Matrix") == 0) {
+            if (nvals >= 3) {
+                seq->reserved_definitions_library.matrix[0] = (float)atof(seq->definitions_library[i].value[0]);
+                seq->reserved_definitions_library.matrix[1] = (float)atof(seq->definitions_library[i].value[1]);
+                seq->reserved_definitions_library.matrix[2] = (float)atof(seq->definitions_library[i].value[2]);
+            }
+        } else if (strcmp(key, "NavFOV") == 0) {
+            if (nvals >= 3) {
+                seq->reserved_definitions_library.nav_fov[0] = (float)atof(seq->definitions_library[i].value[0]) * 100.0f;
+                seq->reserved_definitions_library.nav_fov[1] = (float)atof(seq->definitions_library[i].value[1]) * 100.0f;
+                seq->reserved_definitions_library.nav_fov[2] = (float)atof(seq->definitions_library[i].value[2]) * 100.0f;
+            }
+        } else if (strcmp(key, "NavMatrix") == 0) {
+            if (nvals >= 3) {
+                seq->reserved_definitions_library.nav_matrix[0] = (float)atof(seq->definitions_library[i].value[0]);
+                seq->reserved_definitions_library.nav_matrix[1] = (float)atof(seq->definitions_library[i].value[1]);
+                seq->reserved_definitions_library.nav_matrix[2] = (float)atof(seq->definitions_library[i].value[2]);
+            }
         } else if (strcmp(key, "TotalDuration") == 0) {
             seq->reserved_definitions_library.total_duration = (float)atof(value);
         } else if (strcmp(key, "NextSequence") == 0) {

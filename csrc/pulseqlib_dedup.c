@@ -1172,6 +1172,12 @@ int pulseqlib__get_unique_blocks(pulseqlib_sequence_descriptor* desc, const puls
     desc->ignore_averages  = seq->reserved_definitions_library.ignore_averages;
     desc->vendor           = seq->opts.vendor;
 
+    /* encoding-space definitions */
+    memcpy(desc->fov,        seq->reserved_definitions_library.fov,        sizeof(desc->fov));
+    memcpy(desc->matrix,     seq->reserved_definitions_library.matrix,     sizeof(desc->matrix));
+    memcpy(desc->nav_fov,    seq->reserved_definitions_library.nav_fov,    sizeof(desc->nav_fov));
+    memcpy(desc->nav_matrix, seq->reserved_definitions_library.nav_matrix, sizeof(desc->nav_matrix));
+
     /* verify system and sequence raster times are integer multiples */
     {
         int rc = check_raster_times(seq);

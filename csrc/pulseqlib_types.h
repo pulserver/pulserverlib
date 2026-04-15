@@ -782,4 +782,51 @@ typedef struct pulseqlib_rf_shim_def {
 
 #define PULSEQLIB_RF_SHIM_DEF_INIT {0, {0}, {0}}
 
+/* ================================================================== */
+/*  K-space trajectory types                                          */
+/* ================================================================== */
+
+/** @brief Single k-space shot (one axis, ADC-sampled, k-zero centred). */
+typedef struct pulseqlib_kshot {
+    int    num_samples;
+    float* k;                  /**< k-space values [num_samples], Hz·s/m */
+} pulseqlib_kshot;
+
+/** @brief Library of unique per-axis k-space shots. */
+typedef struct pulseqlib_kshot_library {
+    int               num_shots;
+    pulseqlib_kshot*  shots;
+} pulseqlib_kshot_library;
+
+/** @brief Per-ADC-event trajectory table entry. */
+typedef struct pulseqlib_traj_table_entry {
+    int   kx_shot_id;          /**< kshot index for X axis (-1 = trivial) */
+    int   ky_shot_id;          /**< kshot index for Y axis (-1 = trivial) */
+    int   kz_shot_id;          /**< kshot index for Z axis (-1 = trivial) */
+    float gx_amplitude;        /**< gradient amplitude for X (Hz/m)      */
+    float gy_amplitude;        /**< gradient amplitude for Y (Hz/m)      */
+    float gz_amplitude;        /**< gradient amplitude for Z (Hz/m)      */
+    int   rotation_id;         /**< index into rotation_matrices          */
+    int   slc, seg, rep, avg, set, eco, phs, lin, par, acq;
+} pulseqlib_traj_table_entry;
+
+/** @brief Per-subsequence encoding-space descriptor. */
+typedef struct pulseqlib_encoding_space {
+    float fov[3];              /**< field of view (mm)                    */
+    float matrix[3];           /**< matrix size (voxels)                  */
+    float nav_fov[3];          /**< navigator FOV (mm), 0 if none         */
+    float nav_matrix[3];       /**< navigator matrix size, 0 if none      */
+    int   subseq_idx;          /**< owning subsequence index              */
+    int   nav_subseq_offset;   /**< navigator subseq offset, 0 if none    */
+} pulseqlib_encoding_space;
+
+/** @brief Complete trajectory description for a collection. */
+typedef struct pulseqlib_trajectory {
+    pulseqlib_kshot_library      kshots;
+    int                          num_encoding_spaces;
+    pulseqlib_encoding_space*    encoding_spaces;
+    int                          num_adc_events;
+    pulseqlib_traj_table_entry*  table;
+} pulseqlib_trajectory;
+
 #endif /* PULSEQLIB_TYPES_H */

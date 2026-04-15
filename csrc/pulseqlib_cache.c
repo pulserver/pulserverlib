@@ -13,13 +13,14 @@
 /* ================================================================== */
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER  0x01020304
-#define PULSEQLIB_CACHE_VERSION_MAJOR  16
+#define PULSEQLIB_CACHE_VERSION_MAJOR  17
 #define PULSEQLIB_CACHE_VERSION_MINOR  0
 
 #define PULSEQLIB_CACHE_SECTION_CHECK            1
 #define PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS  2
 #define PULSEQLIB_CACHE_SECTION_SCANLOOP         3
 #define PULSEQLIB_CACHE_SECTION_FREQMOD          4
+#define PULSEQLIB_CACHE_SECTION_TRAJECTORY       5
 
 typedef struct pulseqlib_cache_section_entry {
     int section_id;
@@ -132,6 +133,10 @@ static int write_descriptor(FILE* f, const pulseqlib_sequence_descriptor* d)
     if (!write4(f, &d->ignore_averages, 1)) return 0;
     if (!write4(f, &d->num_passes, 1)) return 0;
     if (!write4(f, &d->vendor, 1)) return 0;
+    if (!write4(f, d->fov, 3)) return 0;
+    if (!write4(f, d->matrix, 3)) return 0;
+    if (!write4(f, d->nav_fov, 3)) return 0;
+    if (!write4(f, d->nav_matrix, 3)) return 0;
 
     /* block definitions */
     if (!write4(f, &d->num_unique_blocks, 1)) return 0;
@@ -374,6 +379,11 @@ static int read_descriptor(FILE* f, pulseqlib_sequence_descriptor* d, int do_swa
     if (!read4(f, &d->num_passes, 1)) return 0;
     if (!read4(f, &d->vendor, 1)) return 0;
     if (do_swap) swap4_array(&d->num_prep_blocks, 11);
+    if (!read4(f, d->fov, 3)) return 0;
+    if (!read4(f, d->matrix, 3)) return 0;
+    if (!read4(f, d->nav_fov, 3)) return 0;
+    if (!read4(f, d->nav_matrix, 3)) return 0;
+    if (do_swap) swap4_array((int*)d->fov, 12);
 
     /* block definitions */
     if (!read4(f, &d->num_unique_blocks, 1)) return 0;

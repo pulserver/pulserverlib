@@ -1174,6 +1174,59 @@ int pulseqlib_get_unique_block_id(const pulseqlib_collection* coll,
 int pulseqlib_get_segment_block_def_indices(const pulseqlib_collection* coll,
                                             int seg_idx, int* out_ids);
 
+/* ================================================================== */
+/*  K-space trajectory                                                */
+/* ================================================================== */
+
+/**
+ * @brief Compute the k-space trajectory for a subsequence.
+ *
+ * Builds a library of unique per-axis k-space shots (ADC-sampled,
+ * k-zero centred) and a per-ADC-event table with shot IDs, gradient
+ * amplitudes, rotation IDs, and resolved labels.
+ *
+ * Must be called AFTER pulseqlib_check_safety() (needs k-zero anchors).
+ *
+ * @param[in]  coll        Loaded collection (with safety data).
+ * @param[out] out         Trajectory output (caller-allocated struct).
+ * @param[out] diag        Diagnostic (optional, may be NULL).
+ * @param[in]  subseq_idx  Subsequence index.
+ * @return PULSEQLIB_SUCCESS or negative error code.
+ */
+int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
+                                 pulseqlib_trajectory*       out,
+                                 pulseqlib_diagnostic*       diag,
+                                 int                         subseq_idx);
+
+/**
+ * @brief Free all memory owned by a pulseqlib_trajectory.
+ */
+void pulseqlib_free_trajectory(pulseqlib_trajectory* traj);
+
+/**
+ * @brief Append the trajectory as section 5 to the binary cache.
+ *
+ * Opens the existing cache file (written by pulseqlib_read with
+ * cache_binary=1), appends the trajectory section, and patches the
+ * header.  Must be called AFTER pulseqlib_compute_trajectory().
+ *
+ * @param[in] traj      Computed trajectory.
+ * @param[in] seq_path  Path to the .seq file (cache is .seq → .bin).
+ * @return PULSEQLIB_SUCCESS or negative error code.
+ */
+int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory* traj,
+                                     const char*                 seq_path);
+
+/**
+ * @brief Load trajectory from cache section 5.
+ *
+ * @param[out] out       Trajectory output (caller-allocated struct).
+ * @param[in]  seq_path  Path to the .seq file.
+ * @return PULSEQLIB_SUCCESS or negative error code.
+ */
+int pulseqlib_load_trajectory_cache(pulseqlib_trajectory* out,
+                                    const char*           seq_path);
+
 #ifdef __cplusplus
 }
 #endif

@@ -452,6 +452,11 @@ typedef struct pulseqlib_sequence_descriptor {
     int num_averages;       /**< number of averages (1 if ignore_averages)       */
     int vendor;             /**< PULSEQLIB_VENDOR_* runtime constant */
 
+    float fov[3];           /**< field of view (mm), from [DEFINITIONS] FOV */
+    float matrix[3];        /**< matrix size, from [DEFINITIONS] Matrix    */
+    float nav_fov[3];       /**< navigator FOV (mm), from [DEFINITIONS] NavFOV */
+    float nav_matrix[3];    /**< navigator matrix, from [DEFINITIONS] NavMatrix */
+
     int num_unique_blocks;
     pulseqlib_block_definition* block_definitions;
     int num_blocks;
@@ -518,6 +523,7 @@ typedef struct pulseqlib_sequence_descriptor {
 
 #define PULSEQLIB_SEQUENCE_DESCRIPTOR_INIT { \
     0, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 1, 0, 1, 0, \
+    {0,0,0}, {0,0,0}, {0,0,0}, {0,0,0}, \
     0, NULL, 0, NULL, \
     0, NULL, 0, NULL, \
     0, NULL, 0, NULL, \
@@ -855,6 +861,9 @@ typedef struct pulseqlib__reserved_definitions {
     float block_duration_raster;
     char name[PULSEQLIB__SEQUENCE_NAME_LENGTH];
     float fov[3];
+    float matrix[3];
+    float nav_fov[3];
+    float nav_matrix[3];
     float total_duration;
     char next_sequence[PULSEQLIB__SEQUENCE_FILENAME_LENGTH];
     int ignore_fov_shift;
