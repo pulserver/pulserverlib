@@ -166,7 +166,7 @@ static int compute_block_kspace(
     bte = &desc->block_table[block_table_idx];
     adc_def_idx = bte->adc_id;
     if (adc_def_idx < 0 || adc_def_idx >= desc->num_unique_adcs) {
-        if (diag) snprintf(diag->message, PULSEQLIB_DIAG_MSG_LEN,
+        if (diag) sprintf(diag->message,
             "Block %d has no ADC event", block_table_idx);
         return PULSEQLIB_ERR_INVALID_ARGUMENT;
     }
@@ -409,7 +409,7 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
                                  int                         subseq_idx)
 {
     const pulseqlib_sequence_descriptor* desc;
-    int n, b, seg, blk;
+    int n, b;
     int num_adc_events;
     int adc_idx;
     int label_ncols;
