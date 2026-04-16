@@ -808,6 +808,10 @@ typedef struct pulseqlib_traj_table_entry {
     float gz_amplitude;        /**< gradient amplitude for Z (Hz/m)      */
     int   rotation_id;         /**< index into rotation_matrices          */
     int   slc, seg, rep, avg, set, eco, phs, lin, par, acq;
+    unsigned long flags;       /**< ISMRMRD-compatible flag bitmask       */
+    int   center_sample;       /**< k-zero sample index within readout   */
+    float sample_time_us;      /**< ADC dwell time in microseconds       */
+    int   encoding_space_ref;  /**< encoding space index                  */
 } pulseqlib_traj_table_entry;
 
 /** @brief Per-subsequence encoding-space descriptor. */

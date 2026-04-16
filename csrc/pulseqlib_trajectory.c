@@ -549,19 +549,77 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
         /* Rotation */
         table[adc_idx].rotation_id = bte->rotation_id;
 
+        /* Metadata: center_sample, sample_time, encoding_space */
+        table[adc_idx].center_sample = kzero;
+        table[adc_idx].sample_time_us = (float)desc->adc_definitions[adc_def_idx].dwell_time * 1e-3f;
+        table[adc_idx].encoding_space_ref = subseq_idx;
+        table[adc_idx].flags = 0;
+
         /* Labels from label table */
         if (label_buf && adc_idx < desc->label_num_entries) {
             rc = pulseqlib_get_adc_label(coll, label_buf,
                                          subseq_idx, adc_idx);
-            if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 3) {
-                /* GEHC mapping: col0=lin, col1=slc, col2=eco */
+            if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 10) {
+                /* Full Pulseq label mapping: col order matches label_table columns */
+                table[adc_idx].lin = label_buf[0];
+                table[adc_idx].slc = label_buf[1];
+                table[adc_idx].eco = label_buf[2];
+                table[adc_idx].rep = label_buf[3];
+                table[adc_idx].phs = label_buf[4];
+                table[adc_idx].set = label_buf[5];
+                table[adc_idx].seg = label_buf[6];
+                table[adc_idx].avg = label_buf[7];
+                table[adc_idx].par = label_buf[8];
+                table[adc_idx].acq = label_buf[9];
+
+                /* Map Pulseq boolean flags to ISMRMRD flag bits */
+                if (label_ncols > 10 && label_buf[10]) /* NAV  */
+                    table[adc_idx].flags |= (1UL << 22);  /* ACQ_IS_NAVIGATION_DATA */
+                if (label_ncols > 11 && label_buf[11]) /* REV  */
+                    table[adc_idx].flags |= (1UL << 21);  /* ACQ_IS_REVERSE */
+                if (label_ncols > 13 && label_buf[13]) /* REF  */
+                    table[adc_idx].flags |= (1UL << 19);  /* ACQ_IS_PARALLEL_CALIBRATION */
+                if (label_ncols > 15 && label_buf[15]) /* NOISE */
+                    table[adc_idx].flags |= (1UL << 18);  /* ACQ_IS_NOISE_MEASUREMENT */
+            } else if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 3) {
+                /* GEHC mapping fallback: col0=lin, col1=slc, col2=eco */
                 table[adc_idx].lin = label_buf[0];
                 table[adc_idx].slc = label_buf[1];
                 table[adc_idx].eco = label_buf[2];
             }
         }
 
+        /* NAV flag from block table (block-level nav_flag) */
+        if (bte->nav_flag)
+            table[adc_idx].flags |= (1UL << 22);  /* ACQ_IS_NAVIGATION_DATA */
+
         ++adc_idx;
+    }
+
+    /* Compute FIRST_IN / LAST_IN flags from label transitions */
+    {
+        int ti;
+        for (ti = 0; ti < adc_idx; ++ti) {
+            #define CHECK_TRANSITION(field, first_bit, last_bit) do { \
+                if (ti == 0 || table[ti].field != table[ti-1].field) \
+                    table[ti].flags |= (1UL << ((first_bit) - 1)); \
+                if (ti == adc_idx-1 || table[ti].field != table[ti+1].field) \
+                    table[ti].flags |= (1UL << ((last_bit) - 1)); \
+            } while(0)
+            CHECK_TRANSITION(lin, 1, 2);   /* FIRST/LAST_IN_ENCODE_STEP1 */
+            CHECK_TRANSITION(par, 3, 4);   /* FIRST/LAST_IN_ENCODE_STEP2 */
+            CHECK_TRANSITION(avg, 5, 6);   /* FIRST/LAST_IN_AVERAGE */
+            CHECK_TRANSITION(slc, 7, 8);   /* FIRST/LAST_IN_SLICE */
+            CHECK_TRANSITION(eco, 9, 10);  /* FIRST/LAST_IN_CONTRAST */
+            CHECK_TRANSITION(phs, 11, 12); /* FIRST/LAST_IN_PHASE */
+            CHECK_TRANSITION(rep, 13, 14); /* FIRST/LAST_IN_REPETITION */
+            CHECK_TRANSITION(set, 15, 16); /* FIRST/LAST_IN_SET */
+            CHECK_TRANSITION(seg, 17, 18); /* FIRST/LAST_IN_SEGMENT */
+            #undef CHECK_TRANSITION
+        }
+        /* Last ADC overall → LAST_IN_MEASUREMENT (bit 25) */
+        if (adc_idx > 0)
+            table[adc_idx - 1].flags |= (1UL << 24);
     }
 
     out->num_adc_events = adc_idx;
@@ -773,6 +831,21 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory* traj,
         if (!traj_write4(f, &e->lin, 1)) goto tw_fail;
         if (!traj_write4(f, &e->par, 1)) goto tw_fail;
         if (!traj_write4(f, &e->acq, 1)) goto tw_fail;
+        /* new fields: flags (as 2 ints for portability), center_sample,
+         * sample_time_us, encoding_space_ref.
+         * On 32-bit targets unsigned long is 32 bits, so flags_hi is always 0. */
+        {
+            int flags_lo = (int)(e->flags & 0xFFFFFFFFUL);
+            int flags_hi = 0;
+            if (sizeof(unsigned long) > 4) {
+                flags_hi = (int)((e->flags >> 16) >> 16);
+            }
+            if (!traj_write4(f, &flags_lo, 1)) goto tw_fail;
+            if (!traj_write4(f, &flags_hi, 1)) goto tw_fail;
+        }
+        if (!traj_write4(f, &e->center_sample, 1)) goto tw_fail;
+        if (!traj_write4(f, &e->sample_time_us, 1)) goto tw_fail;
+        if (!traj_write4(f, &e->encoding_space_ref, 1)) goto tw_fail;
     }
 
     data_end = ftell(f);
@@ -940,6 +1013,21 @@ int pulseqlib_load_trajectory_cache(pulseqlib_trajectory* out,
             if (!traj_read4(f, &e->par, 1)) goto lr_fail;
             if (!traj_read4(f, &e->acq, 1)) goto lr_fail;
             if (do_swap) traj_swap4_array(&e->kx_shot_id, 17);
+            /* new fields */
+            {
+                int flags_lo = 0, flags_hi = 0;
+                if (!traj_read4(f, &flags_lo, 1)) goto lr_fail;
+                if (!traj_read4(f, &flags_hi, 1)) goto lr_fail;
+                if (do_swap) { traj_swap4(&flags_lo); traj_swap4(&flags_hi); }
+                e->flags = (unsigned long)(unsigned int)flags_lo;
+                if (sizeof(unsigned long) > 4) {
+                    e->flags |= ((unsigned long)(unsigned int)flags_hi << 16) << 16;
+                }
+            }
+            if (!traj_read4(f, &e->center_sample, 1)) goto lr_fail;
+            if (!traj_read4(f, &e->sample_time_us, 1)) goto lr_fail;
+            if (!traj_read4(f, &e->encoding_space_ref, 1)) goto lr_fail;
+            if (do_swap) traj_swap4_array(&e->center_sample, 3);
         }
     }
 

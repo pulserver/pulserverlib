@@ -2709,6 +2709,54 @@ int pulseqlib_get_adc_label(const pulseqlib_collection* coll,
 }
 
 /* ================================================================== */
+/*  Definition getters                                                */
+/* ================================================================== */
+
+/* Static scratch space for the read-only view returned to callers.
+ * Thread-safety note: not thread-safe; matches existing patterns. */
+static pulseqlib_definition_entry* s_def_view = NULL;
+static int s_def_view_cap = 0;
+
+int pulseqlib_get_definitions(const pulseqlib_collection* coll,
+                              int subseq_idx,
+                              const pulseqlib_definition_entry** out,
+                              int* num_entries)
+{
+    const pulseqlib_sequence_descriptor* desc;
+    int i;
+
+    if (!coll || !out || !num_entries) return PULSEQLIB_ERR_NULL_POINTER;
+    if (subseq_idx < 0 || subseq_idx >= coll->num_subsequences)
+        return PULSEQLIB_ERR_INVALID_ARGUMENT;
+
+    desc = &coll->descriptors[subseq_idx];
+    *num_entries = desc->num_definitions;
+
+    if (desc->num_definitions == 0) {
+        *out = NULL;
+        return PULSEQLIB_SUCCESS;
+    }
+
+    /* Re-allocate scratch if needed */
+    if (desc->num_definitions > s_def_view_cap) {
+        if (s_def_view) PULSEQLIB_FREE(s_def_view);
+        s_def_view = (pulseqlib_definition_entry*)PULSEQLIB_ALLOC(
+            (size_t)desc->num_definitions * sizeof(pulseqlib_definition_entry));
+        if (!s_def_view) { s_def_view_cap = 0; return PULSEQLIB_ERR_ALLOC_FAILED; }
+        s_def_view_cap = desc->num_definitions;
+    }
+
+    for (i = 0; i < desc->num_definitions; ++i) {
+        s_def_view[i].name       = desc->definitions[i].name;
+        s_def_view[i].num_values = desc->definitions[i].value_size;
+        s_def_view[i].values     = (const char* const*)desc->definitions[i].value;
+    }
+
+    *out = s_def_view;
+    return PULSEQLIB_SUCCESS;
+}
+
+/* ================================================================== */
 /*  Batch getters (public API)                                        */
 /* ================================================================== */
 

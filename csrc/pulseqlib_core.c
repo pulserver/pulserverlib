@@ -107,6 +107,19 @@ void pulseqlib_sequence_descriptor_free(pulseqlib_sequence_descriptor* d)
     if (d->label_table) { PULSEQLIB_FREE(d->label_table); d->label_table = NULL; }
     d->label_num_columns = 0;
     d->label_num_entries = 0;
+
+    /* generic definitions */
+    if (d->definitions) {
+        for (i = 0; i < d->num_definitions; ++i) {
+            int j;
+            for (j = 0; j < d->definitions[i].value_size; ++j)
+                if (d->definitions[i].value[j]) PULSEQLIB_FREE(d->definitions[i].value[j]);
+            if (d->definitions[i].value) PULSEQLIB_FREE(d->definitions[i].value);
+        }
+        PULSEQLIB_FREE(d->definitions);
+        d->definitions = NULL;
+    }
+    d->num_definitions = 0;
 }
 
 void pulseqlib_collection_free(

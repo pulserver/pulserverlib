@@ -1178,6 +1178,35 @@ int pulseqlib__get_unique_blocks(pulseqlib_sequence_descriptor* desc, const puls
     memcpy(desc->nav_fov,    seq->reserved_definitions_library.nav_fov,    sizeof(desc->nav_fov));
     memcpy(desc->nav_matrix, seq->reserved_definitions_library.nav_matrix, sizeof(desc->nav_matrix));
 
+    /* deep-copy generic definitions */
+    desc->num_definitions = seq->num_definitions;
+    desc->definitions = NULL;
+    if (seq->num_definitions > 0 && seq->definitions_library) {
+        int di;
+        desc->definitions = (pulseqlib__definition*)PULSEQLIB_ALLOC(
+            (size_t)seq->num_definitions * sizeof(pulseqlib__definition));
+        if (!desc->definitions) goto fail;
+        for (di = 0; di < seq->num_definitions; ++di) {
+            strncpy(desc->definitions[di].name,
+                    seq->definitions_library[di].name,
+                    PULSEQLIB__DEFINITION_NAME_LENGTH);
+            desc->definitions[di].value_size = seq->definitions_library[di].value_size;
+            desc->definitions[di].value = NULL;
+            if (seq->definitions_library[di].value_size > 0) {
+                int dj;
+                desc->definitions[di].value = (char**)PULSEQLIB_ALLOC(
+                    (size_t)seq->definitions_library[di].value_size * sizeof(char*));
+                if (!desc->definitions[di].value) goto fail;
+                for (dj = 0; dj < seq->definitions_library[di].value_size; ++dj) {
+                    int slen = (int)strlen(seq->definitions_library[di].value[dj]);
+                    desc->definitions[di].value[dj] = (char*)PULSEQLIB_ALLOC((size_t)(slen + 1));
+                    if (!desc->definitions[di].value[dj]) goto fail;
+                    strcpy(desc->definitions[di].value[dj], seq->definitions_library[di].value[dj]);
+                }
+            }
+        }
+    }
+
     /* verify system and sequence raster times are integer multiples */
     {
         int rc = check_raster_times(seq);

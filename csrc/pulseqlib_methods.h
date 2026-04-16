@@ -860,6 +860,30 @@ int pulseqlib_get_label_limits(const pulseqlib_collection* coll,
                                pulseqlib_label_limits* limits,
                                int subseq_idx);
 
+/* ================================================================== */
+/*  Definition getters                                                */
+/* ================================================================== */
+
+/** @brief Opaque read-only view of a single [DEFINITIONS] entry. */
+typedef struct pulseqlib_definition_entry {
+    const char*        name;       /**< key name                        */
+    int                num_values; /**< number of space-separated values */
+    const char* const* values;     /**< value tokens (string array)     */
+} pulseqlib_definition_entry;
+
+/**
+ * @brief Return all generic [DEFINITIONS] key-value pairs for a subsequence.
+ *
+ * On success, *out points to an internal array of num_entries entries.
+ * The pointers are valid until pulseqlib_collection_free().
+ *
+ * @return PULSEQLIB_SUCCESS on success, negative error code on failure.
+ */
+int pulseqlib_get_definitions(const pulseqlib_collection* coll,
+                              int subseq_idx,
+                              const pulseqlib_definition_entry** out,
+                              int* num_entries);
+
 /**
  * @brief Get label values for a specific ADC occurrence.
  *

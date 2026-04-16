@@ -13,7 +13,7 @@
 /* ================================================================== */
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER  0x01020304
-#define PULSEQLIB_CACHE_VERSION_MAJOR  17
+#define PULSEQLIB_CACHE_VERSION_MAJOR  18
 #define PULSEQLIB_CACHE_VERSION_MINOR  0
 
 #define PULSEQLIB_CACHE_SECTION_CHECK            1
@@ -345,6 +345,23 @@ static int write_descriptor(FILE* f, const pulseqlib_sequence_descriptor* d)
                (size_t)d->label_num_entries * (size_t)d->label_num_columns, f);
     }
     fwrite(&d->label_limits, sizeof(pulseqlib_label_limits), 1, f);
+
+    /* generic definitions */
+    fwrite(&d->num_definitions, sizeof(int), 1, f);
+    for (i = 0; i < d->num_definitions; ++i) {
+        int name_len = (int)strlen(d->definitions[i].name);
+        fwrite(&name_len, sizeof(int), 1, f);
+        fwrite(d->definitions[i].name, 1, (size_t)name_len, f);
+        fwrite(&d->definitions[i].value_size, sizeof(int), 1, f);
+        {
+            int j;
+            for (j = 0; j < d->definitions[i].value_size; ++j) {
+                int vlen = (int)strlen(d->definitions[i].value[j]);
+                fwrite(&vlen, sizeof(int), 1, f);
+                fwrite(d->definitions[i].value[j], 1, (size_t)vlen, f);
+            }
+        }
+    }
 
     /* scan table */
     if (!write4(f, &d->scan_table_len, 1)) return 0;
@@ -723,6 +740,44 @@ static int read_descriptor(FILE* f, pulseqlib_sequence_descriptor* d, int do_swa
         d->label_table = NULL;
     }
     if (fread(&d->label_limits, sizeof(pulseqlib_label_limits), 1, f) != 1) return 0;
+
+    /* generic definitions */
+    d->num_definitions = 0;
+    d->definitions = NULL;
+    if (fread(&d->num_definitions, sizeof(int), 1, f) == 1 && d->num_definitions > 0) {
+        d->definitions = (pulseqlib__definition*)PULSEQLIB_ALLOC(
+            (size_t)d->num_definitions * sizeof(pulseqlib__definition));
+        if (!d->definitions) return 0;
+        for (i = 0; i < d->num_definitions; ++i) {
+            int name_len;
+            d->definitions[i].value = NULL;
+            d->definitions[i].value_size = 0;
+            memset(d->definitions[i].name, 0, PULSEQLIB__DEFINITION_NAME_LENGTH);
+            if (fread(&name_len, sizeof(int), 1, f) != 1) return 0;
+            if (name_len > 0 && name_len < PULSEQLIB__DEFINITION_NAME_LENGTH) {
+                if (fread(d->definitions[i].name, 1, (size_t)name_len, f) != (size_t)name_len) return 0;
+                d->definitions[i].name[name_len] = '\0';
+            }
+            if (fread(&d->definitions[i].value_size, sizeof(int), 1, f) != 1) return 0;
+            if (d->definitions[i].value_size > 0) {
+                int j;
+                d->definitions[i].value = (char**)PULSEQLIB_ALLOC(
+                    (size_t)d->definitions[i].value_size * sizeof(char*));
+                if (!d->definitions[i].value) return 0;
+                for (j = 0; j < d->definitions[i].value_size; ++j) {
+                    int vlen;
+                    d->definitions[i].value[j] = NULL;
+                    if (fread(&vlen, sizeof(int), 1, f) != 1) return 0;
+                    if (vlen > 0) {
+                        d->definitions[i].value[j] = (char*)PULSEQLIB_ALLOC((size_t)(vlen + 1));
+                        if (!d->definitions[i].value[j]) return 0;
+                        if (fread(d->definitions[i].value[j], 1, (size_t)vlen, f) != (size_t)vlen) return 0;
+                        d->definitions[i].value[j][vlen] = '\0';
+                    }
+                }
+            }
+        }
+    }
 
     /* scan table */
     if (fread(&d->scan_table_len, sizeof(int), 1, f) != 1) return 0;

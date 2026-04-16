@@ -97,6 +97,9 @@
 
 #define PULSEQLIB_TR_REGION_ALL      (-1)
 
+/* Forward declaration for use in sequence_descriptor */
+typedef struct pulseqlib__definition pulseqlib__definition;
+
 /* ================================================================== */
 /*  Segment timing anchors (internal)                                 */
 /* ================================================================== */
@@ -519,6 +522,10 @@ typedef struct pulseqlib_sequence_descriptor {
     int label_num_entries;
     int* label_table;
     pulseqlib_label_limits label_limits;
+
+    /* generic [DEFINITIONS] key-value pairs (all keys, not just reserved) */
+    int num_definitions;
+    pulseqlib__definition* definitions;
 } pulseqlib_sequence_descriptor;
 
 #define PULSEQLIB_SEQUENCE_DESCRIPTOR_INIT { \
@@ -534,7 +541,8 @@ typedef struct pulseqlib_sequence_descriptor {
     0, NULL, PULSEQLIB_SEGMENT_TABLE_RESULT_INIT, \
     0, NULL, NULL, NULL, NULL, \
     NULL, \
-    0, 0, NULL, {{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}} \
+    0, 0, NULL, {{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}}, \
+    0, NULL \
 }
 
 /* ================================================================== */
@@ -848,11 +856,11 @@ typedef struct pulseqlib__section_offsets {
     long signature;
 } pulseqlib__section_offsets;
 
-typedef struct pulseqlib__definition {
+struct pulseqlib__definition {
     char name[PULSEQLIB__DEFINITION_NAME_LENGTH];
     int value_size;
     char** value;
-} pulseqlib__definition;
+};
 
 typedef struct pulseqlib__reserved_definitions {
     float gradient_raster_time;
