@@ -822,6 +822,7 @@ typedef struct pulseqlib_encoding_space {
     float nav_matrix[3];       /**< navigator matrix size, 0 if none      */
     int   subseq_idx;          /**< owning subsequence index              */
     int   nav_subseq_offset;   /**< navigator subseq offset, 0 if none    */
+    pulseqlib_label_limits label_limits; /**< per-encoding-space label limits */
 } pulseqlib_encoding_space;
 
 /** @brief Complete trajectory description for a collection. */

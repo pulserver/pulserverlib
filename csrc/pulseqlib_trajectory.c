@@ -549,10 +549,9 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
         /* Rotation */
         table[adc_idx].rotation_id = bte->rotation_id;
 
-        /* Metadata: center_sample, sample_time, encoding_space */
+        /* Metadata: center_sample, sample_time */
         table[adc_idx].center_sample = kzero;
         table[adc_idx].sample_time_us = (float)desc->adc_definitions[adc_def_idx].dwell_time * 1e-3f;
-        table[adc_idx].encoding_space_ref = subseq_idx;
         table[adc_idx].flags = 0;
 
         /* Labels from label table */
@@ -572,15 +571,25 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
                 table[adc_idx].par = label_buf[8];
                 table[adc_idx].acq = label_buf[9];
 
-                /* Map Pulseq boolean flags to ISMRMRD flag bits */
-                if (label_ncols > 10 && label_buf[10]) /* NAV  */
-                    table[adc_idx].flags |= (1UL << 22);  /* ACQ_IS_NAVIGATION_DATA */
-                if (label_ncols > 11 && label_buf[11]) /* REV  */
-                    table[adc_idx].flags |= (1UL << 21);  /* ACQ_IS_REVERSE */
-                if (label_ncols > 13 && label_buf[13]) /* REF  */
-                    table[adc_idx].flags |= (1UL << 19);  /* ACQ_IS_PARALLEL_CALIBRATION */
-                if (label_ncols > 15 && label_buf[15]) /* NOISE */
-                    table[adc_idx].flags |= (1UL << 18);  /* ACQ_IS_NOISE_MEASUREMENT */
+                /* Override rep with the actual average (NEX) loop index from
+                 * the scan table; the seqfile label table cannot know NEX. */
+                if (desc->scan_table_avg_id)
+                    table[adc_idx].rep = desc->scan_table_avg_id[n];
+
+                /* Map Pulseq boolean flags to ISMRMRD flag bits
+                 * Column indices (0-based) match PULSEQLIB__* macros - 1.
+                 * Flags 1-18 (FIRST/LAST) are NOT set here; they are computed
+                 * per-encoding-space in the enrichment layer using actual min/max. */
+                if (label_ncols > 10 && label_buf[10]) /* NAV  col11 */
+                    table[adc_idx].flags |= (1UL << 22);  /* ACQ_IS_NAVIGATION_DATA (23) */
+                if (label_ncols > 11 && label_buf[11]) /* REV  col12 */
+                    table[adc_idx].flags |= (1UL << 21);  /* ACQ_IS_REVERSE (22) */
+                if (label_ncols > 13 && label_buf[13]) /* REF  col14 */
+                    table[adc_idx].flags |= (1UL << 19);  /* ACQ_IS_PARALLEL_CALIBRATION (20) */
+                if (label_ncols > 14 && label_buf[14]) /* IMA  col15 */
+                    table[adc_idx].flags |= (1UL << 20);  /* ACQ_IS_PARALLEL_CALIBRATION_AND_IMAGING (21) */
+                if (label_ncols > 15 && label_buf[15]) /* NOISE col16 */
+                    table[adc_idx].flags |= (1UL << 18);  /* ACQ_IS_NOISE_MEASUREMENT (19) */
             } else if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 3) {
                 /* GEHC mapping fallback: col0=lin, col1=slc, col2=eco */
                 table[adc_idx].lin = label_buf[0];
@@ -593,51 +602,85 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
         if (bte->nav_flag)
             table[adc_idx].flags |= (1UL << 22);  /* ACQ_IS_NAVIGATION_DATA */
 
+        /* Encoding space ref: local index 0 = normal, 1 = navigator */
+        table[adc_idx].encoding_space_ref =
+            (table[adc_idx].flags & (1UL << 22)) ? 1 : 0;
+
         ++adc_idx;
     }
 
-    /* Compute FIRST_IN / LAST_IN flags from label transitions */
-    {
-        int ti;
-        for (ti = 0; ti < adc_idx; ++ti) {
-            #define CHECK_TRANSITION(field, first_bit, last_bit) do { \
-                if (ti == 0 || table[ti].field != table[ti-1].field) \
-                    table[ti].flags |= (1UL << ((first_bit) - 1)); \
-                if (ti == adc_idx-1 || table[ti].field != table[ti+1].field) \
-                    table[ti].flags |= (1UL << ((last_bit) - 1)); \
-            } while(0)
-            CHECK_TRANSITION(lin, 1, 2);   /* FIRST/LAST_IN_ENCODE_STEP1 */
-            CHECK_TRANSITION(par, 3, 4);   /* FIRST/LAST_IN_ENCODE_STEP2 */
-            CHECK_TRANSITION(avg, 5, 6);   /* FIRST/LAST_IN_AVERAGE */
-            CHECK_TRANSITION(slc, 7, 8);   /* FIRST/LAST_IN_SLICE */
-            CHECK_TRANSITION(eco, 9, 10);  /* FIRST/LAST_IN_CONTRAST */
-            CHECK_TRANSITION(phs, 11, 12); /* FIRST/LAST_IN_PHASE */
-            CHECK_TRANSITION(rep, 13, 14); /* FIRST/LAST_IN_REPETITION */
-            CHECK_TRANSITION(set, 15, 16); /* FIRST/LAST_IN_SET */
-            CHECK_TRANSITION(seg, 17, 18); /* FIRST/LAST_IN_SEGMENT */
-            #undef CHECK_TRANSITION
-        }
-        /* Last ADC overall → LAST_IN_MEASUREMENT (bit 25) */
-        if (adc_idx > 0)
-            table[adc_idx - 1].flags |= (1UL << 24);
-    }
+    /* FIRST_IN / LAST_IN flags (bits 0-17, ISMRMRD flags 1-18) are computed
+     * per-encoding-space in the enrichment layer (enrich_ismrmrd_acquisition)
+     * using actual label_limits min/max.  Only LAST_IN_MEASUREMENT is set here
+     * since it is a scan-global property known at cache build time. */
+    if (adc_idx > 0)
+        table[adc_idx - 1].flags |= (1UL << 24);  /* LAST_IN_MEASUREMENT (25) */
 
     out->num_adc_events = adc_idx;
     out->table = table;
     table = NULL;
 
-    /* Build encoding spaces (one per subsequence) */
-    out->num_encoding_spaces = 1;
-    out->encoding_spaces = (pulseqlib_encoding_space*)PULSEQLIB_ALLOC(
-        sizeof(pulseqlib_encoding_space));
-    if (!out->encoding_spaces) goto compute_fail;
-    memset(out->encoding_spaces, 0, sizeof(pulseqlib_encoding_space));
-    memcpy(out->encoding_spaces[0].fov, desc->fov, sizeof(float) * 3);
-    memcpy(out->encoding_spaces[0].matrix, desc->matrix, sizeof(float) * 3);
-    memcpy(out->encoding_spaces[0].nav_fov, desc->nav_fov, sizeof(float) * 3);
-    memcpy(out->encoding_spaces[0].nav_matrix, desc->nav_matrix, sizeof(float) * 3);
-    out->encoding_spaces[0].subseq_idx = subseq_idx;
-    out->encoding_spaces[0].nav_subseq_offset = 0;
+    /* Detect whether any ADC carries the navigator flag */
+    {
+        int has_nav = 0, num_es_local, es, i;
+        for (i = 0; i < adc_idx; ++i) {
+            if (table[i].flags & (1UL << 22)) { has_nav = 1; break; }
+        }
+        num_es_local = has_nav ? 2 : 1;
+
+        out->num_encoding_spaces = num_es_local;
+        out->encoding_spaces = (pulseqlib_encoding_space*)PULSEQLIB_ALLOC(
+            (size_t)num_es_local * sizeof(pulseqlib_encoding_space));
+        if (!out->encoding_spaces) goto compute_fail;
+        memset(out->encoding_spaces, 0,
+               (size_t)num_es_local * sizeof(pulseqlib_encoding_space));
+
+        /* ES 0: normal scans */
+        memcpy(out->encoding_spaces[0].fov, desc->fov, sizeof(float) * 3);
+        memcpy(out->encoding_spaces[0].matrix, desc->matrix, sizeof(float) * 3);
+        memcpy(out->encoding_spaces[0].nav_fov, desc->nav_fov, sizeof(float) * 3);
+        memcpy(out->encoding_spaces[0].nav_matrix, desc->nav_matrix, sizeof(float) * 3);
+        out->encoding_spaces[0].subseq_idx = subseq_idx;
+        out->encoding_spaces[0].nav_subseq_offset = has_nav ? 1 : 0;
+
+        /* ES 1 (if nav): navigator scans — use nav_fov / nav_matrix */
+        if (has_nav) {
+            memcpy(out->encoding_spaces[1].fov, desc->nav_fov, sizeof(float) * 3);
+            memcpy(out->encoding_spaces[1].matrix, desc->nav_matrix, sizeof(float) * 3);
+            out->encoding_spaces[1].subseq_idx = subseq_idx;
+            out->encoding_spaces[1].nav_subseq_offset = 0;
+        }
+
+        /* Compute per-encoding-space label_limits from table entries */
+        for (es = 0; es < num_es_local; ++es) {
+            pulseqlib_label_limits* ll = &out->encoding_spaces[es].label_limits;
+            int first = 1;
+            for (i = 0; i < adc_idx; ++i) {
+                if (table[i].encoding_space_ref != es) continue;
+                if (first) {
+                    ll->slc.min = ll->slc.max = table[i].slc;
+                    ll->phs.min = ll->phs.max = table[i].phs;
+                    ll->rep.min = ll->rep.max = table[i].rep;
+                    ll->avg.min = ll->avg.max = table[i].avg;
+                    ll->seg.min = ll->seg.max = table[i].seg;
+                    ll->set.min = ll->set.max = table[i].set;
+                    ll->eco.min = ll->eco.max = table[i].eco;
+                    ll->par.min = ll->par.max = table[i].par;
+                    ll->lin.min = ll->lin.max = table[i].lin;
+                    ll->acq.min = ll->acq.max = table[i].acq;
+                    first = 0;
+                } else {
+                    #define LLUP(fld) do { \
+                        if (table[i].fld < ll->fld.min) ll->fld.min = table[i].fld; \
+                        if (table[i].fld > ll->fld.max) ll->fld.max = table[i].fld; \
+                    } while(0)
+                    LLUP(slc); LLUP(phs); LLUP(rep); LLUP(avg); LLUP(seg);
+                    LLUP(set); LLUP(eco); LLUP(par); LLUP(lin); LLUP(acq);
+                    #undef LLUP
+                }
+            }
+        }
+    }
 
     PULSEQLIB_FREE(kx_buf);
     PULSEQLIB_FREE(ky_buf);
@@ -679,6 +722,74 @@ void pulseqlib_free_trajectory(pulseqlib_trajectory* traj)
     PULSEQLIB_FREE(traj->table);
     traj->table = NULL;
     traj->num_adc_events = 0;
+}
+
+/* ================================================================== */
+/*  Merge trajectory (append src into dst)                            */
+/* ================================================================== */
+
+int pulseqlib_merge_trajectory(pulseqlib_trajectory*       dst,
+                               const pulseqlib_trajectory* src)
+{
+    int kshot_offset, es_offset, i;
+
+    if (!dst || !src) return PULSEQLIB_ERR_NULL_POINTER;
+
+    kshot_offset = dst->kshots.num_shots;
+    es_offset    = dst->num_encoding_spaces;
+
+    /* ---- Append kshots ---- */
+    if (src->kshots.num_shots > 0) {
+        int new_count = kshot_offset + src->kshots.num_shots;
+        pulseqlib_kshot* new_shots = (pulseqlib_kshot*)realloc(
+            dst->kshots.shots, (size_t)new_count * sizeof(pulseqlib_kshot));
+        if (!new_shots) return PULSEQLIB_ERR_ALLOC_FAILED;
+        dst->kshots.shots = new_shots;
+        for (i = 0; i < src->kshots.num_shots; ++i) {
+            pulseqlib_kshot* d = &dst->kshots.shots[kshot_offset + i];
+            const pulseqlib_kshot* s = &src->kshots.shots[i];
+            d->num_samples = s->num_samples;
+            d->k = (float*)PULSEQLIB_ALLOC((size_t)s->num_samples * sizeof(float));
+            if (!d->k) return PULSEQLIB_ERR_ALLOC_FAILED;
+            memcpy(d->k, s->k, (size_t)s->num_samples * sizeof(float));
+        }
+        dst->kshots.num_shots = new_count;
+    }
+
+    /* ---- Append encoding spaces ---- */
+    if (src->num_encoding_spaces > 0) {
+        int new_count = es_offset + src->num_encoding_spaces;
+        pulseqlib_encoding_space* new_es = (pulseqlib_encoding_space*)realloc(
+            dst->encoding_spaces, (size_t)new_count * sizeof(pulseqlib_encoding_space));
+        if (!new_es) return PULSEQLIB_ERR_ALLOC_FAILED;
+        dst->encoding_spaces = new_es;
+        memcpy(&dst->encoding_spaces[es_offset], src->encoding_spaces,
+               (size_t)src->num_encoding_spaces * sizeof(pulseqlib_encoding_space));
+        dst->num_encoding_spaces = new_count;
+    }
+
+    /* ---- Append table entries (adjust kshot IDs + encoding_space_ref) ---- */
+    if (src->num_adc_events > 0) {
+        int old_count = dst->num_adc_events;
+        int new_count = old_count + src->num_adc_events;
+        pulseqlib_traj_table_entry* new_table = (pulseqlib_traj_table_entry*)realloc(
+            dst->table, (size_t)new_count * sizeof(pulseqlib_traj_table_entry));
+        if (!new_table) return PULSEQLIB_ERR_ALLOC_FAILED;
+        dst->table = new_table;
+        memcpy(&dst->table[old_count], src->table,
+               (size_t)src->num_adc_events * sizeof(pulseqlib_traj_table_entry));
+
+        for (i = 0; i < src->num_adc_events; ++i) {
+            pulseqlib_traj_table_entry* e = &dst->table[old_count + i];
+            if (e->kx_shot_id >= 0) e->kx_shot_id += kshot_offset;
+            if (e->ky_shot_id >= 0) e->ky_shot_id += kshot_offset;
+            if (e->kz_shot_id >= 0) e->kz_shot_id += kshot_offset;
+            e->encoding_space_ref += es_offset;
+        }
+        dst->num_adc_events = new_count;
+    }
+
+    return PULSEQLIB_SUCCESS;
 }
 
 /* ================================================================== */
@@ -806,6 +917,7 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory* traj,
         if (!traj_write4(f, es->nav_matrix, 3)) goto tw_fail;
         if (!traj_write4(f, &es->subseq_idx, 1)) goto tw_fail;
         if (!traj_write4(f, &es->nav_subseq_offset, 1)) goto tw_fail;
+        if (!traj_write4(f, &es->label_limits, sizeof(pulseqlib_label_limits) / sizeof(int))) goto tw_fail;
     }
 
     /* Write trajectory table */
@@ -980,7 +1092,9 @@ int pulseqlib_load_trajectory_cache(pulseqlib_trajectory* out,
             if (!traj_read4(f, es->nav_matrix, 3)) goto lr_fail;
             if (!traj_read4(f, &es->subseq_idx, 1)) goto lr_fail;
             if (!traj_read4(f, &es->nav_subseq_offset, 1)) goto lr_fail;
-            if (do_swap) traj_swap4_array(es->fov, 14);
+            if (!traj_read4(f, &es->label_limits, sizeof(pulseqlib_label_limits) / sizeof(int))) goto lr_fail;
+            /* swap all fields: 3+3+3+3 floats + 2 ints + 20 ints (label_limits) = 34 words */
+            if (do_swap) traj_swap4_array(es->fov, 34);
         }
     }
 

@@ -13,7 +13,7 @@
 /* ================================================================== */
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER  0x01020304
-#define PULSEQLIB_CACHE_VERSION_MAJOR  18
+#define PULSEQLIB_CACHE_VERSION_MAJOR  19
 #define PULSEQLIB_CACHE_VERSION_MINOR  0
 
 #define PULSEQLIB_CACHE_SECTION_CHECK            1
@@ -369,6 +369,7 @@ static int write_descriptor(FILE* f, const pulseqlib_sequence_descriptor* d)
         if (!write4(f, d->scan_table_block_idx, d->scan_table_len)) return 0;
         if (!write4(f, d->scan_table_tr_id,    d->scan_table_len)) return 0;
         if (!write4(f, d->scan_table_seg_id,   d->scan_table_len)) return 0;
+        if (!write4(f, d->scan_table_avg_id,   d->scan_table_len)) return 0;
     }
 
     return 1;
@@ -786,19 +787,23 @@ static int read_descriptor(FILE* f, pulseqlib_sequence_descriptor* d, int do_swa
         d->scan_table_block_idx = (int*)PULSEQLIB_ALLOC((size_t)d->scan_table_len * sizeof(int));
         d->scan_table_tr_id     = (int*)PULSEQLIB_ALLOC((size_t)d->scan_table_len * sizeof(int));
         d->scan_table_seg_id    = (int*)PULSEQLIB_ALLOC((size_t)d->scan_table_len * sizeof(int));
-        if (!d->scan_table_block_idx || !d->scan_table_tr_id || !d->scan_table_seg_id) return 0;
+        d->scan_table_avg_id    = (int*)PULSEQLIB_ALLOC((size_t)d->scan_table_len * sizeof(int));
+        if (!d->scan_table_block_idx || !d->scan_table_tr_id || !d->scan_table_seg_id || !d->scan_table_avg_id) return 0;
         if (fread(d->scan_table_block_idx, sizeof(int), (size_t)d->scan_table_len, f) != (size_t)d->scan_table_len) return 0;
         if (fread(d->scan_table_tr_id,     sizeof(int), (size_t)d->scan_table_len, f) != (size_t)d->scan_table_len) return 0;
         if (fread(d->scan_table_seg_id,    sizeof(int), (size_t)d->scan_table_len, f) != (size_t)d->scan_table_len) return 0;
+        if (fread(d->scan_table_avg_id,    sizeof(int), (size_t)d->scan_table_len, f) != (size_t)d->scan_table_len) return 0;
         if (do_swap) {
             swap4_array(d->scan_table_block_idx, d->scan_table_len);
             swap4_array(d->scan_table_tr_id,     d->scan_table_len);
             swap4_array(d->scan_table_seg_id,    d->scan_table_len);
+            swap4_array(d->scan_table_avg_id,    d->scan_table_len);
         }
     } else {
         d->scan_table_block_idx = NULL;
         d->scan_table_tr_id     = NULL;
         d->scan_table_seg_id    = NULL;
+        d->scan_table_avg_id    = NULL;
     }
 
     return 1;

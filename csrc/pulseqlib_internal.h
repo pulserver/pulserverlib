@@ -508,6 +508,7 @@ typedef struct pulseqlib_sequence_descriptor {
     int* scan_table_block_idx;  /* [scan_table_len] index into block_table */
     int* scan_table_tr_id;      /* [scan_table_len] TR region id           */
     int* scan_table_seg_id;     /* [scan_table_len] segment id             */
+    int* scan_table_avg_id;     /* [scan_table_len] average (rep) index 0..num_averages-1 */
     int* scan_table_tr_start;   /* [scan_table_len] 1 at first block of each main-region TR */
 
     /* Per-position variable-gradient flags  [tr_size * 3].
@@ -539,7 +540,7 @@ typedef struct pulseqlib_sequence_descriptor {
     0, NULL, 0, NULL, 0, NULL, \
     PULSEQLIB_TR_DESCRIPTOR_INIT, \
     0, NULL, PULSEQLIB_SEGMENT_TABLE_RESULT_INIT, \
-    0, NULL, NULL, NULL, NULL, \
+    0, NULL, NULL, NULL, NULL, NULL, \
     NULL, \
     0, 0, NULL, {{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}}, \
     0, NULL \

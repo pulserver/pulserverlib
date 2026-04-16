@@ -99,6 +99,7 @@ void pulseqlib_sequence_descriptor_free(pulseqlib_sequence_descriptor* d)
     if (d->scan_table_block_idx) { PULSEQLIB_FREE(d->scan_table_block_idx); d->scan_table_block_idx = NULL; }
     if (d->scan_table_tr_id)     { PULSEQLIB_FREE(d->scan_table_tr_id);     d->scan_table_tr_id     = NULL; }
     if (d->scan_table_seg_id)    { PULSEQLIB_FREE(d->scan_table_seg_id);    d->scan_table_seg_id    = NULL; }
+    if (d->scan_table_avg_id)    { PULSEQLIB_FREE(d->scan_table_avg_id);    d->scan_table_avg_id    = NULL; }
     if (d->scan_table_tr_start)  { PULSEQLIB_FREE(d->scan_table_tr_start);  d->scan_table_tr_start  = NULL; }
     d->scan_table_len = 0;
 

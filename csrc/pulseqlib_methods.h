@@ -1228,6 +1228,21 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
 void pulseqlib_free_trajectory(pulseqlib_trajectory* traj);
 
 /**
+ * @brief Merge one trajectory into another (append src into dst).
+ *
+ * Appends kshots, encoding spaces, and table entries from @p src into
+ * @p dst.  Kshot IDs and encoding_space_ref values in the appended
+ * table entries are offset so they index correctly into the combined
+ * kshot library and encoding-space array.
+ *
+ * @param[in,out] dst  Destination trajectory (accumulator).
+ * @param[in]     src  Source trajectory to merge (unmodified).
+ * @return PULSEQLIB_SUCCESS or negative error code.
+ */
+int pulseqlib_merge_trajectory(pulseqlib_trajectory*       dst,
+                               const pulseqlib_trajectory* src);
+
+/**
  * @brief Append the trajectory as section 5 to the binary cache.
  *
  * Opens the existing cache file (written by pulseqlib_read with

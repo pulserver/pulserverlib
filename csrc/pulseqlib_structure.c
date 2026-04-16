@@ -247,12 +247,15 @@ int pulseqlib__build_scan_table(
     desc->scan_table_block_idx = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
     desc->scan_table_tr_id     = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
     desc->scan_table_seg_id    = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
+    desc->scan_table_avg_id    = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
     if (!desc->scan_table_block_idx ||
         !desc->scan_table_tr_id ||
-        !desc->scan_table_seg_id) {
+        !desc->scan_table_seg_id ||
+        !desc->scan_table_avg_id) {
         if (desc->scan_table_block_idx) { PULSEQLIB_FREE(desc->scan_table_block_idx); desc->scan_table_block_idx = NULL; }
         if (desc->scan_table_tr_id)     { PULSEQLIB_FREE(desc->scan_table_tr_id);     desc->scan_table_tr_id = NULL; }
         if (desc->scan_table_seg_id)    { PULSEQLIB_FREE(desc->scan_table_seg_id);    desc->scan_table_seg_id = NULL; }
+        if (desc->scan_table_avg_id)    { PULSEQLIB_FREE(desc->scan_table_avg_id);    desc->scan_table_avg_id = NULL; }
         desc->scan_table_len = 0;
         diag->code = PULSEQLIB_ERR_ALLOC_FAILED;
         return diag->code;
@@ -273,16 +276,19 @@ int pulseqlib__build_scan_table(
                     desc->scan_table_block_idx[idx] = base + blk;
                     desc->scan_table_tr_id[idx]     = prep_tr_id;
                     desc->scan_table_seg_id[idx]    = -1;
+                    desc->scan_table_avg_id[idx]    = avg;
                     ++idx;
                 } else if (once == 0 && play_main) {
                     desc->scan_table_block_idx[idx] = base + blk;
                     desc->scan_table_tr_id[idx]     = main_tr_id;
                     desc->scan_table_seg_id[idx]    = -1;
+                    desc->scan_table_avg_id[idx]    = avg;
                     ++idx;
                 } else if (once == 2 && play_cool) {
                     desc->scan_table_block_idx[idx] = base + blk;
                     desc->scan_table_tr_id[idx]     = cool_tr_id;
                     desc->scan_table_seg_id[idx]    = -1;
+                    desc->scan_table_avg_id[idx]    = avg;
                     ++idx;
                 }
             }
