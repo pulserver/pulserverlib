@@ -18,27 +18,30 @@ flags the candidate.
 
 ## Analytical spectral model
 
+
 The spectrum is built from the *structural timing* of gradient events
 within one canonical repetition period, without relying on a windowed FFT.
-The pipeline has four stages.
+The pipeline consists of the following stages:
 
-### Stage 1 — event extraction
 
-For each axis, every block in the canonical TR window is inspected.
-If a block contains a gradient event, an *occurrence* is recorded:
+### Stage 1 — event extraction and canonical TR structure
+
+For each axis, every block in the canonical TR window is inspected. If a block contains a gradient event, an *occurrence* is recorded:
 
 - **def_id** — gradient definition index.
 - **start_time** — cumulative time from the start of the TR (µs).
 - **amplitude** — maximum positional gradient amplitude (Hz/m), signed.
-  For each gradient definition at each block position, the amplitude is
-  the TR instance whose absolute amplitude is largest across all
-  instances (e.g. if a phase-encode gradient takes amplitudes
-  {−5, 1, 0, 1} across TR instances, the value stored is −5).
-  Together, these per-position maximum amplitudes define a *virtual*
-  canonical TR that represents the worst-case spectral excitation.
-  The sign is preserved so that opposite-polarity instances of the same
-  gradient definition (e.g. bipolar phase-encode steps) contribute the
-  correct phase to the coherent spectral sum.
+   For each gradient definition at each block position, the amplitude is the TR instance whose absolute amplitude is largest across all instances (e.g. if a phase-encode gradient takes amplitudes {−5, 1, 0, 1} across TR instances, the value stored is −5). Together, these per-position maximum amplitudes define a *virtual* canonical TR that represents the worst-case spectral excitation. The sign is preserved so that opposite-polarity instances of the same gradient definition (e.g. bipolar phase-encode steps) contribute the correct phase to the coherent spectral sum.
+
+If the sequence contains non-degenerate prep/cooldown blocks (i.e. where the prep or cooldown varies between passes), the canonical TR is the full *pass* (prep + imaging + cooldown). When `num_averages > 1`, the imaging section repeats `num_averages` times within each pass. Rather than explicitly expanding all copies, each imaging event is tagged with:
+
+- **num_reps** = `num_averages`
+- **rep_period_us** = total imaging section duration
+
+Cooldown events are shifted in time to their position in the expanded pass. Prep events are left at their original position with `num_reps = 1`.
+
+This tagging allows the Dirichlet kernel (see below) to handle repetition analytically in $O(1)$ per event per frequency, instead of enumerating all copies.
+
 
 ### Stage 2 — waveform response model
 
@@ -79,54 +82,30 @@ uniformly-sampled PWL approximation.
 **Arbitrary waveforms with few samples** (< 10) are treated as PWL
 directly from their sample values.
 
-### Stage 3 — repetition tagging (multi-average)
+### Stage 3 — spectrum assembly (phase-shifted sum)
 
-For sequences with non-degenerate prep/cooldown blocks (i.e. where the
-prep or cooldown varies between passes), the canonical TR is the full
-*pass* (prep + imaging + cooldown).  When `num_averages > 1`, the imaging
-section repeats `num_averages` times within each pass.  Rather than
-explicitly expanding all copies, each imaging event is tagged with:
+For each event, the waveform response (from Stage 2) is phase-shifted according to the event's start time within the TR. The complex contribution of a single event $k$ at frequency $f$ is:
 
-- **num_reps** = `num_averages`
-- **rep_period_us** = total imaging section duration
+$$a_k(f) = A_k \; W_k(f) \; e^{-j\,2\pi f\, t_k}$$
 
-Cooldown events are shifted in time to their position in the expanded
-pass.  Prep events are left at their original position with
-`num_reps = 1`.
+where $A_k$ is the signed amplitude (Hz/m), $W_k(f)$ the normalised waveform response (PWL or FFT-interpolated), and $t_k$ the start time within the TR.
 
-This lets the Dirichlet kernel (see below) handle repetition analytically
-in $O(1)$ per event per frequency, instead of enumerating all copies.
+If an event has `num_reps = N > 1`, its contribution is multiplied by the Dirichlet kernel:
 
-### Stage 4 — spectral evaluation
+$$D_N(f, T) = \frac{\sin(N\,\pi\, f\, T)}{\sin(\pi\, f\, T)} \cdot e^{-j\,(N-1)\,\pi\, f\, T}$$
 
-At a given frequency $f$, the complex contribution of a single event $k$
-is:
+where $T$ is `rep_period_us` in seconds. This preserves complex phase and produces sharp peaks at multiples of $1/T$.
 
-$$a_k(f) \;=\; A_k \; W_k(f) \; e^{-j\,2\pi f\, t_k}$$
+The **coherent magnitude** on one axis is the magnitude of the complex sum over all events:
 
-where $A_k$ is the signed amplitude (Hz/m), $W_k(f)$ the normalised
-waveform response (PWL or FFT-interpolated), and $t_k$ the start time
-within the TR.
-
-When an event has `num_reps` $= N > 1$, its contribution is multiplied by
-the Dirichlet kernel:
-
-$$D_N(f, T) \;=\; \frac{\sin(N\,\pi\, f\, T)}{\sin(\pi\, f\, T)} \;\cdot\; e^{-j\,(N-1)\,\pi\, f\, T}$$
-
-where $T$ is `rep_period_us` in seconds.  This preserves complex phase and
-produces sharp peaks at multiples of $1/T$.
-
-The **coherent magnitude** on one axis is the magnitude of the complex sum
-over all events:
-
-$$M_\text{coh}(f) \;=\; \Bigl|\,\sum_k a_k(f)\,D_{N_k}(f,T_k)\,\Bigr|$$
+$$M_\text{coh}(f) = \Bigl|\,\sum_k a_k(f)\,D_{N_k}(f,T_k)\,\Bigr|$$
 
 The **incoherent magnitude** is the root-sum-of-powers:
 
-$$M_\text{inc}(f) \;=\; \sqrt{\sum_k N_k \,|a_k(f)|^2}$$
+$$M_\text{inc}(f) = \sqrt{\sum_k N_k \,|a_k(f)|^2}$$
 
-The coherence ratio $\rho = M_\text{coh} / M_\text{inc}$ measures how
-strongly events interfere constructively at $f$.
+The coherence ratio $\rho = M_\text{coh} / M_\text{inc}$ measures how strongly events interfere constructively at $f$.
+
 
 ## Evaluation frequency grid
 
