@@ -13,7 +13,7 @@
 /* ================================================================== */
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER  0x01020304
-#define PULSEQLIB_CACHE_VERSION_MAJOR  20
+#define PULSEQLIB_CACHE_VERSION_MAJOR  1
 #define PULSEQLIB_CACHE_VERSION_MINOR  0
 
 #define PULSEQLIB_CACHE_SECTION_CHECK            1
