@@ -13,7 +13,7 @@
 /* ================================================================== */
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER  0x01020304
-#define PULSEQLIB_CACHE_VERSION_MAJOR  19
+#define PULSEQLIB_CACHE_VERSION_MAJOR  20
 #define PULSEQLIB_CACHE_VERSION_MINOR  0
 
 #define PULSEQLIB_CACHE_SECTION_CHECK            1
@@ -21,6 +21,7 @@
 #define PULSEQLIB_CACHE_SECTION_SCANLOOP         3
 #define PULSEQLIB_CACHE_SECTION_FREQMOD          4
 #define PULSEQLIB_CACHE_SECTION_TRAJECTORY       5
+#define PULSEQLIB_CACHE_SECTION_SEQUENCEDESCRIPTION 6
 
 typedef struct pulseqlib_cache_section_entry {
     int section_id;
@@ -191,6 +192,11 @@ static int write_descriptor(FILE* f, const pulseqlib_sequence_descriptor* d)
         if (!write4(f, &d->rf_definitions[i].stats.bandwidth_hz, 1)) return 0;
         if (!write4(f, &d->rf_definitions[i].stats.base_amplitude_hz, 1)) return 0;
         if (!write4(f, &d->rf_definitions[i].stats.num_samples, 1)) return 0;
+        /* v20: multiband/power fields */
+        if (!write4(f, &d->rf_definitions[i].stats.num_bands, 1)) return 0;
+        if (!write4(f, d->rf_definitions[i].stats.band_freq_offsets_hz, PULSEQLIB_MAX_BANDS)) return 0;
+        if (!write4(f, &d->rf_definitions[i].stats.band_bandwidth_hz, 1)) return 0;
+        if (!write4(f, &d->rf_definitions[i].stats.total_b1sq_power, 1)) return 0;
     }
 
     /* RF table */
@@ -457,6 +463,13 @@ static int read_descriptor(FILE* f, pulseqlib_sequence_descriptor* d, int do_swa
         if (!read4(f, &d->rf_definitions[i].stats.base_amplitude_hz, 1)) return 0;
         if (!read4(f, &d->rf_definitions[i].stats.num_samples, 1)) return 0;
         if (do_swap) swap4_array(&d->rf_definitions[i].stats.flip_angle_deg, 11);
+        /* v20: multiband/power fields */
+        if (!read4(f, &d->rf_definitions[i].stats.num_bands, 1)) return 0;
+        if (!read4(f, d->rf_definitions[i].stats.band_freq_offsets_hz, PULSEQLIB_MAX_BANDS)) return 0;
+        if (!read4(f, &d->rf_definitions[i].stats.band_bandwidth_hz, 1)) return 0;
+        if (!read4(f, &d->rf_definitions[i].stats.total_b1sq_power, 1)) return 0;
+        if (do_swap) swap4_array(&d->rf_definitions[i].stats.num_bands,
+                                 1 + PULSEQLIB_MAX_BANDS + 2);
     }
 
     /* RF table */

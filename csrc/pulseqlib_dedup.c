@@ -704,6 +704,14 @@ static int compute_rf_stats(
         rd->stats.duration_us   = 0.0f;
         rd->stats.isodelay_us   = 0;
         rd->stats.bandwidth_hz     = 0.0f;
+        rd->stats.num_bands = 1;
+        rd->stats.band_bandwidth_hz = 0.0f;
+        rd->stats.total_b1sq_power  = 0.0f;
+        {
+            int bi;
+            for (bi = 0; bi < PULSEQLIB_MAX_BANDS; ++bi)
+                rd->stats.band_freq_offsets_hz[bi] = 0.0f;
+        }
 
         /* max amplitude from table */
         if (rf_table && rf_table_size > 0) {
@@ -891,6 +899,9 @@ static int compute_rf_stats(
         rd->stats.max_pulse_width     = maxpw / num_uniform;
         if (rd->stats.duty_cycle < rd->stats.max_pulse_width) rd->stats.duty_cycle = rd->stats.max_pulse_width;
 
+        /* b1sq power: integral |B1_norm(t)|^2 dt (normalised waveform, units: s) */
+        rd->stats.total_b1sq_power = sum_sq * rf_raster_us * 1e-6f;
+
         PULSEQLIB_FREE(time_us_uniform); time_us_uniform = NULL;
         PULSEQLIB_FREE(rf_re_uniform);   rf_re_uniform = NULL;
         PULSEQLIB_FREE(rf_im_uniform);   rf_im_uniform = NULL;
@@ -907,6 +918,41 @@ static int compute_rf_stats(
                 rd->stats.bandwidth_hz = compute_rf_bandwidth_fft(
                     rfs_re, rfs_im, fft_cfg, nn, cutoff,
                     duration * 1e-6f, w, work_re, work_im, fft_in, fft_out);
+                /* After compute_rf_bandwidth_fft, work_re[i]/work_im[i] contain the
+                 * fftshifted complex spectrum.  Reuse them for multiband detection. */
+                {
+                    int    num_b, in_band;
+                    float  peak_max_spec, threshold;
+                    float  wsum, msum;
+                    peak_max_spec = 0.0f;
+                    for (i = 0; i < nn; ++i) {
+                        work_re[i] = (float)sqrt(work_re[i] * work_re[i] +
+                                                  work_im[i] * work_im[i]);
+                        if (work_re[i] > peak_max_spec) peak_max_spec = work_re[i];
+                    }
+                    rd->stats.band_bandwidth_hz = rd->stats.bandwidth_hz;
+                    if (peak_max_spec > 1e-9f) {
+                        threshold = 0.3f * peak_max_spec;
+                        num_b = 0; in_band = 0;
+                        wsum = 0.0f; msum = 0.0f;
+                        for (i = 0; i <= nn; ++i) {
+                            float m = (i < nn) ? work_re[i] : 0.0f;
+                            if (m >= threshold) {
+                                wsum += w[i] * m;
+                                msum += m;
+                                in_band = 1;
+                            } else if (in_band) {
+                                if (num_b < PULSEQLIB_MAX_BANDS)
+                                    rd->stats.band_freq_offsets_hz[num_b] =
+                                        (msum > 0.0f) ? (wsum / msum) : 0.0f;
+                                num_b++;
+                                wsum = 0.0f; msum = 0.0f;
+                                in_band = 0;
+                            }
+                        }
+                        if (num_b >= 1) rd->stats.num_bands = num_b;
+                    }
+                }
                 PULSEQLIB_FREE(time_centered); time_centered = NULL;
             }
         }
@@ -1376,14 +1422,14 @@ int pulseqlib__get_unique_blocks(pulseqlib_sequence_descriptor* desc, const puls
 #undef COPY_ARRAY
 
     /* PULSEQLIB_FREE temps - done with them */
-    if (tmp_rf_defs)   PULSEQLIB_FREE(tmp_rf_defs);   tmp_rf_defs   = NULL;
-    if (tmp_rf_tab)    PULSEQLIB_FREE(tmp_rf_tab);    tmp_rf_tab    = NULL;
-    if (tmp_grad_defs) PULSEQLIB_FREE(tmp_grad_defs); tmp_grad_defs = NULL;
-    if (tmp_grad_tab)  PULSEQLIB_FREE(tmp_grad_tab);  tmp_grad_tab  = NULL;
-    if (tmp_adc_defs)  PULSEQLIB_FREE(tmp_adc_defs);  tmp_adc_defs  = NULL;
-    if (tmp_adc_tab)   PULSEQLIB_FREE(tmp_adc_tab);   tmp_adc_tab   = NULL;
-    if (tmp_blk_defs)  PULSEQLIB_FREE(tmp_blk_defs);  tmp_blk_defs  = NULL;
-    if (tmp_blk_tab)   PULSEQLIB_FREE(tmp_blk_tab);   tmp_blk_tab   = NULL;
+    if (tmp_rf_defs)   { PULSEQLIB_FREE(tmp_rf_defs);   tmp_rf_defs   = NULL; }
+    if (tmp_rf_tab)    { PULSEQLIB_FREE(tmp_rf_tab);    tmp_rf_tab    = NULL; }
+    if (tmp_grad_defs) { PULSEQLIB_FREE(tmp_grad_defs); tmp_grad_defs = NULL; }
+    if (tmp_grad_tab)  { PULSEQLIB_FREE(tmp_grad_tab);  tmp_grad_tab  = NULL; }
+    if (tmp_adc_defs)  { PULSEQLIB_FREE(tmp_adc_defs);  tmp_adc_defs  = NULL; }
+    if (tmp_adc_tab)   { PULSEQLIB_FREE(tmp_adc_tab);   tmp_adc_tab   = NULL; }
+    if (tmp_blk_defs)  { PULSEQLIB_FREE(tmp_blk_defs);  tmp_blk_defs  = NULL; }
+    if (tmp_blk_tab)   { PULSEQLIB_FREE(tmp_blk_tab);   tmp_blk_tab   = NULL; }
 
     /* ---- step 5: auxiliary libraries ---- */
     result = copy_rotation_library(seq, desc);

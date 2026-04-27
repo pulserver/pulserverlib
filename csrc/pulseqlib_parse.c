@@ -1375,7 +1375,7 @@ int pulseqlib__get_raw_block_content_ids(const pulseqlib__seq_file* seq, pulseql
     block->adc = -1;
     block->ext_count = 0;
 
-    if (!seq->block_library || !seq->block_library[block_index]) return 0;
+    if (!seq->block_library) return 0;
 
     ev = seq->block_library[block_index];
     block->block_duration = (int)ev[0];

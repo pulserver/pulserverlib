@@ -114,6 +114,9 @@ typedef struct pulseqlib_opts {
 /*  RF statistics                                                     */
 /* ================================================================== */
 
+/** Maximum simultaneous frequency bands detectable in a multiband RF pulse. */
+#define PULSEQLIB_MAX_BANDS 8
+
 /**
  * @brief Per-RF-definition statistics (always available).
  */
@@ -131,10 +134,16 @@ typedef struct pulseqlib_rf_stats {
     float base_amplitude_hz;    /**< base (nominal) peak |gamma*B1| (Hz)   */
     int   num_samples;          /**< waveform sample count                 */
     int   num_instances;        /**< repetition count for this RF pulse    */
+    /* --- multiband / power fields (appended; do not reorder above) --- */
+    int   num_bands;                                    /**< number of simultaneous frequency bands (>=1) */
+    float band_freq_offsets_hz[PULSEQLIB_MAX_BANDS];    /**< per-band center offsets relative to carrier (Hz) */
+    float band_bandwidth_hz;                            /**< per-band bandwidth (Hz) */
+    float total_b1sq_power;                             /**< integral |B1(t)|^2 dt normalised (a.u.) */
 } pulseqlib_rf_stats;
 
 #define PULSEQLIB_RF_STATS_INIT { \
-    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0.0f, 0.0f, 0, 0 \
+    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0.0f, 0.0f, 0, 0, \
+    1, {0.0f}, 0.0f, 0.0f \
 }
 
 /* ================================================================== */
@@ -772,7 +781,8 @@ typedef struct pulseqlib_adc_def {
  * @brief Per-channel amplitude and phase weights for parallel transmit.
  *
  * Returned by pulseqlib_get_rf_shim_def().  The rf_shim_id field in
- * pulseqlib_block_instance indexes into this table.
+ * pulseqlib_block_instance is LOCAL to its subsequence (same convention as
+ * rf_id, gx_id, etc.) — index 0 is the first shim of that subsequence.
  */
 typedef struct pulseqlib_rf_shim_def {
     int   num_channels;                                /**< Tx channel count       */
@@ -833,5 +843,135 @@ typedef struct pulseqlib_trajectory {
     int                          num_adc_events;
     pulseqlib_traj_table_entry*  table;
 } pulseqlib_trajectory;
+
+/* ================================================================== */
+/*  Sequence description (Section 6 — state-machine Bloch simulator)  */
+/* ================================================================== */
+
+/** ADC role flags for sequence-description events. */
+#define PULSEQLIB_ADC_ROLE_NON_ACQUIRED  0  /**< navigator / PMC — skip in recon  */
+#define PULSEQLIB_ADC_ROLE_SINGLE        1  /**< single ADC in its echo group     */
+#define PULSEQLIB_ADC_ROLE_ECHO_CENTER   2  /**< nearest-to-k-zero ADC in group   */
+#define PULSEQLIB_ADC_ROLE_NON_CENTER    3  /**< other ADC in a multi-ADC group   */
+
+/** Sequence-event type codes. */
+#define PULSEQLIB_SEQ_EVENT_WAIT  0  /**< silent interval */
+#define PULSEQLIB_SEQ_EVENT_RF    1  /**< RF pulse        */
+#define PULSEQLIB_SEQ_EVENT_ADC   2  /**< readout event   */
+
+/**
+ * @brief Single event in a per-TR event sequence.
+ *
+ * Interpretation of @p params depends on @p type:
+ *
+ *  WAIT:  params[0] = duration_us
+ *
+ *  RF:    params[0] = center_time_us  (TR-relative, us)
+ *         params[1] = duration_us
+ *         params[2] = flip_angle_deg
+ *         params[3] = rf_shape_tuple_id   (index into seq_desc.rf_shape_tuples)
+ *         params[4] = shim_def_id_local   (index into seq_desc.shim_defs; -1 if none)
+ *         params[5] = slice_select_flag   (1.0 = slice-selective, 0.0 = non-selective)
+ *         params[6] = reserved (0.0)
+ *
+ *  ADC:   params[0] = center_time_us  (TR-relative, us; kzero sample)
+ *         params[1] = duration_us
+ *         params[2] = num_samples
+ *         params[3] = dwell_us
+ *         params[4] = adc_role          (PULSEQLIB_ADC_ROLE_*)
+ *         params[5] = reserved (0.0)
+ *         params[6] = reserved (0.0)
+ */
+typedef struct pulseqlib_seq_event {
+    int   type;       /**< PULSEQLIB_SEQ_EVENT_* */
+    float params[7];
+} pulseqlib_seq_event;
+
+#define PULSEQLIB_SEQ_EVENT_PARAMS 7
+
+/**
+ * @brief RF shape tuple shared across subsequences — the normalised waveform.
+ *
+ * mag[i] ∈ [0,1], phase[i] in radians.
+ * time[i] gives the sample timestamp (us) for non-uniform grids;
+ * for uniform grids time == NULL and samples are spaced rf_raster_us apart.
+ */
+typedef struct pulseqlib_rf_shape_tuple {
+    int   tuple_id;          /**< 0-based index within the seq_desc tuple library */
+    int   N_tx;              /**< number of transmit channels (1 = single-channel) */
+    int   N_samples;         /**< samples per channel                             */
+    float rf_raster_us;      /**< raster time (us)                                */
+    /* multiband annotation (from rf_stats) */
+    int   num_bands;
+    float band_freq_offsets_hz[PULSEQLIB_MAX_BANDS];
+    float band_bandwidth_hz;
+    float total_b1sq_power;
+    /* waveform data — heap-allocated, freed by pulseqlib_free_sequence_description */
+    float* mag;    /**< [N_tx * N_samples] magnitude (normalised to peak=1)      */
+    float* phase;  /**< [N_tx * N_samples] phase (rad); NULL if all-zero         */
+    float* time;   /**< [N_samples] sample times (us); NULL if uniform grid      */
+} pulseqlib_rf_shape_tuple;
+
+/**
+ * @brief Local shim definition for a subsequence (pTx weights).
+ *
+ * shim_id_local is the same index as bte->rf_shim_id for this subsequence.
+ */
+typedef struct pulseqlib_shim_def_local {
+    int   shim_id_local;
+    int   N_ch;
+    float magnitudes[PULSEQLIB_MAX_RF_SHIM_CHANNELS];
+    float phases[PULSEQLIB_MAX_RF_SHIM_CHANNELS];
+} pulseqlib_shim_def_local;
+
+/**
+ * @brief Composite RF group — a contiguous run of RF events (no ADC between)
+ *        with num_pulses >= 2 (e.g., inversion + excitation, multiband train).
+ *
+ * first_event_idx / last_event_idx are indices into seq_desc.events[].
+ */
+typedef struct pulseqlib_composite_rf_group {
+    int   group_id;
+    int   first_event_idx;
+    int   last_event_idx;
+    int   num_pulses;
+    float eff_te_us;     /**< approximate TE contribution (us); 0 if unknown */
+} pulseqlib_composite_rf_group;
+
+/**
+ * @brief Scan-global sequence parameters, aggregated across all subsequences.
+ */
+typedef struct pulseqlib_sequence_parameters {
+    float min_te_us;
+    float min_tr_us;
+    float max_tr_us;
+    float max_flip_angle_deg;
+    float total_scan_time_us;   /**< estimated total scan duration (us) */
+    int   num_subseqs;
+    int   reserved[3];
+} pulseqlib_sequence_parameters;
+
+/**
+ * @brief Per-subsequence sequence description (event list + shape/shim libraries).
+ *
+ * All pointer members are heap-allocated and freed by
+ * pulseqlib_free_sequence_description().
+ */
+typedef struct pulseqlib_sequence_description {
+    int   subseq_idx;
+    float tr_duration_us;
+
+    int                       num_tuples;
+    pulseqlib_rf_shape_tuple* rf_shape_tuples;
+
+    int                        num_shims;
+    pulseqlib_shim_def_local*  shim_defs;
+
+    int                      num_events;
+    pulseqlib_seq_event*     events;
+
+    int                             num_composite_rf_groups;
+    pulseqlib_composite_rf_group*   composite_rf_groups;
+} pulseqlib_sequence_description;
 
 #endif /* PULSEQLIB_TYPES_H */

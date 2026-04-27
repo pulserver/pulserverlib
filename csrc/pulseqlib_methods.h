@@ -586,11 +586,14 @@ int pulseqlib_get_adc_def(const pulseqlib_collection* coll,
 /**
  * @brief Fill a pulseqlib_rf_shim_def for one RF shim definition.
  *
- * @p shim_idx is the rf_shim_id from pulseqlib_block_instance.  Returns
- * PULSEQLIB_ERR_INDEX if the index is out of range.
+ * @p shim_idx is the rf_shim_id from pulseqlib_block_instance.  It is
+ * LOCAL to the given @p subseq_idx (same convention as rf_id, gx_id, etc.);
+ * each subsequence stores its own shim table starting at index 0.
+ * Returns PULSEQLIB_ERR_INDEX if either index is out of range.
  */
 int pulseqlib_get_rf_shim_def(const pulseqlib_collection* coll,
                               pulseqlib_rf_shim_def*      def,
+                              int                         subseq_idx,
                               int                         shim_idx);
 
 /**
@@ -1265,6 +1268,57 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory* traj,
  */
 int pulseqlib_load_trajectory_cache(pulseqlib_trajectory* out,
                                     const char*           seq_path);
+
+/* ================================================================== */
+/*  Sequence description (Section 6)                                  */
+/* ================================================================== */
+
+/**
+ * @brief Build a per-subsequence sequence description from a loaded collection.
+ *
+ * Allocates and populates @p out with the event list, RF shape tuples, shim
+ * definitions, and composite RF group annotations for @p subseq_idx.
+ * Call pulseqlib_free_sequence_description() when done.
+ *
+ * @param[out] out        Caller-allocated descriptor to fill.
+ * @param[in]  coll       Loaded pulseqlib collection.
+ * @param[in]  subseq_idx Subsequence index.
+ * @return PULSEQLIB_SUCCESS or negative error code.
+ */
+int pulseqlib_get_sequence_description(pulseqlib_sequence_description* out,
+                                       const pulseqlib_collection*     coll,
+                                       int                             subseq_idx);
+
+/**
+ * @brief Free all heap allocations inside a pulseqlib_sequence_description.
+ *
+ * Does NOT free @p desc itself.
+ *
+ * @param[in,out] desc  Descriptor whose inner pointers to free.
+ */
+void pulseqlib_free_sequence_description(pulseqlib_sequence_description* desc);
+
+/**
+ * @brief Compute scan-global sequence parameters from all loaded subsequences.
+ *
+ * @param[out] out   Caller-allocated output struct.
+ * @param[in]  coll  Loaded pulseqlib collection.
+ * @return PULSEQLIB_SUCCESS or negative error code.
+ */
+int pulseqlib_get_sequence_parameters(pulseqlib_sequence_parameters* out,
+                                      const pulseqlib_collection*    coll);
+
+/**
+ * @brief Append the sequence description as section 6 to the binary cache.
+ *
+ * Must be called after the collection is loaded and all descriptors computed.
+ *
+ * @param[in] coll      Loaded collection.
+ * @param[in] seq_path  Path to the .seq file (cache is .seq → .bin).
+ * @return PULSEQLIB_SUCCESS or negative error code.
+ */
+int pulseqlib_write_sequence_description_cache(const pulseqlib_collection* coll,
+                                               const char*                 seq_path);
 
 #ifdef __cplusplus
 }

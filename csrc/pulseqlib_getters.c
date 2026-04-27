@@ -2927,31 +2927,31 @@ int pulseqlib_get_adc_def(const pulseqlib_collection* coll,
 
 int pulseqlib_get_rf_shim_def(const pulseqlib_collection* coll,
     pulseqlib_rf_shim_def*      def,
+    int                         subseq_idx,
     int                         shim_idx)
 {
     const pulseqlib_sequence_descriptor* desc;
-    int ss, offset, i;
+    int i;
     const pulseqlib_rf_shim_definition* src;
 
     if (!coll || !def) return PULSEQLIB_ERR_NULL_POINTER;
+    if (subseq_idx < 0 || subseq_idx >= coll->num_subsequences)
+        return PULSEQLIB_ERR_INDEX;
 
-    /* Search across all subsequences for the matching shim index.
-     * rf_shim_id values are globally unique within a collection. */
-    offset = 0;
-    for (ss = 0; ss < coll->num_subsequences; ss++) {
-        desc = &coll->descriptors[ss];
-        if (shim_idx >= offset && shim_idx < offset + desc->num_rf_shims) {
-            src = &desc->rf_shim_definitions[shim_idx - offset];
-            def->num_channels = src->num_channels;
-            for (i = 0; i < src->num_channels && i < PULSEQLIB_MAX_RF_SHIM_CHANNELS; i++) {
-                def->magnitudes[i] = src->magnitudes[i];
-                def->phases[i]     = src->phases[i];
-            }
-            return PULSEQLIB_SUCCESS;
-        }
-        offset += desc->num_rf_shims;
+    desc = &coll->descriptors[subseq_idx];
+
+    /* shim_idx is LOCAL to its subsequence (same convention as rf_id, gx_id, etc.).
+     * Each subseq stores its own rf_shim_definitions[] starting at index 0. */
+    if (shim_idx < 0 || shim_idx >= desc->num_rf_shims)
+        return PULSEQLIB_ERR_INDEX;
+
+    src = &desc->rf_shim_definitions[shim_idx];
+    def->num_channels = src->num_channels;
+    for (i = 0; i < src->num_channels && i < PULSEQLIB_MAX_RF_SHIM_CHANNELS; i++) {
+        def->magnitudes[i] = src->magnitudes[i];
+        def->phases[i]     = src->phases[i];
     }
-    return PULSEQLIB_ERR_INDEX;
+    return PULSEQLIB_SUCCESS;
 }
 
 int pulseqlib_get_num_rf_shims(const pulseqlib_collection* coll,
