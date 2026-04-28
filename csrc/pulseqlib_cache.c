@@ -14,14 +14,14 @@
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER  0x01020304
 #define PULSEQLIB_CACHE_VERSION_MAJOR  1
-#define PULSEQLIB_CACHE_VERSION_MINOR  0
+#define PULSEQLIB_CACHE_VERSION_MINOR  2
 
 #define PULSEQLIB_CACHE_SECTION_CHECK            1
 #define PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS  2
 #define PULSEQLIB_CACHE_SECTION_SCANLOOP         3
-#define PULSEQLIB_CACHE_SECTION_FREQMOD          4
-#define PULSEQLIB_CACHE_SECTION_TRAJECTORY       5
-#define PULSEQLIB_CACHE_SECTION_SEQUENCEDESCRIPTION 6
+#define PULSEQLIB_CACHE_SECTION_TRAJECTORY       4
+#define PULSEQLIB_CACHE_SECTION_SEQUENCEDESCRIPTION 5
+#define PULSEQLIB_CACHE_SECTION_FREQMOD          6
 
 typedef struct pulseqlib_cache_section_entry {
     int section_id;
@@ -1257,7 +1257,7 @@ int pulseqlib_clear_cache(const char* seq_path)
 }
 
 /* ================================================================== */
-/*  Freq-mod unified cache (section 4 of .bin)                        */
+/*  Freq-mod unified cache (section 6 of .bin)                        */
 /* ================================================================== */
 
 int pulseqlib_write_freq_mod_cache(
@@ -1316,7 +1316,7 @@ int pulseqlib_write_freq_mod_cache(
         }
     }
 
-    /* Check if section 4 already exists */
+    /* Check if section 6 already exists */
     found_idx = -1;
     for (i = 0; i < num_sections; ++i) {
         if (entries[i].section_id == PULSEQLIB_CACHE_SECTION_FREQMOD) {
@@ -1413,7 +1413,7 @@ int pulseqlib_load_freq_mod_cache(
     }
     if (num_sections <= 0 || num_sections > 16) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
 
-    /* Find section 4 (freq-mod) */
+    /* Find section 6 (freq-mod) */
     found = 0;
     memset(&section, 0, sizeof(section));
     for (i = 0; i < num_sections; ++i) {

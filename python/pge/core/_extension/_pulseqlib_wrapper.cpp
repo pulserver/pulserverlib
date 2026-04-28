@@ -16,6 +16,8 @@
 #include <vector>
 
 #include "pulseqlib.hpp"
+#include "pulseqlib_methods.h"
+#include "pulseqlib_types.h"
 
 namespace py = pybind11;
 
@@ -382,6 +384,118 @@ static int _get_unique_block_id(_PulseqCollection& pc, int seq_idx, int blk_def_
     return pc.coll().unique_block_id(seq_idx, blk_def_idx);
 }
 
+// ─── Sequence description / parameters ─────────────────────────────
+
+static py::dict _get_sequence_parameters(_PulseqCollection& pc) {
+    pulseqlib_sequence_parameters sp;
+    std::memset(&sp, 0, sizeof(sp));
+    int rc = pulseqlib_get_sequence_parameters(&sp, pc.coll().handle());
+    if (rc != PULSEQLIB_SUCCESS) {
+        throw std::runtime_error(
+            "pulseqlib_get_sequence_parameters failed: " + std::to_string(rc));
+    }
+    py::dict result;
+    result["min_te_us"]          = sp.min_te_us;
+    result["min_tr_us"]          = sp.min_tr_us;
+    result["max_tr_us"]          = sp.max_tr_us;
+    result["max_flip_angle_deg"] = sp.max_flip_angle_deg * (180.0f / static_cast<float>(M_PI));
+    result["total_scan_time_us"] = sp.total_scan_time_us;
+    result["num_subseqs"]        = sp.num_subseqs;
+    return result;
+}
+
+static py::dict _get_sequence_description(_PulseqCollection& pc, int subseq_idx) {
+    pulseqlib_sequence_description sd;
+    std::memset(&sd, 0, sizeof(sd));
+    int rc = pulseqlib_get_sequence_description(&sd, pc.coll().handle(), subseq_idx);
+    if (rc != PULSEQLIB_SUCCESS) {
+        pulseqlib_free_sequence_description(&sd);
+        throw std::runtime_error(
+            "pulseqlib_get_sequence_description failed: " + std::to_string(rc));
+    }
+
+    py::dict result;
+    result["subseq_idx"]     = sd.subseq_idx;
+    result["tr_duration_us"] = sd.tr_duration_us;
+
+    // ── RF shape tuples ────────────────────────────────────────────
+    py::list tuples;
+    for (int i = 0; i < sd.num_tuples; ++i) {
+        const pulseqlib_rf_shape_tuple* t = &sd.rf_shape_tuples[i];
+        py::dict td;
+        td["tuple_id"]     = t->tuple_id;
+        td["N_tx"]         = t->N_tx;
+        td["N_samples"]    = t->N_samples;
+        td["rf_raster_us"] = t->rf_raster_us;
+        td["num_bands"]    = t->num_bands;
+        int nb = (t->num_bands < PULSEQLIB_MAX_BANDS) ? t->num_bands : PULSEQLIB_MAX_BANDS;
+        py::list freqs;
+        for (int b = 0; b < nb; ++b)
+            freqs.append(t->band_freq_offsets_hz[b]);
+        td["band_freq_offsets_hz"] = freqs;
+        td["band_bandwidth_hz"]    = t->band_bandwidth_hz;
+        td["total_b1sq_power"]     = t->total_b1sq_power;
+        int tot = t->N_tx * t->N_samples;
+        if (t->mag && tot > 0)
+            td["mag"] = std::vector<float>(t->mag, t->mag + tot);
+        else
+            td["mag"] = std::vector<float>();
+        if (t->phase && tot > 0)
+            td["phase"] = std::vector<float>(t->phase, t->phase + tot);
+        else
+            td["phase"] = std::vector<float>();
+        if (t->time && t->N_samples > 0)
+            td["time"] = std::vector<float>(t->time, t->time + t->N_samples);
+        else
+            td["time"] = std::vector<float>();
+        tuples.append(td);
+    }
+    result["rf_shape_tuples"] = tuples;
+
+    // ── Shim definitions ──────────────────────────────────────────
+    py::list shims;
+    for (int i = 0; i < sd.num_shims; ++i) {
+        const pulseqlib_shim_def_local* s = &sd.shim_defs[i];
+        py::dict sh;
+        sh["shim_id_local"] = s->shim_id_local;
+        sh["N_ch"]          = s->N_ch;
+        int nch = (s->N_ch < PULSEQLIB_MAX_RF_SHIM_CHANNELS)
+                  ? s->N_ch : PULSEQLIB_MAX_RF_SHIM_CHANNELS;
+        sh["magnitudes"] = std::vector<float>(s->magnitudes, s->magnitudes + nch);
+        sh["phases"]     = std::vector<float>(s->phases,     s->phases     + nch);
+        shims.append(sh);
+    }
+    result["shim_defs"] = shims;
+
+    // ── Events ────────────────────────────────────────────────────
+    py::list events;
+    for (int i = 0; i < sd.num_events; ++i) {
+        const pulseqlib_seq_event* ev = &sd.events[i];
+        py::dict evd;
+        evd["type"]   = ev->type;
+        evd["params"] = std::vector<float>(ev->params, ev->params + PULSEQLIB_SEQ_EVENT_PARAMS);
+        events.append(evd);
+    }
+    result["events"] = events;
+
+    // ── Composite RF groups ───────────────────────────────────────
+    py::list groups;
+    for (int i = 0; i < sd.num_composite_rf_groups; ++i) {
+        const pulseqlib_composite_rf_group* g = &sd.composite_rf_groups[i];
+        py::dict gd;
+        gd["group_id"]        = g->group_id;
+        gd["first_event_idx"] = g->first_event_idx;
+        gd["last_event_idx"]  = g->last_event_idx;
+        gd["num_pulses"]      = g->num_pulses;
+        gd["eff_te_us"]       = g->eff_te_us;
+        groups.append(gd);
+    }
+    result["composite_rf_groups"] = groups;
+
+    pulseqlib_free_sequence_description(&sd);
+    return result;
+}
+
 // ─── Module ─────────────────────────────────────────────────────────
 
 PYBIND11_MODULE(_pulseqlib_wrapper, m) {
@@ -456,5 +570,12 @@ PYBIND11_MODULE(_pulseqlib_wrapper, m) {
           py::arg("collection"),
           py::arg("seq_idx"),
           py::arg("blk_def_idx"));
+
+    m.def("_get_sequence_parameters", &_get_sequence_parameters,
+          py::arg("collection"));
+
+    m.def("_get_sequence_description", &_get_sequence_description,
+          py::arg("collection"),
+          py::arg("subseq_idx") = 0);
 
 }

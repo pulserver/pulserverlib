@@ -14,6 +14,8 @@ from ._extension._pulseqlib_wrapper import (
     _check_safety,
     _get_num_unique_blocks,
     _get_report,
+    _get_sequence_description,
+    _get_sequence_parameters,
     _get_unique_block_id,
     _PulseqCollection,
 )
@@ -103,7 +105,9 @@ class SequenceCollection(pp.Sequence):
         from ._cache import deserialize
 
         # ── Normalise input to list[pp.Sequence] ────────────────
+        seq_path: Path | None = None
         if isinstance(seq, (str, Path)):
+            seq_path = Path(seq)
             seqs = deserialize(seq)
         elif isinstance(seq, pp.Sequence):
             seqs = [seq]
@@ -141,6 +145,9 @@ class SequenceCollection(pp.Sequence):
         )
         object.__setattr__(self, '_cseq', cseq)
         object.__setattr__(self, '_num_averages', int(num_averages))
+        object.__setattr__(self, '_seq_path', seq_path)
+        object.__setattr__(self, '_seq_info_cache', None)    # lazy: SequenceDescriptionInfo
+        object.__setattr__(self, '_traj_info_cache', None)   # lazy: TrajectoryInfo | False
 
     def __getattribute__(self, name):
         try:
@@ -149,7 +156,10 @@ class SequenceCollection(pp.Sequence):
             return getattr(self._seq, name)
 
     def __setattr__(self, name, value):
-        if name in ('_seq', '_cseq', '_seqs', '_num_averages', '_system_override'):
+        if name in (
+            '_seq', '_cseq', '_seqs', '_num_averages', '_system_override',
+            '_seq_path', '_seq_info_cache', '_traj_info_cache',
+        ):
             object.__setattr__(self, name, value)
         elif name == 'system':
             object.__setattr__(self, '_system_override', value)
@@ -609,7 +619,153 @@ class SequenceCollection(pp.Sequence):
                 )
             lines.append('')
 
+        # ── Optional section-6 / section-5 summary lines ────────
+        try:
+            si = self.info()
+            sp = si.seq_params
+            te_ms = sp.min_te_us * 1e-3
+            tr_ms = sp.min_tr_us * 1e-3
+            fa    = sp.max_flip_angle_deg
+            t_s   = sp.total_scan_time_us * 1e-6
+            lines.append(
+                f'Sequence description: '
+                f'min_TE={te_ms:.3f} ms  min_TR={tr_ms:.3f} ms  '
+                f'max_FA={fa:.1f} deg  total={t_s:.3f} s'
+            )
+        except Exception:
+            pass
+
+        try:
+            ti = self.trajectory_info()
+            if ti is not None:
+                lines.append(
+                    f'Trajectory: {len(ti.kshots)} kshots  '
+                    f'{len(ti.encoding_spaces)} encoding space(s)  '
+                    f'{len(ti.table)} ADC entries'
+                )
+        except Exception:
+            pass
+
         return '\n'.join(lines)
+
+    # ── Sequence description & trajectory ────────────────────
+
+    def info(self):
+        """Return the sequence description for all subsequences.
+
+        Builds :class:`SequenceDescriptionInfo` from the loaded collection
+        using the C backend.  Always available — no ``.bin`` cache file
+        required.
+
+        Returns
+        -------
+        SequenceDescriptionInfo
+            Global sequence parameters plus per-subsequence event lists,
+            RF shape tuples, shim definitions, and composite RF groups.
+        """
+        from ._cache_sections import build_sequence_description_info, SequenceDescriptionInfo
+
+        cached = object.__getattribute__(self, '_seq_info_cache')
+        if cached is not None:
+            return cached
+
+        params_dict = _get_sequence_parameters(self._cseq)
+        n = params_dict['num_subseqs']
+        desc_dicts = [_get_sequence_description(self._cseq, i) for i in range(n)]
+        result = build_sequence_description_info(params_dict, desc_dicts)
+        object.__setattr__(self, '_seq_info_cache', result)
+        return result
+
+    def trajectory_info(self):
+        """Return trajectory data from the binary cache, if present.
+
+        Reads section 5 (TRAJECTORY) from the ``.bin`` cache file written
+        alongside the ``.seq`` file by the PSD predownload phase.  Returns
+        ``None`` for Cartesian sequences or when no ``.bin`` file is present.
+
+        Returns
+        -------
+        TrajectoryInfo or None
+            k-shot library, encoding spaces, and per-ADC trajectory table;
+            or ``None`` if unavailable.
+        """
+        from ._cache_sections import read_trajectory_info
+
+        cached = object.__getattribute__(self, '_traj_info_cache')
+        if cached is not None:
+            # False sentinel means "already checked — not available"
+            return None if cached is False else cached
+
+        seq_path = object.__getattribute__(self, '_seq_path')
+        result = read_trajectory_info(seq_path) if seq_path is not None else None
+        object.__setattr__(self, '_traj_info_cache', result if result is not None else False)
+        return result
+
+    def describe(self, *, do_print: bool = True) -> str:
+        """Return a detailed multi-line summary of sequence description and trajectory.
+
+        Combines section 6 (sequence description) and, when available, section 5
+        (trajectory) into a human-readable report.
+
+        Parameters
+        ----------
+        do_print : bool, default True
+            When ``True`` (default), the summary is also printed to stdout.
+
+        Returns
+        -------
+        str
+            Formatted multi-line string.
+        """
+        lines = []
+
+        # ── Sequence parameters ──────────────────────────────
+        si = self.info()
+        sp = si.seq_params
+        lines.append('=== Sequence Description ===')
+        lines.append(f'  Subsequences:       {sp.num_subseqs}')
+        lines.append(f'  Min TE:             {sp.min_te_us * 1e-3:.3f} ms')
+        lines.append(f'  Min TR:             {sp.min_tr_us * 1e-3:.3f} ms')
+        lines.append(f'  Max TR:             {sp.max_tr_us * 1e-3:.3f} ms')
+        lines.append(f'  Max flip angle:     {sp.max_flip_angle_deg:.1f} deg')
+        lines.append(f'  Total scan time:    {sp.total_scan_time_us * 1e-6:.3f} s')
+        lines.append('')
+
+        # ── Per-subsequence summary ──────────────────────────
+        for sd in si.subseqs:
+            lines.append(f'  --- Subsequence {sd.subseq_idx} ---')
+            lines.append(f'    TR duration:      {sd.tr_duration_us * 1e-3:.3f} ms')
+            lines.append(f'    Events:           {len(sd.events)} total '
+                         f'({sd.num_rf_events} RF, {sd.num_adc_events} ADC)')
+            lines.append(f'    RF shape tuples:  {len(sd.rf_shape_tuples)}')
+            lines.append(f'    Shim defs:        {len(sd.shim_defs)}')
+            lines.append(f'    Composite RF grps:{len(sd.composite_rf_groups)}')
+            if sd.flip_angles_deg:
+                fa_str = ', '.join(f'{f:.1f}' for f in sd.flip_angles_deg[:6])
+                suffix = ', ...' if len(sd.flip_angles_deg) > 6 else ''
+                lines.append(f'    Flip angles (deg):{fa_str}{suffix}')
+            lines.append('')
+
+        # ── Trajectory section ───────────────────────────────
+        ti = self.trajectory_info()
+        if ti is not None:
+            lines.append('=== Trajectory (section 5) ===')
+            lines.append(f'  k-shots:            {len(ti.kshots)}')
+            lines.append(f'  Encoding spaces:    {len(ti.encoding_spaces)}')
+            lines.append(f'  Table entries:      {len(ti.table)}')
+            for ei, es in enumerate(ti.encoding_spaces):
+                fov_mm = tuple(round(v * 1e3, 1) for v in es.fov)
+                mat    = tuple(int(v) for v in es.matrix)
+                lines.append(f'  ES {ei}: FOV={fov_mm} mm  matrix={mat}')
+            lines.append('')
+        else:
+            lines.append('=== Trajectory (section 5): not available ===')
+            lines.append('')
+
+        text = '\n'.join(lines)
+        if do_print:
+            print(text)
+        return text
 
     # ── Safety checks ────────────────────────────────────────
 

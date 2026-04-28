@@ -33,6 +33,7 @@ static const pulseqlib__table_entry label_table[] = {
     { "NOSCL", PULSEQLIB__NOSCL },
     { "ONCE",  PULSEQLIB__ONCE },
     { "TRID",  PULSEQLIB__TRID },
+    { "OFF",   PULSEQLIB__OFF },
     { NULL, -1 }
 };
 

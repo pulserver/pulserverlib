@@ -1,4 +1,4 @@
-/* pulseqlib_seqdesc.c -- Sequence description walker (Section 6)
+/* pulseqlib_seqdesc.c -- Sequence description walker (Section 5)
  *
  * Implements:
  *   pulseqlib_get_sequence_description()

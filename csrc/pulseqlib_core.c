@@ -106,6 +106,7 @@ void pulseqlib_sequence_descriptor_free(pulseqlib_sequence_descriptor* d)
     if (d->variable_grad_flags) { PULSEQLIB_FREE(d->variable_grad_flags); d->variable_grad_flags = NULL; }
 
     if (d->label_table) { PULSEQLIB_FREE(d->label_table); d->label_table = NULL; }
+    if (d->off_table)   { PULSEQLIB_FREE(d->off_table);   d->off_table   = NULL; }
     d->label_num_columns = 0;
     d->label_num_entries = 0;
 

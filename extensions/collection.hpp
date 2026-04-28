@@ -141,9 +141,9 @@ public:
         return def;
     }
 
-    pulseqlib_rf_shim_def rf_shim_def(int shim_idx) const {
+    pulseqlib_rf_shim_def rf_shim_def(int subseq_idx, int shim_idx) const {
         pulseqlib_rf_shim_def def = PULSEQLIB_RF_SHIM_DEF_INIT;
-        check(pulseqlib_get_rf_shim_def(coll_, &def, shim_idx));
+        check(pulseqlib_get_rf_shim_def(coll_, &def, subseq_idx, shim_idx));
         return def;
     }
 

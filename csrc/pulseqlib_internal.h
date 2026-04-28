@@ -523,6 +523,10 @@ typedef struct pulseqlib_sequence_descriptor {
     int label_num_entries;
     int* label_table;
     pulseqlib_label_limits label_limits;
+    /* Per-ADC OFF flag (parallel to label_table rows; entries == label_num_entries).
+     * Pulseq v1.5.1 LABELSET column "OFF". 1 = acquisition should be discarded
+     * downstream (LiveSDK), 0 = keep. NULL when no LABELSET OFF is present. */
+    int* off_table;
 
     /* generic [DEFINITIONS] key-value pairs (all keys, not just reserved) */
     int num_definitions;
@@ -542,7 +546,7 @@ typedef struct pulseqlib_sequence_descriptor {
     0, NULL, PULSEQLIB_SEGMENT_TABLE_RESULT_INIT, \
     0, NULL, NULL, NULL, NULL, NULL, \
     NULL, \
-    0, 0, NULL, {{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}}, \
+    0, 0, NULL, {{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}}, NULL, \
     0, NULL \
 }
 
@@ -682,6 +686,7 @@ typedef struct pulseqlib__uniform_grad_waveforms {
 #define PULSEQLIB__NOSCL 20
 #define PULSEQLIB__ONCE 21
 #define PULSEQLIB__TRID 22
+#define PULSEQLIB__OFF  23
 
 /* ================================================================== */
 /*  Internal shape types                                              */

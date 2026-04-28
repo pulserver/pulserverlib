@@ -847,7 +847,8 @@ int pulseqlib__build_freq_mod_flags(pulseqlib_sequence_descriptor* desc)
  *   Scan a block's extension chain and apply LABELSET / LABELINC
  *   operations to the running label state.
  *
- *   state[0..9] = { slc, phs, rep, avg, seg, set, eco, par, lin, acq }
+ *   state[0..9]  = { slc, phs, rep, avg, seg, set, eco, par, lin, acq }
+ *   state[10]    = OFF (Pulseq v1.5.1 LABELSET; 1 = discard downstream)
  */
 static void apply_block_labels(
     int* state,
@@ -881,6 +882,7 @@ static void apply_block_labels(
                 case PULSEQLIB__PAR: state[7] = label_value; break;
                 case PULSEQLIB__LIN: state[8] = label_value; break;
                 case PULSEQLIB__ACQ: state[9] = label_value; break;
+                case PULSEQLIB__OFF: state[10] = label_value ? 1 : 0; break;
                 default: break;
             }
         } else if (ext_type == PULSEQLIB__EXT_LABELINC) {
@@ -899,6 +901,7 @@ static void apply_block_labels(
                 case PULSEQLIB__PAR: state[7] += label_value; break;
                 case PULSEQLIB__LIN: state[8] += label_value; break;
                 case PULSEQLIB__ACQ: state[9] += label_value; break;
+                /* OFF is boolean; LABELINC on OFF is undefined and ignored. */
                 default: break;
             }
         }
@@ -974,8 +977,9 @@ int pulseqlib__build_label_table(
     int num_columns, total_adcs, adcs_per_tr;
     int imaging_start, cooldown_start, num_trs;
     int b, rep, entry_idx;
-    int state[10];
+    int state[11];
     int* table;
+    int* off_table = NULL;
     pulseqlib__raw_block raw;
 
     if (!desc || !seq) return PULSEQLIB_ERR_NULL_POINTER;
@@ -1009,6 +1013,7 @@ int pulseqlib__build_label_table(
         desc->label_num_columns = num_columns;
         desc->label_num_entries = 0;
         desc->label_table       = NULL;
+        desc->off_table         = NULL;
         memset(&desc->label_limits, 0, sizeof(desc->label_limits));
         return PULSEQLIB_SUCCESS;
     }
@@ -1017,6 +1022,11 @@ int pulseqlib__build_label_table(
     table = (int*)PULSEQLIB_ALLOC((size_t)total_adcs * (size_t)num_columns * sizeof(int));
     if (!table) return PULSEQLIB_ERR_ALLOC_FAILED;
     memset(table, 0, (size_t)total_adcs * (size_t)num_columns * sizeof(int));
+
+    /* Parallel OFF flag table (one int per ADC). */
+    off_table = (int*)PULSEQLIB_ALLOC((size_t)total_adcs * sizeof(int));
+    if (!off_table) { PULSEQLIB_FREE(table); return PULSEQLIB_ERR_ALLOC_FAILED; }
+    memset(off_table, 0, (size_t)total_adcs * sizeof(int));
 
     /* Initialize running label state to zero */
     memset(state, 0, sizeof(state));
@@ -1031,6 +1041,7 @@ int pulseqlib__build_label_table(
             record_adc_label(&table[entry_idx * num_columns],
                              num_columns, state, &desc->label_limits,
                              entry_idx == 0);
+            off_table[entry_idx] = state[10];
             ++entry_idx;
         }
     }
@@ -1044,6 +1055,7 @@ int pulseqlib__build_label_table(
                 record_adc_label(&table[entry_idx * num_columns],
                                  num_columns, state, &desc->label_limits,
                                  entry_idx == 0);
+                off_table[entry_idx] = state[10];
                 ++entry_idx;
             }
         }
@@ -1057,6 +1069,7 @@ int pulseqlib__build_label_table(
             record_adc_label(&table[entry_idx * num_columns],
                              num_columns, state, &desc->label_limits,
                              entry_idx == 0);
+            off_table[entry_idx] = state[10];
             ++entry_idx;
         }
     }
@@ -1064,6 +1077,7 @@ int pulseqlib__build_label_table(
     desc->label_num_columns = num_columns;
     desc->label_num_entries = entry_idx;
     desc->label_table       = table;
+    desc->off_table         = off_table;
 
     return PULSEQLIB_SUCCESS;
 }

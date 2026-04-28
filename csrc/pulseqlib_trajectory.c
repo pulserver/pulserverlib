@@ -553,6 +553,8 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
         table[adc_idx].center_sample = kzero;
         table[adc_idx].sample_time_us = (float)desc->adc_definitions[adc_def_idx].dwell_time * 1e-3f;
         table[adc_idx].flags = 0;
+        table[adc_idx].off = (desc->off_table && adc_idx < desc->label_num_entries)
+                             ? (desc->off_table[adc_idx] ? 1 : 0) : 0;
 
         /* Labels from label table */
         if (label_buf && adc_idx < desc->label_num_entries) {
@@ -822,11 +824,11 @@ static int traj_read4(FILE* f, void* p, int count)
 }
 
 /* ================================================================== */
-/*  Write trajectory cache (section 5)                                */
+/*  Write trajectory cache (section 4)                                */
 /* ================================================================== */
 
 #define CACHE_ENDIAN_MARKER  0x01020304
-#define CACHE_SECTION_TRAJECTORY 5
+#define CACHE_SECTION_TRAJECTORY 4
 
 int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory* traj,
                                      const char*                 seq_path)
@@ -878,7 +880,7 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory* traj,
         if (do_swap) traj_swap4_array(&entries_buf[i * 3], 3);
     }
 
-    /* Check if section 5 already exists */
+    /* Check if section 4 already exists */
     found_idx = -1;
     for (i = 0; i < num_sections; ++i) {
         if (entries_buf[i * 3] == CACHE_SECTION_TRAJECTORY) {
@@ -958,6 +960,7 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory* traj,
         if (!traj_write4(f, &e->center_sample, 1)) goto tw_fail;
         if (!traj_write4(f, &e->sample_time_us, 1)) goto tw_fail;
         if (!traj_write4(f, &e->encoding_space_ref, 1)) goto tw_fail;
+        if (!traj_write4(f, &e->off, 1)) goto tw_fail;
     }
 
     data_end = ftell(f);
@@ -987,7 +990,7 @@ tw_fail:
 }
 
 /* ================================================================== */
-/*  Load trajectory from cache (section 5)                            */
+/*  Load trajectory from cache (section 4)                            */
 /* ================================================================== */
 
 int pulseqlib_load_trajectory_cache(pulseqlib_trajectory* out,
@@ -1029,7 +1032,7 @@ int pulseqlib_load_trajectory_cache(pulseqlib_trajectory* out,
         traj_swap4(&num_sections);
     }
 
-    /* Find section 5 */
+    /* Find section 4 */
     found = 0;
     section_offset = 0;
     section_size = 0;
@@ -1141,7 +1144,8 @@ int pulseqlib_load_trajectory_cache(pulseqlib_trajectory* out,
             if (!traj_read4(f, &e->center_sample, 1)) goto lr_fail;
             if (!traj_read4(f, &e->sample_time_us, 1)) goto lr_fail;
             if (!traj_read4(f, &e->encoding_space_ref, 1)) goto lr_fail;
-            if (do_swap) traj_swap4_array(&e->center_sample, 3);
+            if (!traj_read4(f, &e->off, 1)) goto lr_fail;
+            if (do_swap) traj_swap4_array(&e->center_sample, 4);
         }
     }
 

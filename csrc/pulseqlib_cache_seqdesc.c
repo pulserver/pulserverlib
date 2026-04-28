@@ -1,9 +1,9 @@
-/* pulseqlib_cache_seqdesc.c -- Section 6 cache writer for sequence description
+/* pulseqlib_cache_seqdesc.c -- Section 5 cache writer for sequence description
  *
  * Implements:
  *   pulseqlib_write_sequence_description_cache()
  *
- * Section 6 serialization format (all values are 4 bytes, little-endian by
+ * Section 5 serialization format (all values are 4 bytes, little-endian by
  * default — same convention as all other cache sections):
  *
  * [sequence parameters]
@@ -173,7 +173,7 @@ static int sd_write_subseq(FILE* f, const pulseqlib_sequence_description* sd)
 /* ================================================================== */
 
 #define SD_CACHE_ENDIAN_MARKER       0x01020304
-#define SD_CACHE_SECTION_SEQDESC     6
+#define SD_CACHE_SECTION_SEQDESC     5
 
 int pulseqlib_write_sequence_description_cache(
     const pulseqlib_collection* coll,
@@ -236,7 +236,7 @@ int pulseqlib_write_sequence_description_cache(
         if (do_swap) sd_swap4_array(&entries_buf[i * 3], 3);
     }
 
-    /* Find or allocate slot for section 6 */
+    /* Find or allocate slot for section 5 */
     found_idx = -1;
     for (i = 0; i < num_sections; ++i) {
         if (entries_buf[i * 3] == SD_CACHE_SECTION_SEQDESC) {

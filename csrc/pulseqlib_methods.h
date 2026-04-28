@@ -1138,7 +1138,7 @@ int pulseqlib_update_freq_mod_for_tr(
 /* ================================================================== */
 
 /**
- * @brief Load freq-mod data from the collection cache (section 4).
+ * @brief Load freq-mod data from the collection cache (section 6).
  *
  * On success, populates coll->freq_mod.  Returns an error code if the
  * freq-mod section is absent or empty.
@@ -1246,7 +1246,7 @@ int pulseqlib_merge_trajectory(pulseqlib_trajectory*       dst,
                                const pulseqlib_trajectory* src);
 
 /**
- * @brief Append the trajectory as section 5 to the binary cache.
+ * @brief Append the trajectory as section 4 to the binary cache.
  *
  * Opens the existing cache file (written by pulseqlib_read with
  * cache_binary=1), appends the trajectory section, and patches the
@@ -1260,7 +1260,7 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory* traj,
                                      const char*                 seq_path);
 
 /**
- * @brief Load trajectory from cache section 5.
+ * @brief Load trajectory from cache section 4.
  *
  * @param[out] out       Trajectory output (caller-allocated struct).
  * @param[in]  seq_path  Path to the .seq file.
@@ -1270,7 +1270,7 @@ int pulseqlib_load_trajectory_cache(pulseqlib_trajectory* out,
                                     const char*           seq_path);
 
 /* ================================================================== */
-/*  Sequence description (Section 6)                                  */
+/*  Sequence description (Section 5)                                  */
 /* ================================================================== */
 
 /**
@@ -1309,7 +1309,7 @@ int pulseqlib_get_sequence_parameters(pulseqlib_sequence_parameters* out,
                                       const pulseqlib_collection*    coll);
 
 /**
- * @brief Append the sequence description as section 6 to the binary cache.
+ * @brief Append the sequence description as section 5 to the binary cache.
  *
  * Must be called after the collection is loaded and all descriptors computed.
  *

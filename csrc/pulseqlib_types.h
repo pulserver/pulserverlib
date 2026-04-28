@@ -822,6 +822,7 @@ typedef struct pulseqlib_traj_table_entry {
     int   center_sample;       /**< k-zero sample index within readout   */
     float sample_time_us;      /**< ADC dwell time in microseconds       */
     int   encoding_space_ref;  /**< encoding space index                  */
+    int   off;                 /**< Pulseq LABELSET OFF flag (1=discard) */
 } pulseqlib_traj_table_entry;
 
 /** @brief Per-subsequence encoding-space descriptor. */
@@ -845,7 +846,7 @@ typedef struct pulseqlib_trajectory {
 } pulseqlib_trajectory;
 
 /* ================================================================== */
-/*  Sequence description (Section 6 — state-machine Bloch simulator)  */
+/*  Sequence description (Section 5 — state-machine Bloch simulator)  */
 /* ================================================================== */
 
 /** ADC role flags for sequence-description events. */
