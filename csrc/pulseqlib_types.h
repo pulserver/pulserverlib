@@ -139,11 +139,16 @@ typedef struct pulseqlib_rf_stats {
     float band_freq_offsets_hz[PULSEQLIB_MAX_BANDS];    /**< per-band center offsets relative to carrier (Hz) */
     float band_bandwidth_hz;                            /**< per-band bandwidth (Hz) */
     float total_b1sq_power;                             /**< integral |B1(t)|^2 dt normalised (a.u.) */
+    /* --- vendor tag (appended; identifies the meaning of the
+     *     vendor-specific interpretation of the fields above; for new
+     *     vendor variants, a sibling struct may be added later and
+     *     selected via this field) ---                                 */
+    int   vendor;                                       /**< PULSEQLIB_VENDOR_* constant (0 = unspecified -> GEHC for back-compat) */
 } pulseqlib_rf_stats;
 
 #define PULSEQLIB_RF_STATS_INIT { \
     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0.0f, 0.0f, 0, 0, \
-    1, {0.0f}, 0.0f, 0.0f \
+    1, {0.0f}, 0.0f, 0.0f, 0 \
 }
 
 /* ================================================================== */
@@ -327,39 +332,19 @@ typedef struct pulseqlib_tr_waveforms {
  * Frequency axes are specified by (min, spacing, num_bins) so
  * the caller can reconstruct: freq[k] = freq_min_hz + k * freq_spacing_hz.
  *
- * Spectrograms are flat row-major arrays [num_windows * num_freq_bins].
- * Peak masks are binary (0 / 1) with the same layout.
+ * The canonical mechanical-resonance verdict is provided by the
+ * structural-analysis arrays (analytical_*, candidate_*, component_*,
+ * surviving_*).  spectrum_full_g{x,y,z} are display-only full-TR
+ * magnitude spectra.
  */
 typedef struct pulseqlib_mech_resonances_spectra {
-    /* -- sliding window -------------------------------------------- */
+    /* -- full TR spectrum (display-only) --------------------------- */
     float freq_min_hz;          /**< lowest frequency bin (Hz)         */
     float freq_spacing_hz;      /**< bin width (Hz)                    */
-    int   num_freq_bins;        /**< frequency bins per window         */
-    int   num_windows;          /**< number of sliding windows         */
-    float* spectrogram_gx;      /**< [num_windows * num_freq_bins]     */
-    float* spectrogram_gy;
-    float* spectrogram_gz;
-    int*   peaks_gx;            /**< binary peak mask (same shape)     */
-    int*   peaks_gy;
-    int*   peaks_gz;
-
-    /* -- full TR spectrum ------------------------------------------ */
+    int   num_freq_bins;        /**< frequency bins                    */
     float* spectrum_full_gx;    /**< [num_freq_bins]                   */
     float* spectrum_full_gy;
     float* spectrum_full_gz;
-    int*   peaks_full_gx;       /**< binary peak mask [num_freq_bins]  */
-    int*   peaks_full_gy;
-    int*   peaks_full_gz;
-
-    /* -- sequence-level harmonics ---------------------------------- */
-    float  freq_spacing_seq_hz; /**< harmonic spacing (Hz)             */
-    int    num_freq_bins_seq;   /**< number of harmonic bins           */
-    float* spectrum_seq_gx;     /**< [num_freq_bins_seq]               */
-    float* spectrum_seq_gy;
-    float* spectrum_seq_gz;
-    int*   peaks_seq_gx;        /**< binary peak mask                  */
-    int*   peaks_seq_gy;
-    int*   peaks_seq_gz;
 
     /* -- repetition info ------------------------------------------- */
     int    num_instances;        /**< TR repetition count (for display) */
@@ -404,14 +389,10 @@ typedef struct pulseqlib_mech_resonances_spectra {
 } pulseqlib_mech_resonances_spectra;
 
 #define PULSEQLIB_MECH_RESONANCES_SPECTRA_INIT { \
-    /* freq_min_hz, freq_spacing_hz, num_freq_bins, num_windows */ \
-    0.0f, 0.0f, 0, 0, \
-    /* spectrogram_gx/gy/gz, peaks_gx/gy/gz */ \
-    NULL, NULL, NULL,  NULL, NULL, NULL, \
-    /* spectrum_full_gx/gy/gz, peaks_full_gx/gy/gz */ \
-    NULL, NULL, NULL,  NULL, NULL, NULL, \
-    /* freq_spacing_seq_hz, num_freq_bins_seq, spectrum_seq_gx/gy/gz, peaks_seq_gx/gy/gz */ \
-    0.0f, 0,  NULL, NULL, NULL,  NULL, NULL, NULL, \
+    /* freq_min_hz, freq_spacing_hz, num_freq_bins */ \
+    0.0f, 0.0f, 0, \
+    /* spectrum_full_gx/gy/gz */ \
+    NULL, NULL, NULL, \
     /* num_instances */ \
     0, \
     /* num_analytical_peaks, analytical_peak_freqs, amp_gx/gy/gz, phase_gx/gy/gz, widths */ \

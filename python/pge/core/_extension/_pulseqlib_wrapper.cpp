@@ -154,7 +154,6 @@ static py::dict _calc_mech_resonances(
     _PulseqCollection& pc,
     int subsequence_idx,
     int canonical_tr_idx,
-    int target_window_size,
     float target_resolution_hz,
     float max_freq_hz,
     py::list py_bands,
@@ -188,7 +187,6 @@ static py::dict _calc_mech_resonances(
     auto sp = pc.coll().calc_mech_resonances(
         subsequence_idx,
         canonical_tr_idx,
-        target_window_size,
         target_resolution_hz,
         max_freq_hz,
         bands,
@@ -201,32 +199,11 @@ static py::dict _calc_mech_resonances(
     out["freq_min_hz"]       = sp.freq_min_hz;
     out["freq_spacing_hz"]   = sp.freq_spacing_hz;
     out["num_freq_bins"]     = sp.num_freq_bins;
-    out["num_windows"]       = sp.num_windows;
-
-    out["spectrogram_gx"]    = sp.spectrogram_gx;
-    out["spectrogram_gy"]    = sp.spectrogram_gy;
-    out["spectrogram_gz"]    = sp.spectrogram_gz;
-    out["peaks_gx"]          = sp.peaks_gx;
-    out["peaks_gy"]          = sp.peaks_gy;
-    out["peaks_gz"]          = sp.peaks_gz;
 
     out["spectrum_full_gx"]  = sp.spectrum_full_gx;
     out["spectrum_full_gy"]  = sp.spectrum_full_gy;
     out["spectrum_full_gz"]  = sp.spectrum_full_gz;
-    out["peaks_full_gx"]     = sp.peaks_full_gx;
-    out["peaks_full_gy"]     = sp.peaks_full_gy;
-    out["peaks_full_gz"]     = sp.peaks_full_gz;
 
-    out["freq_spacing_seq_hz"] = sp.freq_spacing_seq_hz;
-    out["num_freq_bins_seq"]   = sp.num_freq_bins_seq;
-    if (sp.num_freq_bins_seq > 0) {
-        out["spectrum_seq_gx"] = sp.spectrum_seq_gx;
-        out["spectrum_seq_gy"] = sp.spectrum_seq_gy;
-        out["spectrum_seq_gz"] = sp.spectrum_seq_gz;
-        out["peaks_seq_gx"]    = sp.peaks_seq_gx;
-        out["peaks_seq_gy"]    = sp.peaks_seq_gy;
-        out["peaks_seq_gz"]    = sp.peaks_seq_gz;
-    }
     out["num_instances"] = sp.num_instances;
 
     out["num_analytical_peaks"]   = sp.num_analytical_peaks;
@@ -531,7 +508,6 @@ PYBIND11_MODULE(_pulseqlib_wrapper, m) {
             py::arg("collection"),
             py::arg("subsequence_idx") = 0,
             py::arg("canonical_tr_idx") = 0,
-            py::arg("target_window_size"),
             py::arg("target_resolution_hz"),
             py::arg("max_freq_hz"),
             py::arg("forbidden_bands") = py::list(),

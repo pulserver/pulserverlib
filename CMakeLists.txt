@@ -89,7 +89,30 @@ endfunction()
 # -------------------------
 # _pulseqlib module
 # -------------------------
-file(GLOB PULSEQLIB_C_SOURCES "${CMAKE_SOURCE_DIR}/csrc/*.c")
+# Explicit source list (mirrors csrc/CMakeLists.txt). pge needs both the cache
+# and seqdesc subsystems because the Python API exposes
+# pulseqlib_get_sequence_description / pulseqlib_get_sequence_parameters.
+set(PULSEQLIB_C_SOURCES
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_error.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_math.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_parse.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_dedup.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_structure.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_core.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_cache.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_waveforms.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_safety.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_getters.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_freqmod.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_protocol.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_trajectory.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_seqdesc.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_cache_seqdesc.c"
+    "${CMAKE_SOURCE_DIR}/csrc/pulseqlib_bridge.c"
+    "${CMAKE_SOURCE_DIR}/csrc/external_kiss_fft.c"
+    "${CMAKE_SOURCE_DIR}/csrc/external_kiss_fftr.c"
+    "${CMAKE_SOURCE_DIR}/csrc/external_md5.c"
+)
 
 add_pybind_module(_pulseqlib_wrapper ""
     SOURCES

@@ -973,7 +973,6 @@ class SequenceCollection(pp.Sequence):
         forbidden_bands: (
             list[tuple[float, float, float] | tuple[float, float, float, str]] | None
         ) = None,
-        window_duration: float = 25.0e-3,
         spectral_resolution: float = 5.0,
         max_frequency: float = 3000.0,
         peak_log10_threshold: float | None = None,
@@ -1005,9 +1004,6 @@ class SequenceCollection(pp.Sequence):
             ``(freq_min_Hz, freq_max_Hz, max_allowed_amplitude_Hz_per_m)``.
             Drawn as shaded regions with max-allowed amplitude labelled in mT/m.
             If ``None``, defaults are used from ``self.system`` when available.
-        window_duration : float, default 25.0e-3
-            Sliding-window size in seconds (default 25 ms), used to set the
-            spectral analysis window.
         spectral_resolution : float, default 5.0
             Target frequency resolution for FFT in Hz (default 5 Hz).
         max_frequency : float, default 3000.0
@@ -1059,7 +1055,6 @@ class SequenceCollection(pp.Sequence):
             self,
             sequence_idx=sequence_idx,
             forbidden_bands=forbidden_bands,
-            window_duration=window_duration,
             spectral_resolution=spectral_resolution,
             max_frequency=max_frequency,
             peak_log10_threshold=peak_log10_threshold,

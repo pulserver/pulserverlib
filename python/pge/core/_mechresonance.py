@@ -38,7 +38,6 @@ def _plot_grad_spectrum_for_subsequence(
     subsequence_idx: int,
     canonical_tr_indices: list[int],
     forbidden_bands: list[tuple[float, float, float] | tuple[float, float, float, str]],
-    target_window_size: int,
     spectral_resolution: float,
     max_frequency: float,
     peak_log10_threshold: float | None,
@@ -95,7 +94,6 @@ def _plot_grad_spectrum_for_subsequence(
             seq._cseq,
             subsequence_idx=subsequence_idx,
             canonical_tr_idx=ctr_idx,
-            target_window_size=target_window_size,
             target_resolution_hz=spectral_resolution,
             max_freq_hz=max_frequency,
             forbidden_bands=c_forbidden_bands,
@@ -335,7 +333,6 @@ def grad_spectrum(
     forbidden_bands: (
         list[tuple[float, float, float] | tuple[float, float, float, str]] | None
     ) = None,
-    window_duration: float = 25.0e-3,
     spectral_resolution: float = 5.0,
     max_frequency: float = 3000.0,
     peak_log10_threshold: float | None = None,
@@ -365,8 +362,6 @@ def grad_spectrum(
         Forbidden frequency bands.  Each tuple gives
         ``(freq_min_Hz, freq_max_Hz, max_allowed_amplitude_Hz_per_m)``.
         Drawn as shaded regions; the max allowed amplitude is labelled in mT/m.
-    window_duration : float
-        Sliding-window size in seconds (default 25 ms, used for spectral resolution).
     spectral_resolution : float
         Target frequency resolution in Hz (default 5 Hz).
     max_frequency : float
@@ -382,9 +377,6 @@ def grad_spectrum(
     """
     if forbidden_bands is None:
         forbidden_bands = []
-
-    grad_raster_time = seq.system.grad_raster_time
-    target_window_size = int(2.0 * window_duration / grad_raster_time)
 
     if sequence_idx is None:
         subsequence_indices = list(range(seq.num_sequences))
@@ -403,7 +395,6 @@ def grad_spectrum(
             subsequence_idx=ss_idx,
             canonical_tr_indices=list(range(num_canonical)),
             forbidden_bands=forbidden_bands,
-            target_window_size=target_window_size,
             spectral_resolution=spectral_resolution,
             max_frequency=max_frequency,
             peak_log10_threshold=peak_log10_threshold,

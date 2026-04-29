@@ -1,6 +1,29 @@
 # csrc/CMakeLists.txt -- pulseqlib library build
+#
+# Public API surface (always built):
+#   pulseqlib_error/math/parse/dedup/structure/core/waveforms/safety/
+#   getters/freqmod/protocol/trajectory
+#
+# Opt-IN components (toggled by cache option below):
+#   pulseqlib_cache.c          -- vendor-neutral binary cache format writer
+#                                 (PULSEQLIB_BUILD_CACHE, default ON)
+#
+# Opt-IN components (toggled by seqdesc option below):
+#   pulseqlib_seqdesc.c        -- sequence description for Bloch simulation
+#   pulseqlib_cache_seqdesc.c  -- seqdesc binary cache writer
+#                                 (PULSEQLIB_BUILD_SEQDESC, default OFF for the
+#                                 static library; the pybind11 wrapper turns it
+#                                 ON because the pge Python API exposes
+#                                 pulseqlib_get_sequence_{description,parameters})
+#
+# These options exist so external vendor consumers (e.g., a PSD that wants the
+# safety subsystem only) can compile a stripped variant. Default-ON consumers
+# (pge, mrdserver) are byte-identical to the previous behaviour.
 
-# Collect all library sources
+option(PULSEQLIB_BUILD_CACHE   "Build the binary cache writer (pulseqlib_cache.c)" ON)
+option(PULSEQLIB_BUILD_SEQDESC "Build the sequence-description / Bloch-sim helpers" OFF)
+
+# Always-on library sources
 set(PULSEQLIB_SOURCES
     pulseqlib_error.c
     pulseqlib_math.c
@@ -8,7 +31,6 @@ set(PULSEQLIB_SOURCES
     pulseqlib_dedup.c
     pulseqlib_structure.c
     pulseqlib_core.c
-    pulseqlib_cache.c
     pulseqlib_waveforms.c
     pulseqlib_safety.c
     pulseqlib_getters.c
@@ -16,6 +38,17 @@ set(PULSEQLIB_SOURCES
     pulseqlib_protocol.c
     pulseqlib_trajectory.c
 )
+
+if(PULSEQLIB_BUILD_CACHE)
+    list(APPEND PULSEQLIB_SOURCES pulseqlib_cache.c)
+endif()
+
+if(PULSEQLIB_BUILD_SEQDESC)
+    list(APPEND PULSEQLIB_SOURCES pulseqlib_seqdesc.c)
+    if(PULSEQLIB_BUILD_CACHE)
+        list(APPEND PULSEQLIB_SOURCES pulseqlib_cache_seqdesc.c)
+    endif()
+endif()
 
 # MD5 source (needed by pulseqlib_parse for signature verification)
 set(MD5_SOURCES

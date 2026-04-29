@@ -270,8 +270,12 @@ static int try_parse_rich(const char* valstr,
         if (next_pipe_field(&p, field, sizeof(field)) == 0 && field[0])
             pv->range_incr = (float)atof(field);
         /* unit */
-        if (next_pipe_field(&p, field, sizeof(field)) == 0)
-            strncpy(pv->unit, field, sizeof(pv->unit) - 1);
+        if (next_pipe_field(&p, field, sizeof(field)) == 0) {
+            size_t _n = strlen(field);
+            if (_n >= sizeof(pv->unit)) _n = sizeof(pv->unit) - 1;
+            memcpy(pv->unit, field, _n);
+            pv->unit[_n] = '\0';
+        }
         /* Trailing dropdown options */
         pv->num_options = 0;
         while (pv->num_options < PULSEQLIB_MAX_DROPDOWN_OPTIONS &&
@@ -308,8 +312,12 @@ static int try_parse_rich(const char* valstr,
         if (next_pipe_field(&p, field, sizeof(field)) == 0 && field[0])
             pv->range_incr = (float)atoi(field);
         /* unit */
-        if (next_pipe_field(&p, field, sizeof(field)) == 0)
-            strncpy(pv->unit, field, sizeof(pv->unit) - 1);
+        if (next_pipe_field(&p, field, sizeof(field)) == 0) {
+            size_t _n = strlen(field);
+            if (_n >= sizeof(pv->unit)) _n = sizeof(pv->unit) - 1;
+            memcpy(pv->unit, field, _n);
+            pv->unit[_n] = '\0';
+        }
         /* Trailing dropdown options */
         pv->num_options = 0;
         while (pv->num_options < PULSEQLIB_MAX_DROPDOWN_OPTIONS &&
@@ -474,10 +482,13 @@ int pulseqlib_protocol_parse(pulseqlib_protocol* out, const char* preamble)
                     case PULSEQLIB_PTYPE_STRINGLIST:
                         pv.v.stringlist_idx = atoi(valstr);
                         break;
-                    case PULSEQLIB_PTYPE_DESCRIPTION:
-                        strncpy(pv.v.desc, valstr, PULSEQLIB_PROTOCOL_DESC_MAX - 1);
-                        pv.v.desc[PULSEQLIB_PROTOCOL_DESC_MAX - 1] = '\0';
+                    case PULSEQLIB_PTYPE_DESCRIPTION: {
+                        size_t _n = strlen(valstr);
+                        if (_n >= (size_t)PULSEQLIB_PROTOCOL_DESC_MAX) _n = (size_t)PULSEQLIB_PROTOCOL_DESC_MAX - 1;
+                        memcpy(pv.v.desc, valstr, _n);
+                        pv.v.desc[_n] = '\0';
                         break;
+                    }
                     default:
                         continue;
                     }

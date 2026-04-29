@@ -1,17 +1,16 @@
-def calc_acoustic_spectra(
+def calc_mech_resonance_spectra(
     seq: 'SequenceCollection',
     subsequence_idx: int = 0,
     canonical_tr_idx: int = 0,
-    target_window_size: int = 0,
     target_resolution_hz: float = 0.0,
     max_freq_hz: float = 0.0,
     forbidden_bands=None,
 ) -> dict:
     """Compute mechanical resonances spectral data (gradient frequency content) for a TR.
 
-    Uses sliding-window FFT to analyze gradient spectrum across time,
-    identifying resonances and forbidden-band violations. Results are
-    returned as a dict with harmonic spectrum and time-frequency data.
+    Returns the structural analytical candidate set together with a
+    full-TR FFT magnitude spectrum (display-only).  The pass/fail
+    verdict comes from the structural candidates, not from the FFT.
 
     Parameters
     ----------
@@ -21,8 +20,6 @@ def calc_acoustic_spectra(
         Subsequence index (0-based).
     canonical_tr_idx : int, default 0
         Canonical TR index (0-based) to analyze.
-    target_window_size : int, default 0
-        FFT window size in samples. If 0, auto-selected from duration.
     target_resolution_hz : float, default 0.0
         Target frequency resolution (Hz). If 0, uses default (5 Hz).
     max_freq_hz : float, default 0.0
@@ -41,7 +38,6 @@ def calc_acoustic_spectra(
     return seq._cseq._calc_mech_resonances(
         subsequence_idx,
         canonical_tr_idx,
-        target_window_size,
         target_resolution_hz,
         max_freq_hz,
         forbidden_bands,

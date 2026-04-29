@@ -14,8 +14,8 @@ typedef unsigned long uint32;
 #include <stdint.h>
 typedef uint32_t uint32;
 #else
-/* C89 fallback: unsigned long is at least 32 bits */
-typedef unsigned long uint32;
+/* C89 fallback: unsigned int is 32 bits on all ILP32/LP64 targets */
+typedef unsigned int uint32;
 #endif
 
 struct MD5Context

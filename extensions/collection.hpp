@@ -327,7 +327,6 @@ public:
     MechResonancesSpectra calc_mech_resonances(
         int ss,
         int canonical_tr_idx,
-        int target_window_size,
         float target_resolution_hz,
         float max_freq_hz,
         const std::vector<ForbiddenBand>& bands = {},
@@ -359,7 +358,6 @@ public:
             ss,
             canonical_tr_idx,
             &run_opts,
-            target_window_size,
             target_resolution_hz,
             max_freq_hz,
             static_cast<int>(cbands.size()),
@@ -370,36 +368,13 @@ public:
         a.freq_min_hz     = cs.freq_min_hz;
         a.freq_spacing_hz = cs.freq_spacing_hz;
         a.num_freq_bins   = cs.num_freq_bins;
-        a.num_windows     = cs.num_windows;
 
-        int total = cs.num_windows * cs.num_freq_bins;
         auto assign_f = [](std::vector<float>& v, const float* p, int n) { if (p) v.assign(p, p + n); };
         auto assign_i = [](std::vector<int>&   v, const int*   p, int n) { if (p) v.assign(p, p + n); };
-
-        assign_f(a.spectrogram_gx, cs.spectrogram_gx, total);
-        assign_f(a.spectrogram_gy, cs.spectrogram_gy, total);
-        assign_f(a.spectrogram_gz, cs.spectrogram_gz, total);
-        assign_i(a.peaks_gx, cs.peaks_gx, total);
-        assign_i(a.peaks_gy, cs.peaks_gy, total);
-        assign_i(a.peaks_gz, cs.peaks_gz, total);
 
         assign_f(a.spectrum_full_gx, cs.spectrum_full_gx, cs.num_freq_bins);
         assign_f(a.spectrum_full_gy, cs.spectrum_full_gy, cs.num_freq_bins);
         assign_f(a.spectrum_full_gz, cs.spectrum_full_gz, cs.num_freq_bins);
-        assign_i(a.peaks_full_gx,    cs.peaks_full_gx,    cs.num_freq_bins);
-        assign_i(a.peaks_full_gy,    cs.peaks_full_gy,    cs.num_freq_bins);
-        assign_i(a.peaks_full_gz,    cs.peaks_full_gz,    cs.num_freq_bins);
-
-        a.freq_spacing_seq_hz = cs.freq_spacing_seq_hz;
-        a.num_freq_bins_seq   = cs.num_freq_bins_seq;
-        if (cs.num_freq_bins_seq > 0) {
-            assign_f(a.spectrum_seq_gx, cs.spectrum_seq_gx, cs.num_freq_bins_seq);
-            assign_f(a.spectrum_seq_gy, cs.spectrum_seq_gy, cs.num_freq_bins_seq);
-            assign_f(a.spectrum_seq_gz, cs.spectrum_seq_gz, cs.num_freq_bins_seq);
-            assign_i(a.peaks_seq_gx,    cs.peaks_seq_gx,    cs.num_freq_bins_seq);
-            assign_i(a.peaks_seq_gy,    cs.peaks_seq_gy,    cs.num_freq_bins_seq);
-            assign_i(a.peaks_seq_gz,    cs.peaks_seq_gz,    cs.num_freq_bins_seq);
-        }
 
         a.num_instances = cs.num_instances;
 

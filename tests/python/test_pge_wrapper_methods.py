@@ -66,7 +66,6 @@ def test_calc_mech_resonances_peak_default_parity(generated_seq_path):
     rd_default = _calc_mech_resonances(
         sc._cseq,
         subsequence_idx=0,
-        target_window_size=5000,
         target_resolution_hz=5.0,
         max_freq_hz=1200.0,
         forbidden_bands=forbidden,
@@ -75,7 +74,6 @@ def test_calc_mech_resonances_peak_default_parity(generated_seq_path):
     rd_explicit = _calc_mech_resonances(
         sc._cseq,
         subsequence_idx=0,
-        target_window_size=5000,
         target_resolution_hz=5.0,
         max_freq_hz=1200.0,
         forbidden_bands=forbidden,
@@ -85,16 +83,13 @@ def test_calc_mech_resonances_peak_default_parity(generated_seq_path):
     )
 
     for key in (
-        "peaks_gx",
-        "peaks_gy",
-        "peaks_gz",
-        "peaks_full_gx",
-        "peaks_full_gy",
-        "peaks_full_gz",
+        "spectrum_full_gx",
+        "spectrum_full_gy",
+        "spectrum_full_gz",
     ):
-        np.testing.assert_array_equal(
-            np.asarray(rd_default[key], dtype=np.int32),
-            np.asarray(rd_explicit[key], dtype=np.int32),
+        np.testing.assert_allclose(
+            np.asarray(rd_default[key], dtype=np.float32),
+            np.asarray(rd_explicit[key], dtype=np.float32),
         )
 
 
@@ -103,7 +98,6 @@ def test_calc_mech_resonances_returns_candidate_grad_amps(generated_seq_path):
     rd = _calc_mech_resonances(
         sc._cseq,
         subsequence_idx=0,
-        target_window_size=5000,
         target_resolution_hz=5.0,
         max_freq_hz=1200.0,
         forbidden_bands=[(500.0, 600.0, 2000.0)],
@@ -435,27 +429,12 @@ def test_grad_spectrum_uses_opts_forbidden_bands_default(simple_gre_seq, monkeyp
     def _fake_calc_acoustic(*args, **kwargs):
         captured.update(kwargs)
         return {
-            "num_windows": 1,
             "num_freq_bins": 4,
             "freq_min_hz": 0.0,
             "freq_spacing_hz": 50.0,
-            "spectrogram_gx": [0.0, 0.1, 0.2, 0.1],
-            "spectrogram_gy": [0.0, 0.1, 0.2, 0.1],
-            "spectrogram_gz": [0.0, 0.1, 0.2, 0.1],
-            "peaks_gx": [0, 0, 1, 0],
-            "peaks_gy": [0, 0, 1, 0],
-            "peaks_gz": [0, 0, 1, 0],
             "spectrum_full_gx": [0.0, 0.2, 0.3, 0.1],
             "spectrum_full_gy": [0.0, 0.2, 0.3, 0.1],
             "spectrum_full_gz": [0.0, 0.2, 0.3, 0.1],
-            "peaks_full_gx": [0, 0, 1, 0],
-            "peaks_full_gy": [0, 0, 1, 0],
-            "peaks_full_gz": [0, 0, 1, 0],
-            "freq_spacing_seq_hz": 100.0,
-            "num_freq_bins_seq": 4,
-            "spectrum_seq_gx": [0.0, 0.0, 0.0, 0.0],
-            "spectrum_seq_gy": [0.0, 0.0, 0.0, 0.0],
-            "spectrum_seq_gz": [0.0, 0.0, 0.0, 0.0],
             "num_instances": 1,
             "num_analytical_peaks": 4,
             "analytical_peak_freqs": [50.0, 100.0, 150.0, 200.0],
@@ -519,27 +498,12 @@ def test_grad_spectrum_explicit_bands_override_opts(simple_gre_seq, monkeypatch)
     def _fake_calc_acoustic(*args, **kwargs):
         captured.update(kwargs)
         return {
-            "num_windows": 1,
             "num_freq_bins": 4,
             "freq_min_hz": 0.0,
             "freq_spacing_hz": 50.0,
-            "spectrogram_gx": [0.0, 0.1, 0.2, 0.1],
-            "spectrogram_gy": [0.0, 0.1, 0.2, 0.1],
-            "spectrogram_gz": [0.0, 0.1, 0.2, 0.1],
-            "peaks_gx": [0, 0, 1, 0],
-            "peaks_gy": [0, 0, 1, 0],
-            "peaks_gz": [0, 0, 1, 0],
             "spectrum_full_gx": [0.0, 0.2, 0.3, 0.1],
             "spectrum_full_gy": [0.0, 0.2, 0.3, 0.1],
             "spectrum_full_gz": [0.0, 0.2, 0.3, 0.1],
-            "peaks_full_gx": [0, 0, 1, 0],
-            "peaks_full_gy": [0, 0, 1, 0],
-            "peaks_full_gz": [0, 0, 1, 0],
-            "freq_spacing_seq_hz": 100.0,
-            "num_freq_bins_seq": 4,
-            "spectrum_seq_gx": [0.0, 0.0, 0.0, 0.0],
-            "spectrum_seq_gy": [0.0, 0.0, 0.0, 0.0],
-            "spectrum_seq_gz": [0.0, 0.0, 0.0, 0.0],
             "num_instances": 1,
             "num_analytical_peaks": 4,
             "analytical_peak_freqs": [50.0, 100.0, 150.0, 200.0],
@@ -628,27 +592,12 @@ def test_grad_spectrum_iterates_all_subsequences_and_canonical_trs(
     def _fake_calc_acoustic(*args, **kwargs):
         calls.append(kwargs)
         return {
-            "num_windows": 1,
             "num_freq_bins": 4,
             "freq_min_hz": 0.0,
             "freq_spacing_hz": 50.0,
-            "spectrogram_gx": [0.0, 0.1, 0.2, 0.1],
-            "spectrogram_gy": [0.0, 0.1, 0.2, 0.1],
-            "spectrogram_gz": [0.0, 0.1, 0.2, 0.1],
-            "peaks_gx": [0, 0, 1, 0],
-            "peaks_gy": [0, 0, 1, 0],
-            "peaks_gz": [0, 0, 1, 0],
             "spectrum_full_gx": [0.0, 0.2, 0.3, 0.1],
             "spectrum_full_gy": [0.0, 0.2, 0.3, 0.1],
             "spectrum_full_gz": [0.0, 0.2, 0.3, 0.1],
-            "peaks_full_gx": [0, 0, 1, 0],
-            "peaks_full_gy": [0, 0, 1, 0],
-            "peaks_full_gz": [0, 0, 1, 0],
-            "freq_spacing_seq_hz": 100.0,
-            "num_freq_bins_seq": 4,
-            "spectrum_seq_gx": [0.0, 0.0, 0.0, 0.0],
-            "spectrum_seq_gy": [0.0, 0.0, 0.0, 0.0],
-            "spectrum_seq_gz": [0.0, 0.0, 0.0, 0.0],
             "num_instances": 1,
             "num_analytical_peaks": 4,
             "analytical_peak_freqs": [50.0, 100.0, 150.0, 200.0],

@@ -202,30 +202,10 @@ struct MechResonancesSpectra {
     float freq_min_hz       = 0.0f;
     float freq_spacing_hz   = 0.0f;
     int   num_freq_bins     = 0;
-    int   num_windows       = 0;
-
-    std::vector<float> spectrogram_gx;
-    std::vector<float> spectrogram_gy;
-    std::vector<float> spectrogram_gz;
-    std::vector<int>   peaks_gx;
-    std::vector<int>   peaks_gy;
-    std::vector<int>   peaks_gz;
 
     std::vector<float> spectrum_full_gx;
     std::vector<float> spectrum_full_gy;
     std::vector<float> spectrum_full_gz;
-    std::vector<int>   peaks_full_gx;
-    std::vector<int>   peaks_full_gy;
-    std::vector<int>   peaks_full_gz;
-
-    float              freq_spacing_seq_hz = 0.0f;
-    int                num_freq_bins_seq   = 0;
-    std::vector<float> spectrum_seq_gx;
-    std::vector<float> spectrum_seq_gy;
-    std::vector<float> spectrum_seq_gz;
-    std::vector<int>   peaks_seq_gx;
-    std::vector<int>   peaks_seq_gy;
-    std::vector<int>   peaks_seq_gz;
 
     int                num_instances       = 0;
 

@@ -442,7 +442,6 @@ int pulseqlib_check_safety(
  * @param[in]  coll                     Loaded collection.
  * @param[in]  subseq_idx              Subsequence index.
  * @param[in]  opts                     Scanner limits.
- * @param[in]  target_window_size       Sliding window length (0 = auto).
  * @param[in]  target_resolution_hz     Spectral resolution (0 = auto).
  * @param[in]  max_freq_hz             Max frequency to report (0 = auto).
  * @param[in]  num_forbidden_bands      Number of forbidden bands.
@@ -459,7 +458,6 @@ int pulseqlib_check_safety(
  * @param[in]  subseq_idx               Subsequence index.
  * @param[in]  canonical_tr_idx         Canonical TR index (0-based, within subsequence).
  * @param[in]  opts                     Scanner limits.
- * @param[in]  target_window_size       Sliding window length (0 = auto).
  * @param[in]  target_resolution_hz     Spectral resolution (0 = auto).
  * @param[in]  max_freq_hz              Max frequency to report (0 = auto).
  * @param[in]  num_forbidden_bands      Number of forbidden bands.
@@ -472,7 +470,6 @@ int pulseqlib_calc_mech_resonances(const pulseqlib_collection*    coll,
     int                            subseq_idx,
     int                            canonical_tr_idx,
     const pulseqlib_opts*          opts,
-    int                            target_window_size,
     float                          target_resolution_hz,
     float                          max_freq_hz,
     int                            num_forbidden_bands,

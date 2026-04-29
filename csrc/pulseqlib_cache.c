@@ -14,7 +14,7 @@
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER  0x01020304
 #define PULSEQLIB_CACHE_VERSION_MAJOR  1
-#define PULSEQLIB_CACHE_VERSION_MINOR  2
+#define PULSEQLIB_CACHE_VERSION_MINOR  3
 
 #define PULSEQLIB_CACHE_SECTION_CHECK            1
 #define PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS  2
@@ -197,6 +197,8 @@ static int write_descriptor(FILE* f, const pulseqlib_sequence_descriptor* d)
         if (!write4(f, d->rf_definitions[i].stats.band_freq_offsets_hz, PULSEQLIB_MAX_BANDS)) return 0;
         if (!write4(f, &d->rf_definitions[i].stats.band_bandwidth_hz, 1)) return 0;
         if (!write4(f, &d->rf_definitions[i].stats.total_b1sq_power, 1)) return 0;
+        /* v1.3: vendor tag */
+        if (!write4(f, &d->rf_definitions[i].stats.vendor, 1)) return 0;
     }
 
     /* RF table */
@@ -470,6 +472,9 @@ static int read_descriptor(FILE* f, pulseqlib_sequence_descriptor* d, int do_swa
         if (!read4(f, &d->rf_definitions[i].stats.total_b1sq_power, 1)) return 0;
         if (do_swap) swap4_array(&d->rf_definitions[i].stats.num_bands,
                                  1 + PULSEQLIB_MAX_BANDS + 2);
+        /* v1.3: vendor tag */
+        if (!read4(f, &d->rf_definitions[i].stats.vendor, 1)) return 0;
+        if (do_swap) swap4(&d->rf_definitions[i].stats.vendor);
     }
 
     /* RF table */

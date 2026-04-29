@@ -707,6 +707,7 @@ static int compute_rf_stats(
         rd->stats.num_bands = 1;
         rd->stats.band_bandwidth_hz = 0.0f;
         rd->stats.total_b1sq_power  = 0.0f;
+        rd->stats.vendor            = seq->opts.vendor;
         {
             int bi;
             for (bi = 0; bi < PULSEQLIB_MAX_BANDS; ++bi)
