@@ -188,6 +188,12 @@ classdef TruthBuilder < handle
 
             % Supplemental plan-level freq-mod truth (rotation-aware projected library)
             obj.exportFreqModPlan(fullfile(out_dir, [base_name '_freqmod_plan.bin']));
+
+            % Trajectory truth (Phase A MVP — per-ADC k-space samples)
+            obj.exportTrajectory(fullfile(out_dir, [base_name '_trajectory.bin']));
+
+            % Sequence description (Section 5 truth)
+            obj.exportSequenceDescription(fullfile(out_dir, [base_name '_seq_desc.bin']));
         end
     end
 
@@ -676,7 +682,7 @@ classdef TruthBuilder < handle
                     end
 
                     if isempty(args)
-                        % Delay-only blocks have no RF/grad/ADC events; emit explicit delay.
+                        % Delay-only blocks have no RF/grad/ADC ev_list; emit explicit delay.
                         cseq.addBlock(mr.makeDelay(block.blockDuration));
                     else
                         cseq.addBlock(args{:});
@@ -1815,6 +1821,7 @@ classdef TruthBuilder < handle
             fprintf(fid, 'num_canonical_trs %d\n', obj.num_canonical_trs);
             fprintf(fid, 'canonical_mode %s\n', obj.canonical_mode);
             fprintf(fid, 'fmod_build_mode %s\n', obj.fmod_build_mode);
+            fprintf(fid, 'num_averages %d\n', max(1, obj.num_averages));
             if ~isempty(obj.tr_times_list) && ~isempty(obj.tr_times_list{1})
                 fprintf(fid, 'canonical_duration_us %d\n', round(obj.tr_times_list{1}(end)));
             end
@@ -1952,6 +1959,384 @@ classdef TruthBuilder < handle
             fclose(fid);
         end
 
+        % ---- export: sequence description binary (Section 5 payload) ----
+        function exportSequenceDescription(obj, path)
+        % EXPORTSEQUENCEDESCRIPTION  Section 5 truth payload.
+        %
+        %   Mirrors the wire format of pulseqlib_write_sequence_description_cache
+        %   (csrc/pulseqlib_cache_seqdesc.c) but writes ONLY the raw section
+        %   payload — no cache file header, no endian marker, no section
+        %   table — same convention used by exportSegmentDef et al.
+        %
+        %   Layout (little-endian, 4 bytes per scalar):
+        %     [sequence parameters]
+        %       float min_te_us, min_tr_us, max_tr_us,
+        %             max_flip_angle_deg, total_scan_time_us
+        %       int   num_subseqs
+        %       int   reserved[3]
+        %     [per-subseq, num_subseqs times]
+        %       int   subseq_idx
+        %       float tr_duration_us
+        %       int   num_tuples
+        %       [rf shape tuples]
+        %         int   tuple_id, N_tx, N_samples
+        %         float rf_raster_us
+        %         int   num_bands
+        %         float band_freq_offsets_hz[8]
+        %         float band_bandwidth_hz, total_b1sq_power
+        %         float mag[N_tx*N_samples]
+        %         int   has_phase; (float phase[N_tx*N_samples] if 1)
+        %         int   has_time;  (float time[N_samples]      if 1)
+        %       int   num_shims  (= 0 here; single-channel fixtures)
+        %       int   num_events
+        %       [ev_list]   int type; float params[7]
+        %       int   num_composite_rf_groups
+        %       [groups]   int group_id, first_event_idx,
+        %                       last_event_idx, num_pulses; float eff_te_us
+
+            MAX_BANDS = 8;
+
+            fid = fopen(path, 'wb');
+            if fid < 0, error('Failed to open %s', path); end
+
+            n_blocks = length(obj.seq.blockEvents);
+
+            % --- 1. Determine subsequence partitioning -----------------
+            if obj.multipass_info.enabled
+                pass_starts = obj.multipass_info.pass_starts(:).';
+                pass_len    = obj.multipass_info.pass_len;
+                num_subseqs = numel(pass_starts);
+            else
+                pass_starts = 1;
+                pass_len    = obj.num_blocks_in_tr;
+                num_subseqs = 1;
+            end
+
+            % --- 2. Walk subseqs, build per-subseq data ----------------
+            subseq_data = cell(1, num_subseqs);
+            global_max_flip_deg = 0;
+            global_min_te_us    = inf;
+            global_total_us     = 0;
+
+            for ss = 1:num_subseqs
+                blk_first = pass_starts(ss);
+                blk_last  = blk_first + pass_len - 1;
+                if blk_last > n_blocks, blk_last = n_blocks; end
+
+                % Tuple library (per-subseq dedup).
+                tuple_keys = {};   % cell array of fingerprint vectors
+                tuples     = {};   % cell array of structs
+
+                ev_list     = {};   % cell array of {type, params} pairs
+                t_cursor_us = 0;
+                blk_cursor_us = 0;
+                first_acq_center_us = NaN;
+
+                for ib = blk_first:blk_last
+                    block = obj.seq.getBlock(ib);
+                    if isempty(block), continue; end
+
+                    blk_dur_s  = block.blockDuration;
+                    blk_dur_us = blk_dur_s * 1e6;
+                    blk_s_us   = blk_cursor_us;
+
+                    % Detect slice-select gradients in same block.
+                    has_grad = (isfield(block, 'gx') && ~isempty(block.gx)) || ...
+                               (isfield(block, 'gy') && ~isempty(block.gy)) || ...
+                               (isfield(block, 'gz') && ~isempty(block.gz));
+
+                    if isfield(block, 'rf') && ~isempty(block.rf)
+                        rf = block.rf;
+                        signal = rf.signal(:);
+                        t_rel  = rf.t(:);
+                        N      = numel(signal);
+
+                        rf_dur_s   = t_rel(end);
+                        rf_start_s = rf.delay;
+                        rf_iso_s   = mr.calcRfCenter(rf);  % relative to rf start
+
+                        rf_start_us  = blk_s_us + rf_start_s * 1e6;
+                        rf_center_us = rf_start_us + rf_iso_s * 1e6;
+                        rf_end_us    = rf_start_us + rf_dur_s * 1e6;
+
+                        % Flip angle in degrees (Pulseq convention: signal
+                        % is B1 in Hz, flip_rad = 2*pi * |∫ B1 dt|).
+                        flip_rad = 2 * pi * abs(trapz(t_rel, signal));
+                        flip_deg = flip_rad * 180 / pi;
+                        if flip_deg > global_max_flip_deg
+                            global_max_flip_deg = flip_deg;
+                        end
+
+                        % --- Tuple dedup ---
+                        peak = max(abs(signal));
+                        if peak <= 0, peak = 1; end
+                        mag = abs(signal) / peak;
+                        phase = angle(signal);
+                        has_phase = any(abs(phase) > 1e-12);
+
+                        dt_vec = diff(t_rel);
+                        if isempty(dt_vec)
+                            uniform = true;
+                        else
+                            uniform = (max(dt_vec) - min(dt_vec)) < 1e-12 && ...
+                                      abs(dt_vec(1) - obj.sys.rfRasterTime) < 1e-12;
+                        end
+                        has_time = ~uniform;
+
+                        % Fingerprint: stack waveform + time, scalar
+                        % fields, then linear isequal compare. Octave-safe
+                        % (no containers.Map).
+                        key = [N; double(has_phase); double(has_time); ...
+                               mag(:); phase(:); t_rel(:)];
+
+                        tuple_id = -1;
+                        for tk = 1:numel(tuple_keys)
+                            k_other = tuple_keys{tk};
+                            if numel(k_other) == numel(key) && ...
+                               max(abs(k_other - key)) < 1e-12
+                                tuple_id = tk - 1;  % 0-based id
+                                break;
+                            end
+                        end
+                        if tuple_id < 0
+                            tuple_id = numel(tuple_keys);
+                            tuple_keys{end+1} = key; %#ok<AGROW>
+                            tup = struct();
+                            tup.tuple_id     = tuple_id;
+                            tup.N_tx         = 1;
+                            tup.N_samples    = N;
+                            tup.rf_raster_us = obj.sys.rfRasterTime * 1e6;
+                            tup.num_bands    = 1;
+                            offs = zeros(1, MAX_BANDS);
+                            if isfield(rf, 'freqOffset') && ~isempty(rf.freqOffset)
+                                offs(1) = rf.freqOffset;
+                            end
+                            tup.band_freq_offsets_hz = offs;
+                            tup.band_bandwidth_hz    = 0;
+                            tup.total_b1sq_power     = sum(mag.^2) * obj.sys.rfRasterTime;
+                            tup.mag       = mag(:).';
+                            tup.has_phase = has_phase;
+                            tup.phase     = phase(:).';
+                            tup.has_time  = has_time;
+                            tup.time_us   = t_rel(:).' * 1e6;
+                            tuples{end+1} = tup; %#ok<AGROW>
+                        end
+
+                        % Emit WAIT to align cursor.
+                        if rf_start_us > t_cursor_us + 0.5
+                            ev_list{end+1} = {0, [rf_start_us - t_cursor_us, 0, 0, 0, 0, 0, 0]}; %#ok<AGROW>
+                            t_cursor_us = rf_start_us;
+                        end
+
+                        slice_select = double(has_grad);
+                        rf_params = [rf_center_us, rf_end_us - rf_start_us, ...
+                                     flip_deg, double(tuple_id), -1, ...
+                                     slice_select, 0];
+                        ev_list{end+1} = {1, rf_params}; %#ok<AGROW>
+                        t_cursor_us = rf_end_us;
+                    end
+
+                    if isfield(block, 'adc') && ~isempty(block.adc)
+                        adc = block.adc;
+                        nS         = double(adc.numSamples);
+                        dwell_us   = adc.dwell * 1e6;
+                        adc_dur_us = nS * dwell_us;
+                        adc_start_us = blk_s_us + adc.delay * 1e6;
+                        adc_end_us   = adc_start_us + adc_dur_us;
+
+                        % kzero-aware ADC center: look up adc_id in
+                        % unique_adcs and apply the per-def anchor fraction
+                        % (matches segment_def truth and pulseqlib's
+                        % seg-anchor convention). Falls back to midpoint if
+                        % no unique-ADC match (defensive only).
+                        adc_anchor = 0.5;
+                        if ~isempty(obj.unique_adcs)
+                            match = find(obj.unique_adcs(:,1) == adc.numSamples & ...
+                                         abs(obj.unique_adcs(:,2) - adc.dwell) < 1e-15, 1);
+                            if ~isempty(match)
+                                adc_anchor = obj.getADCAnchorFraction(match - 1);
+                            end
+                        end
+                        adc_center_us = adc_start_us + adc_anchor * adc_dur_us;
+
+                        if adc_start_us > t_cursor_us + 0.5
+                            ev_list{end+1} = {0, [adc_start_us - t_cursor_us, 0, 0, 0, 0, 0, 0]}; %#ok<AGROW>
+                            t_cursor_us = adc_start_us;
+                        end
+
+                        adc_params = [adc_center_us, adc_dur_us, nS, dwell_us, 1, 0, 0];
+                        ev_list{end+1} = {2, adc_params}; %#ok<AGROW>
+                        t_cursor_us = adc_end_us;
+                    end
+
+                    blk_cursor_us = blk_cursor_us + blk_dur_us;
+                end
+
+                tr_dur_us = blk_cursor_us;
+
+                % Trailing WAIT to fill TR.
+                if tr_dur_us > t_cursor_us + 0.5
+                    ev_list{end+1} = {0, [tr_dur_us - t_cursor_us, 0, 0, 0, 0, 0, 0]}; %#ok<AGROW>
+                end
+
+                % --- Refine ADC roles ---
+                adc_idx = [];
+                for e = 1:numel(ev_list)
+                    if ev_list{e}{1} == 2
+                        adc_idx(end+1) = e; %#ok<AGROW>
+                    end
+                end
+                if numel(adc_idx) > 1
+                    p = ev_list{adc_idx(1)}{2}; p(5) = 2;
+                    ev_list{adc_idx(1)}{2} = p;
+                    for kk = 2:numel(adc_idx)
+                        p = ev_list{adc_idx(kk)}{2}; p(5) = 3;
+                        ev_list{adc_idx(kk)}{2} = p;
+                    end
+                end
+                if ~isempty(adc_idx)
+                    first_acq_center_us = ev_list{adc_idx(1)}{2}(1);
+                end
+
+                % --- Composite RF groups (cell array of structs) ---
+                groups = {};
+                run_first = -1;
+                run_last  = -1;
+                run_count = 0;
+                next_gid  = 0;
+                for e = 1:numel(ev_list)
+                    et = ev_list{e}{1};
+                    if et == 1  % RF
+                        if run_count == 0
+                            run_first = e - 1;  % 0-based event index
+                        end
+                        run_last = e - 1;
+                        run_count = run_count + 1;
+                    elseif et == 2  % ADC flushes
+                        if run_count >= 2
+                            groups{end+1} = struct('group_id', next_gid, ...
+                                'first_event_idx', run_first, ...
+                                'last_event_idx',  run_last, ...
+                                'num_pulses',      run_count, ...
+                                'eff_te_us',       0); %#ok<AGROW>
+                            next_gid = next_gid + 1;
+                        end
+                        run_count = 0;
+                    end
+                    % WAIT (type 0): transparent
+                end
+                if run_count >= 2
+                    groups{end+1} = struct('group_id', next_gid, ...
+                        'first_event_idx', run_first, ...
+                        'last_event_idx',  run_last, ...
+                        'num_pulses',      run_count, ...
+                        'eff_te_us',       0); %#ok<AGROW>
+                end
+
+                % Track globals.
+                if ~isnan(first_acq_center_us) && first_acq_center_us < global_min_te_us
+                    global_min_te_us = first_acq_center_us;
+                end
+                % per-subseq tr accounting only — full scan total is
+                % computed once from obj.seq.duration() below.
+                global_total_us = global_total_us + tr_dur_us;
+
+                sd = struct();
+                sd.subseq_idx     = ss - 1;
+                sd.tr_duration_us = tr_dur_us;
+                sd.tuples         = tuples;
+                sd.ev_list         = ev_list;
+                sd.groups         = groups;
+                subseq_data{ss}   = sd;
+            end
+
+            if ~isfinite(global_min_te_us), global_min_te_us = 0; end
+
+            % Full scan total duration from the underlying Pulseq sequence
+            % (covers all averages and all canonical TRs); falls back to
+            % the per-subseq sum if seq.duration() is unavailable.
+            try
+                global_total_us = obj.seq.duration() * 1e6;
+            catch
+                % keep summed-per-subseq value as fallback
+            end
+
+            % min/max TR over subseqs (skip zero-duration).
+            tr_vals = zeros(1, num_subseqs);
+            for ss = 1:num_subseqs
+                tr_vals(ss) = subseq_data{ss}.tr_duration_us;
+            end
+            nz = tr_vals(tr_vals > 0);
+            if isempty(nz)
+                min_tr_us = 0; max_tr_us = 0;
+            else
+                min_tr_us = min(nz); max_tr_us = max(nz);
+            end
+
+            % --- 3. Write file header ---------------------------------
+            fwrite(fid, single(global_min_te_us),    'float32');
+            fwrite(fid, single(min_tr_us),           'float32');
+            fwrite(fid, single(max_tr_us),           'float32');
+            fwrite(fid, single(global_max_flip_deg), 'float32');
+            fwrite(fid, single(global_total_us),     'float32');
+            fwrite(fid, int32(num_subseqs),          'int32');
+            fwrite(fid, int32([0 0 0]),              'int32');
+
+            % --- 4. Write per-subseq blocks ---------------------------
+            for ss = 1:num_subseqs
+                sd = subseq_data{ss};
+
+                fwrite(fid, int32(sd.subseq_idx),         'int32');
+                fwrite(fid, single(sd.tr_duration_us),    'float32');
+
+                fwrite(fid, int32(numel(sd.tuples)),      'int32');
+                for tk = 1:numel(sd.tuples)
+                    t = sd.tuples{tk};
+                    fwrite(fid, int32(t.tuple_id),     'int32');
+                    fwrite(fid, int32(t.N_tx),         'int32');
+                    fwrite(fid, int32(t.N_samples),    'int32');
+                    fwrite(fid, single(t.rf_raster_us),'float32');
+                    fwrite(fid, int32(t.num_bands),    'int32');
+                    fwrite(fid, single(t.band_freq_offsets_hz), 'float32');
+                    fwrite(fid, single(t.band_bandwidth_hz), 'float32');
+                    fwrite(fid, single(t.total_b1sq_power),  'float32');
+                    if t.N_tx * t.N_samples > 0
+                        fwrite(fid, single(t.mag), 'float32');
+                    end
+                    fwrite(fid, int32(double(t.has_phase)), 'int32');
+                    if t.has_phase && t.N_tx * t.N_samples > 0
+                        fwrite(fid, single(t.phase), 'float32');
+                    end
+                    fwrite(fid, int32(double(t.has_time)),  'int32');
+                    if t.has_time && t.N_samples > 0
+                        fwrite(fid, single(t.time_us), 'float32');
+                    end
+                end
+
+                % num_shims = 0 (single-channel fixtures).
+                fwrite(fid, int32(0), 'int32');
+
+                fwrite(fid, int32(numel(sd.ev_list)), 'int32');
+                for e = 1:numel(sd.ev_list)
+                    ev = sd.ev_list{e};
+                    fwrite(fid, int32(ev{1}),         'int32');
+                    fwrite(fid, single(ev{2}(:).'),   'float32');
+                end
+
+                fwrite(fid, int32(numel(sd.groups)), 'int32');
+                for gi = 1:numel(sd.groups)
+                    g = sd.groups{gi};
+                    fwrite(fid, int32(g.group_id),        'int32');
+                    fwrite(fid, int32(g.first_event_idx), 'int32');
+                    fwrite(fid, int32(g.last_event_idx),  'int32');
+                    fwrite(fid, int32(g.num_pulses),      'int32');
+                    fwrite(fid, single(g.eff_te_us),      'float32');
+                end
+            end
+
+            fclose(fid);
+        end
+
         % ---- export: freq-mod definitions binary ----
         function exportFreqModDefs(obj, path)
             fid = fopen(path, 'wb');
@@ -2044,9 +2429,367 @@ classdef TruthBuilder < handle
 
             fclose(fid);
         end
+
+        % ---- export: trajectory binary (Phase A MVP) ----
+        function exportTrajectory(obj, path)
+        % EXPORTTRAJECTORY  Per-ADC trajectory truth (Phase B, v2 wire fmt).
+        %
+        %   Wire format (see SCHEMA.md "Truth file formats"):
+        %     int32 magic = 0x54524A32 ('TRJ2')
+        %     int32 num_adcs
+        %     int32 is_cartesian          (1 = no per-ADC k-data follows; 0 = data follows)
+        %     int32 ndim                  (2 or 3)
+        %     int32 num_rotations
+        %     float[9] rot_matrix         (row-major; LOGICAL = base_rot * block.rotation)
+        %     int32 num_encoding_spaces   (always 1 in Phase B)
+        %     for each encoding space:
+        %       float[3] fov              (zeros if not derivable from .seq)
+        %       int32[3] matrix           (zeros)
+        %       float[3] nav_fov          (zeros)
+        %       int32[3] nav_matrix       (zeros)
+        %       int32    subseq_idx
+        %       int32    nav_subseq_offset
+        %       int32[20] label_limits    (10 pairs of {min,max} in fixed order
+        %                                  SLC SEG REP AVG SET ECO PHS LIN PAR ACQ)
+        %     for each ADC:
+        %       int32    num_samples
+        %       int32    rotation_id      (0-based index into rotation library)
+        %       int32    encoding_space_ref
+        %       int32[10] labels          (SLC SEG REP AVG SET ECO PHS LIN PAR ACQ)
+        %       if !is_cartesian:
+        %         float[ndim * num_samples] k_interleaved (1/m, logical frame)
+        %
+        %   k(t) is integrated directly from per-block gradients sampled on
+        %   the system raster, then linearly interpolated onto ADC sample
+        %   centres t = adc.delay + (i + 0.5) * dwell — matching the C
+        %   library workflow and avoiding the toolbox calculateKspacePP() /
+        %   waveforms_and_times() helpers that fail under Octave on
+        %   sequences using rotation extensions.
+        %
+        %   Cartesian criterion: base_rot is identity AND the LOGICAL-frame
+        %   gradient is constant on every used axis across every ADC window.
+        %   Matches pulseqlib cache behaviour (Cartesian -> no k-samples).
+            fid = fopen(path, 'wb');
+            if fid < 0, error('Failed to open %s', path); end
+
+            adc_rows    = find(obj.scan_table(:, 10) ~= 0);
+            n_adc_total = length(adc_rows);
+
+            % --- Magic + degenerate path ---
+            fwrite(fid, uint32(hex2dec('54524A32')), 'uint32');
+            if n_adc_total == 0
+                fwrite(fid, int32(0), 'int32');     % num_adcs
+                fwrite(fid, int32(1), 'int32');     % is_cartesian (vacuous)
+                fwrite(fid, int32(2), 'int32');     % ndim
+                fwrite(fid, int32(0), 'int32');     % num_rotations
+                fwrite(fid, int32(0), 'int32');     % num_encoding_spaces
+                fclose(fid);
+                return;
+            end
+
+            % --- 1. Per-ADC k-samples (block-walking integrator) ---
+            %
+            % NEX expansion is ONCE-aware to mirror what the PSD does at
+            % cache-write time (see buildCanonicalTRs ~L555):
+            %
+            %   - Multipass disabled  -> the whole sequence is a single
+            %                            "pass" replayed n_avg times.
+            %                            All blocks have effective once==0,
+            %                            so the keep predicate is always
+            %                            true and the result matches the
+            %                            old naive repmat.
+            %
+            %   - Multipass enabled   -> walk passes in order; within each
+            %                            pass loop avg=1..n_avg, and skip
+            %                            blocks whose ONCE flag means
+            %                            "play only on first avg" (==1) or
+            %                            "play only on last avg" (==2).
+            %
+            % k_state is reset on every RF as before; passes never bleed
+            % k across each other in practice because the first block of
+            % every pass starts the imaging loop with an RF.
+            raster_dt = obj.seq.gradRasterTime;
+            n_blocks  = length(obj.seq.blockEvents);
+            n_avg     = max(1, obj.num_averages);
+
+            if obj.multipass_info.enabled
+                pass_starts = obj.multipass_info.pass_starts;
+                pass_len    = obj.multipass_info.pass_len;
+                once_flags  = obj.multipass_info.once_flags;
+            else
+                pass_starts = 1;
+                pass_len    = n_blocks;
+                once_flags  = zeros(1, n_blocks);
+            end
+
+            adc_k_cells    = {};
+            adc_grad_const = false(0, 3);
+
+            for ip = 1:numel(pass_starts)
+                pass_base = pass_starts(ip);
+                for avg = 1:n_avg
+                    k_state = zeros(3, 1);
+                    for pos = 1:pass_len
+                        ib = pass_base + pos - 1;
+                        if ib < 1 || ib > n_blocks, continue; end
+
+                        once = once_flags(ib);
+                        keep = (once == 0) || ...
+                               (once == 1 && avg == 1) || ...
+                               (once == 2 && avg == n_avg);
+                        if ~keep, continue; end
+
+                        blk = obj.seq.getBlock(ib);
+                        if isempty(blk), continue; end
+                        if isfield(blk, 'rf') && ~isempty(blk.rf)
+                            k_state = zeros(3, 1);
+                        end
+
+                        blk_dur = mr.calcDuration(blk);
+                        if blk_dur <= 0, continue; end
+
+                        % Build a piecewise-linear-EXACT integration grid:
+                        % g(t) is piecewise linear (trap edges, ARB tt[]),
+                        % so trapezoidal integration on a grid containing
+                        % every breakpoint is analytically exact. A coarse
+                        % raster grid biases k for off-raster trap edges
+                        % (e.g. ARBs from addGradients whose flat-top
+                        % starts mid-raster); the design-time/scanner
+                        % raster pipeline the recon will use likewise
+                        % preserves edge fidelity, so the truth must too.
+                        axes_ = {'gx', 'gy', 'gz'};
+                        bp = [0; blk_dur];
+                        for ax = 1:3
+                            if isfield(blk, axes_{ax}) && ~isempty(blk.(axes_{ax}))
+                                gd = blk.(axes_{ax});
+                                if strcmp(gd.type, 'trap') || strcmp(gd.type, 'trapezoid')
+                                    d = gd.delay; r = gd.riseTime; f = gd.flatTime; fa = gd.fallTime;
+                                    bp = [bp; d; d + r; d + r + f; d + r + f + fa]; %#ok<AGROW>
+                                else
+                                    bp = [bp; gd.delay + gd.tt(:)]; %#ok<AGROW>
+                                end
+                            end
+                        end
+                        % Densify with raster ticks so block boundaries
+                        % and any non-grad timing artifacts stay sampled.
+                        bp = [bp; (0:raster_dt:blk_dur).'];
+                        t_grid = unique(max(0, min(blk_dur, bp))).';
+                        n_steps = numel(t_grid);
+                        if n_steps < 2
+                            t_grid = [0, blk_dur]; n_steps = 2;
+                        end
+
+                        g_grid = zeros(3, n_steps);
+                        for ax = 1:3
+                            if isfield(blk, axes_{ax}) && ~isempty(blk.(axes_{ax}))
+                                g_grid(ax, :) = testutils.TruthBuilder.sampleGradAtTimes(blk.(axes_{ax}), t_grid);
+                            end
+                        end
+
+                        dt    = diff(t_grid);
+                        seg_  = 0.5 * (g_grid(:, 1:end-1) + g_grid(:, 2:end)) .* repmat(dt, 3, 1);
+                        k_inc = [zeros(3,1), cumsum(seg_, 2)];
+                        k_grid = repmat(k_state, 1, n_steps) + k_inc;
+
+                        if isfield(blk, 'adc') && ~isempty(blk.adc)
+                            adc   = blk.adc;
+                            nS    = double(adc.numSamples);
+                            t_adc = adc.delay + ((0:nS-1) + 0.5) * adc.dwell;
+                            k_at  = zeros(3, nS);
+                            g_at  = zeros(3, nS);
+                            for ax = 1:3
+                                % k(t) integrated on the breakpoint grid is
+                                % piecewise linear in t between breakpoints
+                                % (g is piecewise linear so k is piecewise
+                                % quadratic, but only between breakpoints;
+                                % at breakpoints k is exact). Linear interp
+                                % to ADC sample centres is therefore second
+                                % order accurate; the dominant error from
+                                % raster-snapping the trap edges is gone.
+                                k_at(ax, :) = interp1(t_grid, k_grid(ax, :), t_adc, 'linear', 'extrap');
+                                % g(t) for the constancy classifier sampled
+                                % analytically (sampleGradAtTimes is exact
+                                % piecewise linear; mirrors the C analytic
+                                % sampler in pulseqlib_trajectory.c).
+                                if isfield(blk, axes_{ax}) && ~isempty(blk.(axes_{ax}))
+                                    g_at(ax, :) = testutils.TruthBuilder.sampleGradAtTimes(blk.(axes_{ax}), t_adc);
+                                end
+                            end
+                            adc_k_cells{end+1} = k_at; %#ok<AGROW>
+                            const_row = false(1, 3);
+                            for ax = 1:3
+                                scale = max(abs(g_at(ax, :))) + eps;
+                                if scale < 1e-9
+                                    const_row(ax) = true;
+                                else
+                                    relrange = (max(g_at(ax,:)) - min(g_at(ax,:))) / scale;
+                                    const_row(ax) = relrange < 1e-3;
+                                end
+                            end
+                            adc_grad_const(end+1, :) = const_row; %#ok<AGROW>
+                        end
+
+                        k_state = k_grid(:, end);
+                    end
+                end
+            end
+
+            n_adc_built = numel(adc_k_cells);
+            if n_adc_built ~= n_adc_total
+                warning(['exportTrajectory: ADC count mismatch (built=%d ' ...
+                         '!= scan_table=%d); writing empty Cartesian truth'], ...
+                        n_adc_built, n_adc_total);
+                fwrite(fid, int32(n_adc_total), 'int32');
+                fwrite(fid, int32(1),           'int32');
+                fwrite(fid, int32(2),           'int32');
+                fwrite(fid, int32(0),           'int32');
+                fwrite(fid, int32(0),           'int32');
+                fclose(fid);
+                return;
+            end
+
+            % --- 2. ndim ---
+            z_used = false;
+            for k = 1:n_adc_total
+                if max(abs(adc_k_cells{k}(3, :))) > 1e-9
+                    z_used = true; break;
+                end
+            end
+            if z_used, ndim = 3; else, ndim = 2; end
+
+            % --- 3. is_cartesian summary ---
+            is_cartesian = isequal(obj.base_rot, eye(3));
+            if is_cartesian
+                for k = 1:n_adc_total
+                    for ax = 1:ndim
+                        if ~adc_grad_const(k, ax)
+                            is_cartesian = false; break;
+                        end
+                    end
+                    if ~is_cartesian, break; end
+                end
+            end
+
+            % --- 4. Rotation library: dedup rotmat_table over ADC scans ---
+            adc_rotmats = obj.rotmat_table(adc_rows, :);   % (n_adc_total, 9)
+            % Quantise to 1e-9 to make floats hashable for dedup.
+            keys = round(adc_rotmats * 1e9) / 1e9;
+            % Manual stable dedup (Octave 'unique' does not implement the
+            % third output for 'rows' mode).
+            unique_rots = zeros(0, size(keys, 2));
+            rot_id_per_adc = zeros(n_adc_total, 1);
+            for ki = 1:n_adc_total
+                row = keys(ki, :);
+                found = -1;
+                for ui = 1:size(unique_rots, 1)
+                    if isequal(unique_rots(ui, :), row)
+                        found = ui;
+                        break;
+                    end
+                end
+                if found < 0
+                    unique_rots(end+1, :) = row; %#ok<AGROW>
+                    found = size(unique_rots, 1);
+                end
+                rot_id_per_adc(ki) = found;
+            end
+            num_rotations = size(unique_rots, 1);
+            rot_id_per_adc = int32(rot_id_per_adc - 1);    % 0-based
+
+            % --- 5. Label tuple in canonical order (fixed 10-tuple) ---
+            LABEL_ORDER = {'SLC','SEG','REP','AVG','SET','ECO','PHS','LIN','PAR','ACQ'};
+            labels_per_adc = zeros(n_adc_total, 10, 'int32');
+            label_limits   = zeros(10, 2, 'int32');
+            if ~isempty(obj.label_names) && ~isempty(obj.label_states_per_adc)
+                for li = 1:10
+                    col = find(strcmp(obj.label_names, LABEL_ORDER{li}), 1);
+                    if isempty(col), continue; end
+                    vals = obj.label_states_per_adc(:, col);
+                    labels_per_adc(:, li) = int32(vals);
+                    label_limits(li, 1) = int32(min(vals));
+                    label_limits(li, 2) = int32(max(vals));
+                end
+            end
+
+            % --- 6. Encoding-space library (single ES; FOV/matrix unknown from .seq) ---
+            num_encoding_spaces = 1;
+            es_fov         = single(zeros(1, 3));
+            es_matrix      = int32(zeros(1, 3));
+            es_nav_fov     = single(zeros(1, 3));
+            es_nav_matrix  = int32(zeros(1, 3));
+            es_subseq_idx  = int32(0);
+            es_nav_offset  = int32(0);
+            es_ref_per_adc = int32(zeros(n_adc_total, 1));   % all ADCs map to ES 0
+
+            % --- 7. Write payload ---
+            fwrite(fid, int32(n_adc_total),         'int32');
+            fwrite(fid, int32(is_cartesian),        'int32');
+            fwrite(fid, int32(ndim),                'int32');
+
+            fwrite(fid, int32(num_rotations),       'int32');
+            for r = 1:num_rotations
+                fwrite(fid, single(unique_rots(r, :)), 'float32');   % 9 floats, row-major
+            end
+
+            fwrite(fid, int32(num_encoding_spaces), 'int32');
+            fwrite(fid, es_fov,        'float32');
+            fwrite(fid, es_matrix,     'int32');
+            fwrite(fid, es_nav_fov,    'float32');
+            fwrite(fid, es_nav_matrix, 'int32');
+            fwrite(fid, es_subseq_idx, 'int32');
+            fwrite(fid, es_nav_offset, 'int32');
+            fwrite(fid, label_limits', 'int32');   % 20 ints (10 pairs interleaved min,max)
+
+            for k = 1:n_adc_total
+                seg_ = adc_k_cells{k}(1:ndim, :);
+                ns   = size(seg_, 2);
+                fwrite(fid, int32(ns),                 'int32');
+                fwrite(fid, rot_id_per_adc(k),         'int32');
+                fwrite(fid, es_ref_per_adc(k),         'int32');
+                fwrite(fid, labels_per_adc(k, :),      'int32');   % 10 ints
+                if ~is_cartesian
+                    fwrite(fid, single(seg_(:)),       'float32');
+                end
+            end
+
+            fclose(fid);
+        end
     end
 
     methods (Static)
+        function w = sampleGradAtTimes(grad, t)
+        % SAMPLEGRADATTIMES  Sample a Pulseq gradient struct at times t
+        % (seconds, relative to block start). Returns row vector of
+        % amplitudes (Hz/m). Zero outside the active window.
+            w = zeros(1, length(t));
+            if isempty(grad), return; end
+            if strcmp(grad.type, 'trap') || strcmp(grad.type, 'trapezoid')
+                a  = grad.amplitude;
+                d  = grad.delay;
+                r  = grad.riseTime;
+                f  = grad.flatTime;
+                fa = grad.fallTime;
+                ti = t - d;
+                if r > 0
+                    m = ti > 0 & ti < r;
+                    w(m) = a * (ti(m) / r);
+                end
+                m = ti >= r & ti < r + f;
+                w(m) = a;
+                if fa > 0
+                    m = ti >= r + f & ti < r + f + fa;
+                    w(m) = a * (1 - (ti(m) - r - f) / fa);
+                end
+            elseif strcmp(grad.type, 'grad')
+                tt_abs = grad.delay + grad.tt(:).';
+                wf     = grad.waveform(:).';
+                if numel(tt_abs) >= 2
+                    w = interp1(tt_abs, wf, t, 'linear', 0);
+                    w(t < tt_abs(1) | t > tt_abs(end)) = 0;
+                end
+            end
+        end
+
         function e = gradEnergy(g)
         % GRADENERGY  Gradient energy: integral of amplitude^2 over time.
         %   Uses the trapezoidal rule, matching pulseqlib__trapz_real_* in C.

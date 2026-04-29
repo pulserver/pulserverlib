@@ -12,23 +12,38 @@
 
 #include "pulseqlib_internal.h"
 #include <string.h>
+#include <math.h>
+
+/* rf_definition::stats.flip_angle_deg is misleadingly named: dedup stores
+ * the value in RADIANS (2*pi * amp * area). Section 5 must emit DEGREES
+ * to match the MATLAB TruthBuilder convention, so we convert at the
+ * emission boundary. Centralising the conversion here keeps the upstream
+ * dedup/safety code paths untouched. */
+#ifndef SEQDESC_RAD_TO_DEG
+#define SEQDESC_RAD_TO_DEG  (180.0f / 3.14159265358979323846f)
+#endif
 
 /* ================================================================== */
 /*  Internal helpers                                                  */
 /* ================================================================== */
 
 /*
- * Compute TR-relative start time (us) for each block in the imaging TR.
- * Returns a malloc'd array of length tr_size; caller must free.
+ * Compute pass-relative start time (us) for every block in [0, n_walk).
+ * Returns a malloc'd array of length n_walk; caller must free.
+ *
+ * The walker emits one Section-5 subsequence per .seq descriptor and
+ * covers the entire pass (prep + main + cooldown), matching the
+ * MATLAB TruthBuilder convention required by the Bloch state-machine
+ * simulator. The legacy canonical-TR variant (used by safety/getters)
+ * is intentionally NOT used here.
  */
 static float* seqdesc__build_block_start_us(
     const pulseqlib_sequence_descriptor* desc)
 {
-    const pulseqlib_tr_descriptor* trd = &desc->tr_descriptor;
-    int    n = trd->tr_size;
+    int    n = desc->pass_len > 0 ? desc->pass_len : desc->num_blocks;
     float* t;
     float  acc;
-    int    i, blk;
+    int    i;
 
     if (n <= 0) return NULL;
     t = (float*)PULSEQLIB_ALLOC((size_t)n * sizeof(float));
@@ -37,49 +52,53 @@ static float* seqdesc__build_block_start_us(
     acc = 0.0f;
     for (i = 0; i < n; ++i) {
         t[i] = acc;
-        blk  = trd->imaging_tr_start + i;
-        if (blk >= 0 && blk < desc->num_blocks)
-            acc += (float)desc->block_table[blk].duration_us;
+        if (i >= 0 && i < desc->num_blocks) {
+            const pulseqlib_block_table_element* bte = &desc->block_table[i];
+            int dur = (bte->duration_us >= 0)
+                    ? bte->duration_us
+                    : desc->block_definitions[bte->id].duration_us;
+            acc += (float)dur;
+        }
     }
     return t;
 }
 
 /*
- * Build a TR-relative kzero_us lookup indexed by TR block position.
+ * Build a pass-relative kzero_us lookup indexed by block position.
  * Uses the segment timing anchors; values are -1 where no ADC anchor exists.
- * Returns a malloc'd array of length tr_size; caller must free.
+ * Returns a malloc'd array of length n_walk; caller must free.
  */
 static float* seqdesc__build_adc_kzero_us(
     const pulseqlib_sequence_descriptor* desc,
     const float*                         blk_start_us,
-    int                                  tr_size)
+    int                                  n_walk)
 {
     const pulseqlib_segment_table_result* stbl = &desc->segment_table;
     float*                       kzero;
     int                          si, seg_id, ai;
     const pulseqlib_tr_segment*  seg;
 
-    kzero = (float*)PULSEQLIB_ALLOC((size_t)tr_size * sizeof(float));
+    kzero = (float*)PULSEQLIB_ALLOC((size_t)n_walk * sizeof(float));
     if (!kzero) return NULL;
 
-    for (si = 0; si < tr_size; ++si) kzero[si] = -1.0f;
+    for (si = 0; si < n_walk; ++si) kzero[si] = -1.0f;
 
     if (!stbl->main_segment_table || stbl->num_main_segments <= 0)
         return kzero;   /* fallback to midpoint will apply everywhere */
 
     for (si = 0; si < stbl->num_main_segments; ++si) {
-        int tr_pos;
+        int blk_pos;
         seg_id = stbl->main_segment_table[si];
         if (seg_id < 0 || seg_id >= desc->num_unique_segments) continue;
         seg = &desc->segment_definitions[seg_id];
         if (!seg->timing.adc_anchors) continue;
 
         for (ai = 0; ai < seg->timing.num_adc_anchors; ++ai) {
-            tr_pos = seg->start_block + seg->timing.adc_anchors[ai].block_offset;
-            if (tr_pos < 0 || tr_pos >= tr_size) continue;
-            if (seg->start_block < 0 || seg->start_block >= tr_size) continue;
-            kzero[tr_pos] = blk_start_us[seg->start_block]
-                          + seg->timing.adc_anchors[ai].kzero_us;
+            blk_pos = seg->start_block + seg->timing.adc_anchors[ai].block_offset;
+            if (blk_pos < 0 || blk_pos >= n_walk) continue;
+            if (seg->start_block < 0 || seg->start_block >= n_walk) continue;
+            kzero[blk_pos] = blk_start_us[seg->start_block]
+                           + seg->timing.adc_anchors[ai].kzero_us;
         }
     }
     return kzero;
@@ -129,7 +148,7 @@ int pulseqlib_get_sequence_description(
     int*                    rf_def_used = NULL;  /* [num_unique_rfs] -> tuple_id */
     pulseqlib_seq_event*    tmp_events  = NULL;
     int                     max_events, n_events, n_tuples, n_shims;
-    int                     tr_size, i, j, rf_def_id, adc_def_id;
+    int                     n_walk, i, j, rf_def_id, adc_def_id;
     float                   t_cursor, blk_s;
     int                     ret = PULSEQLIB_SUCCESS;
     pulseqlib_shape_arbitrary decomp;
@@ -143,26 +162,40 @@ int pulseqlib_get_sequence_description(
 
     desc    = &coll->descriptors[subseq_idx];
     trd     = &desc->tr_descriptor;
-    tr_size = trd->tr_size;
-    out->tr_duration_us = trd->tr_duration_us;
+    /* Section 5 walks the FULL pass (prep + main + cooldown), one
+     * subseq per descriptor. The Bloch state-machine simulator needs
+     * the entire user-meaningful subsequence, not just the canonical
+     * TR period detected for safety / scan-table purposes. */
+    n_walk  = (desc->pass_len > 0) ? desc->pass_len : desc->num_blocks;
+    if (n_walk > desc->num_blocks) n_walk = desc->num_blocks;
+    (void)trd;
 
-    if (tr_size <= 0)
-        return PULSEQLIB_SUCCESS;   /* empty TR — legal, return blank desc */
+    if (n_walk <= 0)
+        return PULSEQLIB_SUCCESS;   /* empty pass — legal, return blank desc */
 
     /* ===========================================================
-     * Step 1: Block start times within canonical TR
+     * Step 1: Block start times within pass
      * =========================================================== */
     blk_start = seqdesc__build_block_start_us(desc);
     if (!blk_start) { ret = PULSEQLIB_ERR_ALLOC_FAILED; goto cleanup; }
 
+    /* tr_duration_us = full-pass duration (matches MATLAB convention). */
+    {
+        const pulseqlib_block_table_element* lbte = &desc->block_table[n_walk - 1];
+        int last_dur = (lbte->duration_us >= 0)
+                     ? lbte->duration_us
+                     : desc->block_definitions[lbte->id].duration_us;
+        out->tr_duration_us = blk_start[n_walk - 1] + (float)last_dur;
+    }
+
     /* ===========================================================
-     * Step 2: ADC kzero lookup (TR-relative)
+     * Step 2: ADC kzero lookup (pass-relative)
      * =========================================================== */
-    adc_kzero = seqdesc__build_adc_kzero_us(desc, blk_start, tr_size);
+    adc_kzero = seqdesc__build_adc_kzero_us(desc, blk_start, n_walk);
     if (!adc_kzero) { ret = PULSEQLIB_ERR_ALLOC_FAILED; goto cleanup; }
 
     /* ===========================================================
-     * Step 3: Collect unique RF definition IDs used in TR
+     * Step 3: Collect unique RF definition IDs used in pass
      * =========================================================== */
     if (desc->num_unique_rfs > 0) {
         rf_def_used = (int*)PULSEQLIB_ALLOC(
@@ -172,8 +205,8 @@ int pulseqlib_get_sequence_description(
     }
 
     n_tuples = 0;
-    for (i = 0; i < tr_size; ++i) {
-        int blk = trd->imaging_tr_start + i;
+    for (i = 0; i < n_walk; ++i) {
+        int blk = i;
         if (blk < 0 || blk >= desc->num_blocks) continue;
         bte = &desc->block_table[blk];
         if (bte->rf_id < 0 || bte->rf_id >= desc->rf_table_size) continue;
@@ -243,14 +276,24 @@ int pulseqlib_get_sequence_description(
                     ret = PULSEQLIB_ERR_ALLOC_FAILED; goto cleanup;
                 }
                 if (decomp.num_uncompressed_samples > 0) {
-                    tup->phase = (float*)PULSEQLIB_ALLOC(
-                        (size_t)decomp.num_uncompressed_samples * sizeof(float));
-                    if (!tup->phase) {
-                        PULSEQLIB_FREE(decomp.samples);
-                        ret = PULSEQLIB_ERR_ALLOC_FAILED; goto cleanup;
+                    /* Skip allocation when phase is all-zero — keeps the
+                     * cache compact and matches the MATLAB TruthBuilder
+                     * convention (has_phase=0 → omit waveform). */
+                    int all_zero = 1;
+                    int sk;
+                    for (sk = 0; sk < decomp.num_uncompressed_samples; ++sk) {
+                        if (decomp.samples[sk] != 0.0f) { all_zero = 0; break; }
                     }
-                    memcpy(tup->phase, decomp.samples,
-                           (size_t)decomp.num_uncompressed_samples * sizeof(float));
+                    if (!all_zero) {
+                        tup->phase = (float*)PULSEQLIB_ALLOC(
+                            (size_t)decomp.num_uncompressed_samples * sizeof(float));
+                        if (!tup->phase) {
+                            PULSEQLIB_FREE(decomp.samples);
+                            ret = PULSEQLIB_ERR_ALLOC_FAILED; goto cleanup;
+                        }
+                        memcpy(tup->phase, decomp.samples,
+                               (size_t)decomp.num_uncompressed_samples * sizeof(float));
+                    }
                 }
                 PULSEQLIB_FREE(decomp.samples);
             }
@@ -309,9 +352,9 @@ int pulseqlib_get_sequence_description(
     }
 
     /* ===========================================================
-     * Step 6: Walk TR blocks — emit WAIT / RF / ADC events
+     * Step 6: Walk pass blocks — emit WAIT / RF / ADC events
      * =========================================================== */
-    max_events = 3 * tr_size + 4;
+    max_events = 3 * n_walk + 4;
     tmp_events = (pulseqlib_seq_event*)PULSEQLIB_ALLOC(
         (size_t)max_events * sizeof(pulseqlib_seq_event));
     if (!tmp_events) { ret = PULSEQLIB_ERR_ALLOC_FAILED; goto cleanup; }
@@ -319,8 +362,8 @@ int pulseqlib_get_sequence_description(
     n_events = 0;
     t_cursor = 0.0f;
 
-    for (i = 0; i < tr_size; ++i) {
-        int blk_abs = trd->imaging_tr_start + i;
+    for (i = 0; i < n_walk; ++i) {
+        int blk_abs = i;
         int has_rf, has_adc;
 
         if (blk_abs < 0 || blk_abs >= desc->num_blocks) continue;
@@ -356,16 +399,28 @@ int pulseqlib_get_sequence_description(
                 tuple_id_local = (rf_def_used && rf_def_id < desc->num_unique_rfs)
                                ? rf_def_used[rf_def_id] : -1;
 
-                if (n_events < max_events) {
-                    tmp_events[n_events].type       = PULSEQLIB_SEQ_EVENT_RF;
-                    tmp_events[n_events].params[0]  = rf_center_us;
-                    tmp_events[n_events].params[1]  = rf_dur_us;
-                    tmp_events[n_events].params[2]  = rfdef->stats.flip_angle_deg;
-                    tmp_events[n_events].params[3]  = (float)tuple_id_local;
-                    tmp_events[n_events].params[4]  = (float)bte->rf_shim_id;
-                    tmp_events[n_events].params[5]  = (bte->gz_id >= 0) ? 1.0f : 0.0f;
-                    tmp_events[n_events].params[6]  = 0.0f;
-                    n_events++;
+                /* Per-block flip = base_flip(rad) * |amp| / base_amp,
+                 * then convert rad->deg. */
+                {
+                    double ratio_d = 1.0;
+                    if (rfdef->stats.base_amplitude_hz > 0.0f) {
+                        double amp = (double)desc->rf_table[bte->rf_id].amplitude;
+                        if (amp < 0.0) amp = -amp;
+                        ratio_d = amp / (double)rfdef->stats.base_amplitude_hz;
+                    }
+                    if (n_events < max_events) {
+                        double fa_d = (double)rfdef->stats.flip_angle_deg * ratio_d
+                                    * (180.0 / 3.14159265358979323846);
+                        tmp_events[n_events].type       = PULSEQLIB_SEQ_EVENT_RF;
+                        tmp_events[n_events].params[0]  = rf_center_us;
+                        tmp_events[n_events].params[1]  = rf_dur_us;
+                        tmp_events[n_events].params[2]  = (float)fa_d;
+                        tmp_events[n_events].params[3]  = (float)tuple_id_local;
+                        tmp_events[n_events].params[4]  = (float)bte->rf_shim_id;
+                        tmp_events[n_events].params[5]  = (bte->gz_id >= 0) ? 1.0f : 0.0f;
+                        tmp_events[n_events].params[6]  = 0.0f;
+                        n_events++;
+                    }
                 }
                 t_cursor = rf_end_us;
             }
@@ -398,7 +453,7 @@ int pulseqlib_get_sequence_description(
                 }
                 t_cursor = adc_start_us;
 
-                adc_role = (bte->pmc_flag || bte->nav_flag)
+                adc_role = bte->nav_flag
                          ? PULSEQLIB_ADC_ROLE_NON_ACQUIRED
                          : PULSEQLIB_ADC_ROLE_SINGLE;  /* refined below */
 
@@ -553,30 +608,36 @@ int pulseqlib_get_sequence_parameters(
     out->num_subseqs = coll->num_subsequences;
 
     for (ss = 0; ss < coll->num_subsequences; ++ss) {
+        int n_walk_p, ip;
+        float pass_dur_us = 0.0f;
         desc = &coll->descriptors[ss];
         trd  = &desc->tr_descriptor;
 
-        /* TR bounds */
-        if (trd->tr_duration_us > 0.0f) {
-            if (trd->tr_duration_us < out->min_tr_us) out->min_tr_us = trd->tr_duration_us;
-            if (trd->tr_duration_us > out->max_tr_us) out->max_tr_us = trd->tr_duration_us;
+        /* Walk the full pass for parity with the description walker. */
+        n_walk_p = (desc->pass_len > 0) ? desc->pass_len : desc->num_blocks;
+        if (n_walk_p > desc->num_blocks) n_walk_p = desc->num_blocks;
+
+        /* Pass duration */
+        for (ip = 0; ip < n_walk_p; ++ip) {
+            const pulseqlib_block_table_element* bte = &desc->block_table[ip];
+            int dur = (bte->duration_us >= 0)
+                    ? bte->duration_us
+                    : desc->block_definitions[bte->id].duration_us;
+            pass_dur_us += (float)dur;
         }
 
-        /* TE: earliest acquired ADC center in TR */
-        for (i = 0; i < trd->tr_size; ++i) {
-            int blk = trd->imaging_tr_start + i;
-            if (blk < 0 || blk >= desc->num_blocks) continue;
-            {
-                const pulseqlib_block_table_element* bte = &desc->block_table[blk];
-                float t_sum = 0.0f;
-                int k;
-                for (k = 0; k < i; ++k) {
-                    int bk = trd->imaging_tr_start + k;
-                    if (bk >= 0 && bk < desc->num_blocks)
-                        t_sum += (float)desc->block_table[bk].duration_us;
-                }
+        if (pass_dur_us > 0.0f) {
+            if (pass_dur_us < out->min_tr_us) out->min_tr_us = pass_dur_us;
+            if (pass_dur_us > out->max_tr_us) out->max_tr_us = pass_dur_us;
+        }
+
+        /* TE: earliest acquired ADC center in pass */
+        {
+            float t_sum = 0.0f;
+            for (ip = 0; ip < n_walk_p; ++ip) {
+                const pulseqlib_block_table_element* bte = &desc->block_table[ip];
                 if (bte->adc_id >= 0 && bte->adc_id < desc->adc_table_size
-                    && !bte->pmc_flag && !bte->nav_flag) {
+                    && !bte->nav_flag) {
                     int adc_def_id = desc->adc_table[bte->adc_id].id;
                     if (adc_def_id >= 0 && adc_def_id < desc->num_unique_adcs) {
                         const pulseqlib_adc_definition* ad = &desc->adc_definitions[adc_def_id];
@@ -586,20 +647,33 @@ int pulseqlib_get_sequence_parameters(
                         if (te_est < out->min_te_us) out->min_te_us = te_est;
                     }
                 }
-                /* Flip angle max */
                 if (bte->rf_id >= 0 && bte->rf_id < desc->rf_table_size) {
                     int rf_def_id = desc->rf_table[bte->rf_id].id;
                     if (rf_def_id >= 0 && rf_def_id < desc->num_unique_rfs) {
-                        float fa = desc->rf_definitions[rf_def_id].stats.flip_angle_deg;
-                        if (fa > fa_max) fa_max = fa;
+                        const pulseqlib_rf_definition* rd = &desc->rf_definitions[rf_def_id];
+                        double ratio_d = 1.0;
+                        if (rd->stats.base_amplitude_hz > 0.0f) {
+                            double amp = (double)desc->rf_table[bte->rf_id].amplitude;
+                            if (amp < 0.0) amp = -amp;
+                            ratio_d = amp / (double)rd->stats.base_amplitude_hz;
+                        }
+                        {
+                            double fa_d = (double)rd->stats.flip_angle_deg * ratio_d
+                                        * (180.0 / 3.14159265358979323846);
+                            float fa = (float)fa_d;
+                            if (fa > fa_max) fa_max = fa;
+                        }
                     }
                 }
+                t_sum += (float)((bte->duration_us >= 0)
+                              ? bte->duration_us
+                              : desc->block_definitions[bte->id].duration_us);
             }
         }
 
-        /* Total scan time approximation */
-        out->total_scan_time_us += trd->tr_duration_us
-                                  * (float)(trd->num_trs > 0 ? trd->num_trs : 1);
+        /* Total scan time = sum of pass durations across subseqs. */
+        out->total_scan_time_us += pass_dur_us;
+        (void)trd;
     }
 
     if (out->min_te_us > 1e29f) out->min_te_us = 0.0f;

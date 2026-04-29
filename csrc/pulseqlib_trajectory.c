@@ -125,9 +125,283 @@ static int kshot_library_add(pulseqlib_kshot_library* lib,
     return lib->num_shots++;
 }
 
+/* Analytic g(t_us) sampler for the cartesian classifier.  Evaluates
+ * the gradient definition at an exact time (us, relative to block
+ * start) WITHOUT going through the integrator's coarse uniform raster.
+ * The raster snap can place a ramp endpoint mid-sample (e.g. flat top
+ * 600us with raster 20us puts the fall transition between samples 29
+ * and 30, so a sample at 600us reads ~2/3 amp instead of amp), giving
+ * a false non-constant classification on plain trapezoid readouts.
+ * Returns 0 outside the active gradient window.
+ *
+ * Mirrors testutils.TruthBuilder.sampleGradAtTimes (analytic trap +
+ * linear interp ARB with zero outside). */
+static float sample_grad_axis_at(
+    const pulseqlib_sequence_descriptor* desc,
+    int grad_event_id,
+    const float* arb_xp, const float* arb_fp, int arb_n, /* may be NULL */
+    float t_us)
+{
+    const pulseqlib_grad_definition* gd;
+    float amp, ti;
+    int shot_idx;
+
+    if (grad_event_id < 0 || grad_event_id >= desc->grad_table_size)
+        return 0.0f;
+    amp      = desc->grad_table[grad_event_id].amplitude;
+    shot_idx = desc->grad_table[grad_event_id].shot_index;
+    gd       = &desc->grad_definitions[desc->grad_table[grad_event_id].id];
+    ti = t_us - (float)gd->delay;
+
+    if (gd->type == 0) {
+        float r  = (float)gd->rise_time_or_unused;
+        float fl = (float)gd->flat_time_or_unused;
+        float fa = (float)gd->fall_time_or_num_uncompressed_samples;
+        if (ti <= 0.0f) return 0.0f;
+        if (r > 0.0f && ti < r) return amp * (ti / r);
+        if (ti < r + fl) return amp;
+        if (fa > 0.0f && ti < r + fl + fa) return amp * (1.0f - (ti - r - fl) / fa);
+        return 0.0f;
+    }
+    /* ARB: caller pre-decompressed shape into (arb_xp, arb_fp).  Linear
+     * interp with zero outside [arb_xp[0], arb_xp[n-1]]. */
+    (void)shot_idx;
+    if (!arb_xp || !arb_fp || arb_n < 2) return 0.0f;
+    if (t_us < arb_xp[0] || t_us > arb_xp[arb_n - 1]) return 0.0f;
+    {
+        int lo = 0, hi = arb_n - 1, mid;
+        float frac;
+        while (hi - lo > 1) {
+            mid = (lo + hi) >> 1;
+            if (arb_xp[mid] <= t_us) lo = mid; else hi = mid;
+        }
+        if (arb_xp[hi] == arb_xp[lo]) return arb_fp[lo];
+        frac = (t_us - arb_xp[lo]) / (arb_xp[hi] - arb_xp[lo]);
+        return arb_fp[lo] * (1.0f - frac) + arb_fp[hi] * frac;
+    }
+}
+
+/* Decompress an ARB gradient into (xp_us, fp_hzm, n) suitable for use
+ * by sample_grad_axis_at and the integrator's expand step.  Returns 1
+ * if the axis is ARB and the buffers were allocated (caller frees);
+ * 0 if the axis is TRAP or idle (buffers untouched); -1 on error.
+ *
+ * Time grid is in microseconds relative to block start (delay-shifted),
+ * matching what sample_grad_axis_at and expand_block_axis_grad expect. */
+static int decompress_block_arb(
+    const pulseqlib_sequence_descriptor* desc,
+    int grad_event_id,
+    float grad_raster_us,
+    float** out_xp, float** out_fp, int* out_n)
+{
+    const pulseqlib_grad_definition* gd;
+    pulseqlib_shape_arbitrary decomp = {0, 0, NULL};
+    pulseqlib_shape_arbitrary decomp_t = {0, 0, NULL};
+    float amp;
+    int shot_idx, sid_one_based, sid;
+    float *xp = NULL, *fp = NULL;
+    int nsrc, i, rc = 0;
+
+    *out_xp = NULL; *out_fp = NULL; *out_n = 0;
+    if (grad_event_id < 0 || grad_event_id >= desc->grad_table_size) return 0;
+    gd       = &desc->grad_definitions[desc->grad_table[grad_event_id].id];
+    if (gd->type == 0) return 0;
+    amp      = desc->grad_table[grad_event_id].amplitude;
+    shot_idx = desc->grad_table[grad_event_id].shot_index;
+    if (shot_idx < 0 || shot_idx >= PULSEQLIB_MAX_GRAD_SHOTS) return 0;
+    sid_one_based = gd->shot_shape_ids[shot_idx];
+    if (sid_one_based <= 0) return 0;
+    sid = sid_one_based - 1;
+    if (sid < 0 || sid >= desc->num_shapes) return 0;
+
+    if (!pulseqlib__decompress_shape(&decomp, &desc->shapes[sid], 1.0f))
+        return -1;
+    nsrc = decomp.num_samples;
+    xp = (float*)PULSEQLIB_ALLOC((size_t)nsrc * sizeof(float));
+    fp = (float*)PULSEQLIB_ALLOC((size_t)nsrc * sizeof(float));
+    if (!xp || !fp) { rc = -1; goto fail; }
+
+    if (gd->unused_or_time_shape_id > 0
+        && gd->unused_or_time_shape_id <= desc->num_shapes) {
+        int ts_idx = gd->unused_or_time_shape_id - 1;
+        if (!pulseqlib__decompress_shape(&decomp_t,
+                                         &desc->shapes[ts_idx],
+                                         grad_raster_us)) {
+            rc = -1; goto fail;
+        }
+        for (i = 0; i < nsrc && i < decomp_t.num_samples; ++i)
+            xp[i] = (float)gd->delay + decomp_t.samples[i];
+        for (; i < nsrc; ++i)
+            xp[i] = (float)gd->delay + ((float)i + 0.5f) * grad_raster_us;
+    } else {
+        /* Uniform ARB: pulseq stores samples at raster centres
+         * (mr.makeArbitraryGrad sets tt = ((1:N) - 0.5) * raster), so
+         * sample i lives at t = delay + (i + 0.5) * raster, not i*raster. */
+        for (i = 0; i < nsrc; ++i)
+            xp[i] = (float)gd->delay + ((float)i + 0.5f) * grad_raster_us;
+    }
+    for (i = 0; i < nsrc; ++i) fp[i] = amp * decomp.samples[i];
+
+    *out_xp = xp; *out_fp = fp; *out_n = nsrc;
+    if (decomp.samples) PULSEQLIB_FREE(decomp.samples);
+    if (decomp_t.samples) PULSEQLIB_FREE(decomp_t.samples);
+    return 1;
+
+fail:
+    if (xp) PULSEQLIB_FREE(xp);
+    if (fp) PULSEQLIB_FREE(fp);
+    if (decomp.samples) PULSEQLIB_FREE(decomp.samples);
+    if (decomp_t.samples) PULSEQLIB_FREE(decomp_t.samples);
+    return rc;
+}
+
 /* ================================================================== */
 /*  Compute trajectory for a single block (block-level k-space)       */
 /* ================================================================== */
+
+/* Expand one block's gradient on the uniform raster used by the
+ * trajectory integrator.  Writes n_grad samples (Hz/m) into out_g.
+ *
+ * Handles both TRAP and ARB gradient types.  For ARB shapes the
+ * descriptor stores a *compressed* shape (delta-encoded); we must
+ * decompress through pulseqlib__decompress_shape() rather than reading
+ * desc->shapes[].samples[] directly.  We also obey the 1-indexed
+ * convention shared with the rest of the library: shot_shape_ids[i]
+ * holds (shape_index + 1), with 0 meaning "no shape".
+ *
+ * Returns 0 on success; on failure leaves out_g zero-filled. */
+static int expand_block_axis_grad(
+    const pulseqlib_sequence_descriptor* desc,
+    int grad_event_id,
+    int n_grad,
+    float grad_raster_us,
+    float* out_g)
+{
+    const pulseqlib_grad_definition* gd;
+    float amp;
+    int shot_idx;
+    int delay_samp;
+    int i;
+
+    for (i = 0; i < n_grad; ++i) out_g[i] = 0.0f;
+
+    if (grad_event_id < 0 || grad_event_id >= desc->grad_table_size)
+        return 0; /* axis idle for this block */
+
+    amp      = desc->grad_table[grad_event_id].amplitude;
+    shot_idx = desc->grad_table[grad_event_id].shot_index;
+    gd       = &desc->grad_definitions[desc->grad_table[grad_event_id].id];
+    delay_samp = (int)((float)gd->delay / grad_raster_us + 0.5f);
+
+    if (gd->type == 0) {
+        /* TRAP (raw seq encoding 0; not the PULSEQLIB__GRAD_TRAP=1 macro
+         * used by the parse-time representation). */
+        int rise = (int)((float)gd->rise_time_or_unused / grad_raster_us + 0.5f);
+        int flat = (int)((float)gd->flat_time_or_unused / grad_raster_us + 0.5f);
+        int fall = (int)((float)gd->fall_time_or_num_uncompressed_samples / grad_raster_us + 0.5f);
+        for (i = 0; i < n_grad; ++i) {
+            int s = i - delay_samp;
+            float v;
+            if (s < 0)                      v = 0.0f;
+            else if (s < rise)              v = amp * ((float)(s + 1) / (float)rise);
+            else if (s < rise + flat)       v = amp;
+            else if (s < rise + flat + fall) v = amp * (1.0f - (float)(s - rise - flat + 1) / (float)fall);
+            else                             v = 0.0f;
+            out_g[i] = v;
+        }
+        return 0;
+    }
+
+    /* ARB: shot_shape_ids[] is 1-indexed; samples are compressed.
+     * If unused_or_time_shape_id > 0 the gradient has a non-uniform time
+     * grid; sample times come from the decompressed time shape (in us)
+     * relative to gd->delay.  Otherwise the time grid is uniform with
+     * step grad_raster_us starting at gd->delay.
+     *
+     * Sampling onto our integration raster is done via
+     * pulseqlib__interp1_linear (same helper used elsewhere in the lib),
+     * with explicit zero-fill outside the active gradient window — the
+     * stock interp clamps to endpoints, but the truth integrator
+     * (TruthBuilder.sampleGradAtTimes) zeros outside, so we match. */
+    if (shot_idx < 0 || shot_idx >= PULSEQLIB_MAX_GRAD_SHOTS) return 0;
+    {
+        int sid_one_based = gd->shot_shape_ids[shot_idx];
+        int sid;
+        pulseqlib_shape_arbitrary decomp;
+        pulseqlib_shape_arbitrary decomp_t;
+        float *xp = NULL, *fp = NULL, *t_out = NULL;
+        int nsrc;
+        float t_lo_us, t_hi_us;
+        int rc = 0;
+
+        if (sid_one_based <= 0) return 0;
+        sid = sid_one_based - 1;
+        if (sid < 0 || sid >= desc->num_shapes) return 0;
+
+        decomp.num_samples = 0;
+        decomp.num_uncompressed_samples = 0;
+        decomp.samples = NULL;
+        decomp_t.num_samples = 0;
+        decomp_t.num_uncompressed_samples = 0;
+        decomp_t.samples = NULL;
+
+        if (!pulseqlib__decompress_shape(&decomp, &desc->shapes[sid], 1.0f))
+            return -1;
+        nsrc = decomp.num_samples;
+
+        xp    = (float*)PULSEQLIB_ALLOC((size_t)nsrc   * sizeof(float));
+        fp    = (float*)PULSEQLIB_ALLOC((size_t)nsrc   * sizeof(float));
+        t_out = (float*)PULSEQLIB_ALLOC((size_t)n_grad * sizeof(float));
+        if (!xp || !fp || !t_out) { rc = -1; goto arb_done; }
+
+        if (gd->unused_or_time_shape_id > 0
+            && gd->unused_or_time_shape_id <= desc->num_shapes) {
+            /* time-shaped: tt samples are stored in seconds-equivalent
+             * scaled by grad_raster_us (see pulseqlib_parse.c L1696 and
+             * getters.c L2197). */
+            int ts_idx = gd->unused_or_time_shape_id - 1;
+            if (!pulseqlib__decompress_shape(&decomp_t,
+                                             &desc->shapes[ts_idx],
+                                             grad_raster_us)) {
+                rc = -1; goto arb_done;
+            }
+            for (i = 0; i < nsrc && i < decomp_t.num_samples; ++i)
+                xp[i] = (float)gd->delay + decomp_t.samples[i];
+            /* if time shape shorter than amp shape, fall back to uniform
+             * for the trailing samples — keeps interp1 monotonic. */
+            for (; i < nsrc; ++i)
+                xp[i] = (float)gd->delay + ((float)i + 0.5f) * grad_raster_us;
+        } else {
+            /* Uniform ARB: pulseq stores samples at raster centres
+             * (tt = ((1:N) - 0.5) * raster). */
+            for (i = 0; i < nsrc; ++i)
+                xp[i] = (float)gd->delay + ((float)i + 0.5f) * grad_raster_us;
+        }
+
+        for (i = 0; i < nsrc; ++i) fp[i] = amp * decomp.samples[i];
+
+        for (i = 0; i < n_grad; ++i) t_out[i] = (float)i * grad_raster_us;
+
+        pulseqlib__interp1_linear(out_g, t_out, n_grad, xp, fp, nsrc);
+
+        /* Zero outside the active gradient window (interp1 clamps to
+         * endpoints; truth uses linear-with-zero extrapolation). */
+        t_lo_us = xp[0];
+        t_hi_us = xp[nsrc - 1];
+        for (i = 0; i < n_grad; ++i) {
+            if (t_out[i] < t_lo_us || t_out[i] > t_hi_us)
+                out_g[i] = 0.0f;
+        }
+
+    arb_done:
+        if (xp) PULSEQLIB_FREE(xp);
+        if (fp) PULSEQLIB_FREE(fp);
+        if (t_out) PULSEQLIB_FREE(t_out);
+        if (decomp.samples) PULSEQLIB_FREE(decomp.samples);
+        if (decomp_t.samples) PULSEQLIB_FREE(decomp_t.samples);
+        return rc;
+    }
+}
 
 /*
  * For a single block with an ADC event:
@@ -145,6 +419,10 @@ static int compute_block_kspace(
     int kzero_index,
     float* out_kx, float* out_ky, float* out_kz,  /* [adc_num_samples] */
     int* out_num_samples,
+    /* g(t) constant during ADC window?  Used by caller as the
+     * cartesian-shot classifier (truth uses the same criterion).
+     * Pass NULL pointers if not needed. */
+    int* out_gx_const, int* out_gy_const, int* out_gz_const,
     pulseqlib_diagnostic* diag)
 {
     const pulseqlib_block_table_element* bte;
@@ -161,10 +439,13 @@ static int compute_block_kspace(
     float* kx_window;
     float* ky_window;
     float* kz_window;
-    float kzero_kx, kzero_ky, kzero_kz;
 
+    kx_full = NULL; ky_full = NULL; kz_full = NULL;
     bte = &desc->block_table[block_table_idx];
-    adc_def_idx = bte->adc_id;
+    /* block_table[].adc_id holds the RAW seq ADC index (per-instance);
+     * the deduped index into desc->adc_definitions[] lives in
+     * block_definitions[bte->id].adc_id. */
+    adc_def_idx = desc->block_definitions[bte->id].adc_id;
     if (adc_def_idx < 0 || adc_def_idx >= desc->num_unique_adcs) {
         if (diag) sprintf(diag->message,
             "Block %d has no ADC event", block_table_idx);
@@ -177,212 +458,288 @@ static int compute_block_kspace(
     adc_delay_us = adc_def->delay;
 
     grad_raster_us = desc->grad_raster_us;
-    block_dur_us = bte->duration_us;
-    n_grad = (int)(block_dur_us / grad_raster_us + 0.5f);
-    if (n_grad < 2) n_grad = 2;
-    dt_s = grad_raster_us * 1e-6f;
+    /* Per-instance duration_us is -1 when the block uses the deduped
+     * definition's duration; fall back to block_definitions[bte->id]. */
+    block_dur_us = (bte->duration_us >= 0)
+        ? bte->duration_us
+        : desc->block_definitions[bte->id].duration_us;
 
-    /* Get gradient waveforms for this single block. We use the
-     * grad_definitions and grad_table to reconstruct the waveform. */
-
-    /* Allocate full-block k-space arrays */
-    kx_full = (float*)PULSEQLIB_ALLOC((size_t)n_grad * sizeof(float));
-    ky_full = (float*)PULSEQLIB_ALLOC((size_t)n_grad * sizeof(float));
-    kz_full = (float*)PULSEQLIB_ALLOC((size_t)n_grad * sizeof(float));
-    if (!kx_full || !ky_full || !kz_full) goto alloc_fail;
-
-    /* Integrate gradient waveforms at block level.
-     * For the trajectory we need to compute k(t) = integral(g(t)*dt).
-     * We use the grad_table amplitude and grad_definition shapes. */
+    /* Build a piecewise-linear-EXACT integration grid.
+     *
+     * g(t) on each axis is piecewise linear: every breakpoint comes
+     * from one of three places (matching the truth integrator in
+     * TruthBuilder.exportTrajectory):
+     *
+     *   - TRAP edges: delay, delay+rise, delay+rise+flat,
+     *                 delay+rise+flat+fall (samples on raster EDGES).
+     *   - ARB uniform (shape only):       delay + (i + 0.5) * raster
+     *                                     (samples on raster CENTRES;
+     *                                      mr.makeArbitraryGrad puts
+     *                                      tt = ((1:N) - 0.5) * raster).
+     *   - Extended trap (shape + time):   delay + decompressed_tt[i]
+     *                                     (samples on raster EDGES,
+     *                                      from the time shape).
+     *
+     * Trapezoidal integration on a grid that contains every breakpoint
+     * is analytically exact for piecewise-linear g(t).  A coarse uniform
+     * raster snaps off-raster edges to the wrong sample and biases k.
+     *
+     * decompress_block_arb already returns the correct (xp_us, fp_hzm)
+     * pairs for both ARB modes; for TRAPs we synthesize the four edge
+     * times here.  Output k_full[] is indexed by the merged grid. */
+    n_grad = 0; /* will be set after building merged grid */
+    dt_s   = grad_raster_us * 1e-6f; /* (kept for potential future use) */
+    (void)dt_s;
     {
-        int gx_id = bte->gx_id;
-        int gy_id = bte->gy_id;
-        int gz_id = bte->gz_id;
-        float gx_amp = 0.0f, gy_amp = 0.0f, gz_amp = 0.0f;
+        float *t_grid = NULL;
+        float *gx_full = NULL, *gy_full = NULL, *gz_full = NULL;
+        int n_steps = 0;
 
-        /* Get amplitudes from grad table */
-        if (gx_id >= 0 && gx_id < desc->grad_table_size)
-            gx_amp = desc->grad_table[gx_id].amplitude;
-        if (gy_id >= 0 && gy_id < desc->grad_table_size)
-            gy_amp = desc->grad_table[gy_id].amplitude;
-        if (gz_id >= 0 && gz_id < desc->grad_table_size)
-            gz_amp = desc->grad_table[gz_id].amplitude;
+        /* Per-axis breakpoint sources. */
+        float *bp_x = NULL, *fpx = NULL; int nx = 0;
+        float *bp_y = NULL, *fpy = NULL; int ny = 0;
+        float *bp_z = NULL, *fpz = NULL; int nz = 0;
+        float trap_bp_x[4], trap_bp_y[4], trap_bp_z[4];
+        int n_trap_x = 0, n_trap_y = 0, n_trap_z = 0;
 
-        /* Get grad definition shapes and compute waveform.
-         * For now we do simple constant-amplitude integration.
-         * The actual shape comes from the grad_definition. */
+        int rx = decompress_block_arb(desc, bte->gx_id, grad_raster_us, &bp_x, &fpx, &nx);
+        int ry = decompress_block_arb(desc, bte->gy_id, grad_raster_us, &bp_y, &fpy, &ny);
+        int rz = decompress_block_arb(desc, bte->gz_id, grad_raster_us, &bp_z, &fpz, &nz);
+        (void)rx; (void)ry; (void)rz;
+
+        /* TRAP breakpoints (only when axis is TRAP, not ARB and not idle). */
         {
-            int gx_def_id = -1, gy_def_id = -1, gz_def_id = -1;
-            int gx_shot = 0, gy_shot = 0, gz_shot = 0;
-
-            if (gx_id >= 0 && gx_id < desc->grad_table_size) {
-                gx_def_id = desc->grad_table[gx_id].id;
-                gx_shot = desc->grad_table[gx_id].shot_index;
-            }
-            if (gy_id >= 0 && gy_id < desc->grad_table_size) {
-                gy_def_id = desc->grad_table[gy_id].id;
-                gy_shot = desc->grad_table[gy_id].shot_index;
-            }
-            if (gz_id >= 0 && gz_id < desc->grad_table_size) {
-                gz_def_id = desc->grad_table[gz_id].id;
-                gz_shot = desc->grad_table[gz_id].shot_index;
-            }
-
-            /* Reconstruct k-space by integrating shaped gradients.
-             * For each axis, expand the grad shape to uniform raster,
-             * scale by amplitude, then trapezoidal integrate. */
-            {
-                float cum_x = 0.0f, cum_y = 0.0f, cum_z = 0.0f;
-                kx_full[0] = 0.0f;
-                ky_full[0] = 0.0f;
-                kz_full[0] = 0.0f;
-
-                for (i = 1; i < n_grad; ++i) {
-                    /* Get gradient value at sample i.
-                     * For trapezoid: rise/flat/fall. For arbitrary: shapes.
-                     * Simplified: use existing internal helper to expand shapes
-                     * at the grad raster level. For now we assume the
-                     * waveforms have already been computed by check_safety. */
-                    float gx_i = 0.0f, gy_i = 0.0f, gz_i = 0.0f;
-
-                    /* Get shaped gradient value at this sample.
-                     * Use the grad_definition + shape lookup. */
-                    if (gx_def_id >= 0) {
-                        const pulseqlib_grad_definition* gd =
-                            &desc->grad_definitions[gx_def_id];
-                        if (gd->type == PULSEQLIB__GRAD_TRAP) {
-                            int rise = (int)(gd->rise_time_or_unused / grad_raster_us + 0.5f);
-                            int flat = (int)(gd->flat_time_or_unused / grad_raster_us + 0.5f);
-                            int fall = (int)(gd->fall_time_or_num_uncompressed_samples / grad_raster_us + 0.5f);
-                            int delay_samp = (int)(gd->delay / grad_raster_us + 0.5f);
-                            int s = i - delay_samp;
-                            if (s < 0) gx_i = 0.0f;
-                            else if (s < rise) gx_i = gx_amp * ((float)(s + 1) / (float)rise);
-                            else if (s < rise + flat) gx_i = gx_amp;
-                            else if (s < rise + flat + fall) gx_i = gx_amp * (1.0f - (float)(s - rise - flat + 1) / (float)fall);
-                            else gx_i = 0.0f;
-                        } else {
-                            /* Arbitrary: use shape samples scaled by amplitude */
-                            int shape_id = gd->shot_shape_ids[gx_shot];
-                            if (shape_id >= 0 && shape_id < desc->num_shapes) {
-                                const pulseqlib_shape_arbitrary* shape =
-                                    &desc->shapes[shape_id];
-                                int delay_samp = (int)(gd->delay / grad_raster_us + 0.5f);
-                                int s = i - delay_samp;
-                                if (s >= 0 && s < shape->num_uncompressed_samples)
-                                    gx_i = gx_amp * shape->samples[s];
-                            }
-                        }
-                    }
-
-                    if (gy_def_id >= 0) {
-                        const pulseqlib_grad_definition* gd =
-                            &desc->grad_definitions[gy_def_id];
-                        if (gd->type == PULSEQLIB__GRAD_TRAP) {
-                            int rise = (int)(gd->rise_time_or_unused / grad_raster_us + 0.5f);
-                            int flat = (int)(gd->flat_time_or_unused / grad_raster_us + 0.5f);
-                            int fall = (int)(gd->fall_time_or_num_uncompressed_samples / grad_raster_us + 0.5f);
-                            int delay_samp = (int)(gd->delay / grad_raster_us + 0.5f);
-                            int s = i - delay_samp;
-                            if (s < 0) gy_i = 0.0f;
-                            else if (s < rise) gy_i = gy_amp * ((float)(s + 1) / (float)rise);
-                            else if (s < rise + flat) gy_i = gy_amp;
-                            else if (s < rise + flat + fall) gy_i = gy_amp * (1.0f - (float)(s - rise - flat + 1) / (float)fall);
-                            else gy_i = 0.0f;
-                        } else {
-                            int shape_id = gd->shot_shape_ids[gy_shot];
-                            if (shape_id >= 0 && shape_id < desc->num_shapes) {
-                                const pulseqlib_shape_arbitrary* shape =
-                                    &desc->shapes[shape_id];
-                                int delay_samp = (int)(gd->delay / grad_raster_us + 0.5f);
-                                int s = i - delay_samp;
-                                if (s >= 0 && s < shape->num_uncompressed_samples)
-                                    gy_i = gy_amp * shape->samples[s];
-                            }
-                        }
-                    }
-
-                    if (gz_def_id >= 0) {
-                        const pulseqlib_grad_definition* gd =
-                            &desc->grad_definitions[gz_def_id];
-                        if (gd->type == PULSEQLIB__GRAD_TRAP) {
-                            int rise = (int)(gd->rise_time_or_unused / grad_raster_us + 0.5f);
-                            int flat = (int)(gd->flat_time_or_unused / grad_raster_us + 0.5f);
-                            int fall = (int)(gd->fall_time_or_num_uncompressed_samples / grad_raster_us + 0.5f);
-                            int delay_samp = (int)(gd->delay / grad_raster_us + 0.5f);
-                            int s = i - delay_samp;
-                            if (s < 0) gz_i = 0.0f;
-                            else if (s < rise) gz_i = gz_amp * ((float)(s + 1) / (float)rise);
-                            else if (s < rise + flat) gz_i = gz_amp;
-                            else if (s < rise + flat + fall) gz_i = gz_amp * (1.0f - (float)(s - rise - flat + 1) / (float)fall);
-                            else gz_i = 0.0f;
-                        } else {
-                            int shape_id = gd->shot_shape_ids[gz_shot];
-                            if (shape_id >= 0 && shape_id < desc->num_shapes) {
-                                const pulseqlib_shape_arbitrary* shape =
-                                    &desc->shapes[shape_id];
-                                int delay_samp = (int)(gd->delay / grad_raster_us + 0.5f);
-                                int s = i - delay_samp;
-                                if (s >= 0 && s < shape->num_uncompressed_samples)
-                                    gz_i = gz_amp * shape->samples[s];
-                            }
-                        }
-                    }
-
-                    /* Trapezoidal integration.
-                     * Note: gx_i-1 is approximated as previous iteration value. */
-                    cum_x += 0.5f * (gx_i) * dt_s; /* simplified: half-step */
-                    cum_y += 0.5f * (gy_i) * dt_s;
-                    cum_z += 0.5f * (gz_i) * dt_s;
-
-                    kx_full[i] = cum_x;
-                    ky_full[i] = cum_y;
-                    kz_full[i] = cum_z;
-
-                    /* Add the other half-step for proper trapezoidal rule */
-                    cum_x += 0.5f * (gx_i) * dt_s;
-                    cum_y += 0.5f * (gy_i) * dt_s;
-                    cum_z += 0.5f * (gz_i) * dt_s;
+            int axes[3]; int gid[3]; int t = 0;
+            int *ntr[3]; float (*bp_arr[3])[4];
+            axes[0]=0; axes[1]=1; axes[2]=2;
+            gid[0]=bte->gx_id; gid[1]=bte->gy_id; gid[2]=bte->gz_id;
+            ntr[0]=&n_trap_x; ntr[1]=&n_trap_y; ntr[2]=&n_trap_z;
+            bp_arr[0]=&trap_bp_x; bp_arr[1]=&trap_bp_y; bp_arr[2]=&trap_bp_z;
+            for (t = 0; t < 3; ++t) {
+                const pulseqlib_grad_definition* gd2;
+                if (gid[t] < 0 || gid[t] >= desc->grad_table_size) continue;
+                gd2 = &desc->grad_definitions[desc->grad_table[gid[t]].id];
+                if (gd2->type != 0) continue; /* ARB; handled by decompress_block_arb */
+                {
+                    float d  = (float)gd2->delay;
+                    float r  = (float)gd2->rise_time_or_unused;
+                    float fl = (float)gd2->flat_time_or_unused;
+                    float fa = (float)gd2->fall_time_or_num_uncompressed_samples;
+                    (*bp_arr[t])[0] = d;
+                    (*bp_arr[t])[1] = d + r;
+                    (*bp_arr[t])[2] = d + r + fl;
+                    (*bp_arr[t])[3] = d + r + fl + fa;
+                    *ntr[t] = 4;
                 }
             }
         }
+
+        /* Build merged time grid: 0, blk_dur, raster ticks, all
+         * per-axis breakpoints, and ADC sample centres (so resampling
+         * lands on grid points). */
+        {
+            int cap, idx;
+            int n_raster, j;
+            float t_us;
+            float *tmp;
+            int fp_int = 0; (void)fp_int;
+            n_raster = (int)((float)block_dur_us / grad_raster_us + 0.5f) + 1;
+            if (n_raster < 2) n_raster = 2;
+            cap = 2 + n_raster + nx + ny + nz + n_trap_x + n_trap_y + n_trap_z + adc_num_samples;
+            tmp = (float*)PULSEQLIB_ALLOC((size_t)cap * sizeof(float));
+            if (!tmp) goto bp_alloc_fail;
+            idx = 0;
+            tmp[idx++] = 0.0f;
+            tmp[idx++] = (float)block_dur_us;
+            for (j = 0; j < n_raster; ++j) tmp[idx++] = (float)j * grad_raster_us;
+            for (j = 0; j < nx; ++j) tmp[idx++] = bp_x[j];
+            for (j = 0; j < ny; ++j) tmp[idx++] = bp_y[j];
+            for (j = 0; j < nz; ++j) tmp[idx++] = bp_z[j];
+            for (j = 0; j < n_trap_x; ++j) tmp[idx++] = trap_bp_x[j];
+            for (j = 0; j < n_trap_y; ++j) tmp[idx++] = trap_bp_y[j];
+            for (j = 0; j < n_trap_z; ++j) tmp[idx++] = trap_bp_z[j];
+            for (j = 0; j < adc_num_samples; ++j) {
+                t_us = (float)adc_delay_us + ((float)j + 0.5f) * adc_dwell_us;
+                tmp[idx++] = t_us;
+            }
+            /* Clamp to [0, blk_dur] and sort/unique (insertion sort is fine
+             * — block-level grids are small, O(few hundred). */
+            for (j = 0; j < idx; ++j) {
+                if (tmp[j] < 0.0f) tmp[j] = 0.0f;
+                if (tmp[j] > (float)block_dur_us) tmp[j] = (float)block_dur_us;
+            }
+            {
+                int a;
+                for (a = 1; a < idx; ++a) {
+                    float key = tmp[a];
+                    int b2 = a - 1;
+                    while (b2 >= 0 && tmp[b2] > key) {
+                        tmp[b2 + 1] = tmp[b2];
+                        --b2;
+                    }
+                    tmp[b2 + 1] = key;
+                }
+            }
+            {
+                int a, w = 0;
+                const float eps_us = 1e-4f; /* 0.1 ns */
+                for (a = 0; a < idx; ++a) {
+                    if (w == 0 || tmp[a] - tmp[w - 1] > eps_us) tmp[w++] = tmp[a];
+                }
+                idx = w;
+            }
+            n_steps = idx;
+            t_grid  = tmp;
+        }
+
+        if (n_steps < 2) {
+            PULSEQLIB_FREE(t_grid);
+            goto bp_alloc_fail;
+        }
+
+        gx_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        gy_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        gz_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        kx_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        ky_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        kz_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        if (!gx_full || !gy_full || !gz_full || !kx_full || !ky_full || !kz_full) {
+            PULSEQLIB_FREE(t_grid);
+            PULSEQLIB_FREE(gx_full); PULSEQLIB_FREE(gy_full); PULSEQLIB_FREE(gz_full);
+            if (bp_x) PULSEQLIB_FREE(bp_x); if (fpx) PULSEQLIB_FREE(fpx);
+            if (bp_y) PULSEQLIB_FREE(bp_y); if (fpy) PULSEQLIB_FREE(fpy);
+            if (bp_z) PULSEQLIB_FREE(bp_z); if (fpz) PULSEQLIB_FREE(fpz);
+            goto alloc_fail;
+        }
+        n_grad = n_steps;
+
+        /* Sample g analytically at every breakpoint (sample_grad_axis_at
+         * is exact for both TRAP and ARB; matches truth's
+         * sampleGradAtTimes). */
+        for (i = 0; i < n_steps; ++i) {
+            gx_full[i] = sample_grad_axis_at(desc, bte->gx_id, bp_x, fpx, nx, t_grid[i]);
+            gy_full[i] = sample_grad_axis_at(desc, bte->gy_id, bp_y, fpy, ny, t_grid[i]);
+            gz_full[i] = sample_grad_axis_at(desc, bte->gz_id, bp_z, fpz, nz, t_grid[i]);
+        }
+
+        /* Trapezoidal cumsum (analytically exact on this grid). */
+        kx_full[0] = 0.0f; ky_full[0] = 0.0f; kz_full[0] = 0.0f;
+        for (i = 1; i < n_steps; ++i) {
+            float dt_seg = (t_grid[i] - t_grid[i - 1]) * 1e-6f;
+            kx_full[i] = kx_full[i-1] + 0.5f * (gx_full[i-1] + gx_full[i]) * dt_seg;
+            ky_full[i] = ky_full[i-1] + 0.5f * (gy_full[i-1] + gy_full[i]) * dt_seg;
+            kz_full[i] = kz_full[i-1] + 0.5f * (gz_full[i-1] + gz_full[i]) * dt_seg;
+        }
+
+        /* Per-axis cartesian classifier: g(t) constant across the
+         * ACTIVE ADC window?  Sample g ANALYTICALLY at t = adc.delay +
+         * (i + 0.5) * dwell.  Mirrors TruthBuilder.exportTrajectory. */
+        {
+            float xmin = 0, xmax = 0, ymin = 0, ymax = 0, zmin = 0, zmax = 0;
+            float xs, ys, zs;
+            int gxc, gyc, gzc;
+            int j;
+            float t_us, gv;
+            int first = 1;
+            for (j = 0; j < adc_num_samples; ++j) {
+                t_us = (float)adc_delay_us + ((float)j + 0.5f) * adc_dwell_us;
+                gv = sample_grad_axis_at(desc, bte->gx_id, bp_x, fpx, nx, t_us);
+                if (first || gv < xmin) xmin = gv;
+                if (first || gv > xmax) xmax = gv;
+                gv = sample_grad_axis_at(desc, bte->gy_id, bp_y, fpy, ny, t_us);
+                if (first || gv < ymin) ymin = gv;
+                if (first || gv > ymax) ymax = gv;
+                gv = sample_grad_axis_at(desc, bte->gz_id, bp_z, fpz, nz, t_us);
+                if (first || gv < zmin) zmin = gv;
+                if (first || gv > zmax) zmax = gv;
+                first = 0;
+            }
+            xs = (xmax > -xmin) ? xmax : -xmin; if (xs < 0) xs = -xs;
+            ys = (ymax > -ymin) ? ymax : -ymin; if (ys < 0) ys = -ys;
+            zs = (zmax > -zmin) ? zmax : -zmin; if (zs < 0) zs = -zs;
+            gxc = (xs < 1e-9f) ? 1 : ((xmax - xmin) / xs < 1e-3f);
+            gyc = (ys < 1e-9f) ? 1 : ((ymax - ymin) / ys < 1e-3f);
+            gzc = (zs < 1e-9f) ? 1 : ((zmax - zmin) / zs < 1e-3f);
+            if (getenv("PULSEQLIB_TRAJ_DEBUG")) {
+                fprintf(stderr, "  cls blk=%d xmin=%.1f xmax=%.1f xs=%.1f gxc=%d  ymin=%.1f ymax=%.1f gyc=%d\n",
+                    block_table_idx, xmin, xmax, xs, gxc, ymin, ymax, gyc);
+            }
+            if (out_gx_const) *out_gx_const = gxc;
+            if (out_gy_const) *out_gy_const = gyc;
+            if (out_gz_const) *out_gz_const = gzc;
+        }
+
+        /* Resample to ADC sample centres via linear interp on the
+         * breakpoint grid (k is bit-exact at every breakpoint). */
+        {
+            float t_us;
+            int lo, hi, mid;
+            float frac;
+            for (i = 0; i < adc_num_samples; ++i) {
+                t_us = (float)adc_delay_us + ((float)i + 0.5f) * adc_dwell_us;
+                if (t_us <= t_grid[0]) {
+                    out_kx[i] = kx_full[0];
+                    out_ky[i] = ky_full[0];
+                    out_kz[i] = kz_full[0];
+                    continue;
+                }
+                if (t_us >= t_grid[n_steps - 1]) {
+                    out_kx[i] = kx_full[n_steps - 1];
+                    out_ky[i] = ky_full[n_steps - 1];
+                    out_kz[i] = kz_full[n_steps - 1];
+                    continue;
+                }
+                lo = 0; hi = n_steps - 1;
+                while (hi - lo > 1) {
+                    mid = (lo + hi) >> 1;
+                    if (t_grid[mid] <= t_us) lo = mid; else hi = mid;
+                }
+                if (t_grid[hi] == t_grid[lo]) {
+                    out_kx[i] = kx_full[lo];
+                    out_ky[i] = ky_full[lo];
+                    out_kz[i] = kz_full[lo];
+                } else {
+                    frac = (t_us - t_grid[lo]) / (t_grid[hi] - t_grid[lo]);
+                    out_kx[i] = kx_full[lo] * (1.0f - frac) + kx_full[hi] * frac;
+                    out_ky[i] = ky_full[lo] * (1.0f - frac) + ky_full[hi] * frac;
+                    out_kz[i] = kz_full[lo] * (1.0f - frac) + kz_full[hi] * frac;
+                }
+            }
+        }
+
+        PULSEQLIB_FREE(t_grid);
+        PULSEQLIB_FREE(gx_full); PULSEQLIB_FREE(gy_full); PULSEQLIB_FREE(gz_full);
+        if (bp_x) PULSEQLIB_FREE(bp_x); if (fpx) PULSEQLIB_FREE(fpx);
+        if (bp_y) PULSEQLIB_FREE(bp_y); if (fpy) PULSEQLIB_FREE(fpy);
+        if (bp_z) PULSEQLIB_FREE(bp_z); if (fpz) PULSEQLIB_FREE(fpz);
+        goto post_resample;
+
+    bp_alloc_fail:
+        if (bp_x) PULSEQLIB_FREE(bp_x); if (fpx) PULSEQLIB_FREE(fpx);
+        if (bp_y) PULSEQLIB_FREE(bp_y); if (fpy) PULSEQLIB_FREE(fpy);
+        if (bp_z) PULSEQLIB_FREE(bp_z); if (fpz) PULSEQLIB_FREE(fpz);
+        goto alloc_fail;
     }
 
-    /* Crop to ADC window */
-    adc_start_sample = (int)(adc_delay_us / grad_raster_us + 0.5f);
-    adc_window_samples = (int)((float)adc_num_samples * adc_dwell_us / grad_raster_us + 0.5f);
-    adc_end_sample = adc_start_sample + adc_window_samples;
-    if (adc_end_sample > n_grad) adc_end_sample = n_grad;
-    adc_window_samples = adc_end_sample - adc_start_sample;
-    if (adc_window_samples < 1) adc_window_samples = 1;
+post_resample:
 
-    kx_window = kx_full + adc_start_sample;
-    ky_window = ky_full + adc_start_sample;
-    kz_window = kz_full + adc_start_sample;
-
-    /* Resample from grad raster to ADC dwell */
-    linear_resample(kx_window, adc_window_samples, grad_raster_us,
-                    out_kx, adc_num_samples, adc_dwell_us);
-    linear_resample(ky_window, adc_window_samples, grad_raster_us,
-                    out_ky, adc_num_samples, adc_dwell_us);
-    linear_resample(kz_window, adc_window_samples, grad_raster_us,
-                    out_kz, adc_num_samples, adc_dwell_us);
-
-    /* Center to k-zero anchor */
-    if (kzero_index >= 0 && kzero_index < adc_num_samples) {
-        kzero_kx = out_kx[kzero_index];
-        kzero_ky = out_ky[kzero_index];
-        kzero_kz = out_kz[kzero_index];
-    } else {
-        kzero_kx = 0.0f;
-        kzero_ky = 0.0f;
-        kzero_kz = 0.0f;
-    }
-
-    for (i = 0; i < adc_num_samples; ++i) {
-        out_kx[i] -= kzero_kx;
-        out_ky[i] -= kzero_ky;
-        out_kz[i] -= kzero_kz;
+    /* Anchor each axis so k = 0 at the kzero ADC sample.  This is what
+     * the recon expects: every readout's k-space coordinate is reported
+     * relative to its own k-space centre.  Caller passes the segment-
+     * timing-derived kzero index. */
+    {
+        int kz = kzero_index;
+        float ax, ay, az;
+        if (kz < 0) kz = 0;
+        if (kz >= adc_num_samples) kz = adc_num_samples - 1;
+        ax = out_kx[kz];
+        ay = out_ky[kz];
+        az = out_kz[kz];
+        for (i = 0; i < adc_num_samples; ++i) {
+            out_kx[i] -= ax;
+            out_ky[i] -= ay;
+            out_kz[i] -= az;
+        }
     }
 
     *out_num_samples = adc_num_samples;
@@ -419,6 +776,15 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
     float* ky_buf = NULL;
     float* kz_buf = NULL;
     int max_adc_samples;
+    /* Memoization: per-block_table-idx cached shot IDs and kzero so we
+     * skip redundant compute_block_kspace calls when the same block is
+     * referenced multiple times by the scan table (e.g. an EPI readout
+     * block that recurs once per phase-encode line).  Cache is keyed by
+     * (b, kzero); -2 means "not computed yet". */
+    int* cached_kx_id = NULL;
+    int* cached_ky_id = NULL;
+    int* cached_kz_id = NULL;
+    int* cached_kzero = NULL;
     int rc;
 
     if (!coll || !out) return PULSEQLIB_ERR_NULL_POINTER;
@@ -428,7 +794,13 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
     memset(out, 0, sizeof(*out));
     desc = &coll->descriptors[subseq_idx];
 
-    /* Count ADC events from scan table */
+    /* Count ADC events from scan table.
+     * Gate by the PER-INSTANCE block_table[b].adc_id (-1 for dummy ADC
+     * placeholders such as mr.makeDelay used to skip acquisition).
+     * block_definitions[].adc_id is the deduped adc_def index and is
+     * shared between dummy and real instances when block dedup ignores
+     * the ADC slot, so it over-counts here. The deduped index is still
+     * used downstream for the adc_definitions[] lookup. */
     num_adc_events = 0;
     for (n = 0; n < desc->scan_table_len; ++n) {
         b = desc->scan_table_block_idx[n];
@@ -464,151 +836,205 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
     if (!kx_buf || !ky_buf || !kz_buf || !table)
         goto compute_fail;
 
+    /* Allocate memoization cache and seed with sentinel -2 = uncomputed. */
+    if (desc->num_blocks > 0) {
+        int ci;
+        cached_kx_id = (int*)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
+        cached_ky_id = (int*)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
+        cached_kz_id = (int*)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
+        cached_kzero = (int*)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
+        if (!cached_kx_id || !cached_ky_id || !cached_kz_id || !cached_kzero)
+            goto compute_fail;
+        for (ci = 0; ci < desc->num_blocks; ++ci) {
+            cached_kx_id[ci] = -2;
+            cached_ky_id[ci] = -2;
+            cached_kz_id[ci] = -2;
+            cached_kzero[ci] = -1;
+        }
+    }
+
     memset(table, 0, (size_t)num_adc_events * sizeof(pulseqlib_traj_table_entry));
 
     /* Initialize kshot library */
     out->kshots.num_shots = 0;
     out->kshots.shots = NULL;
 
-    /* Iterate scan table, process each ADC block */
-    adc_idx = 0;
-    for (n = 0; n < desc->scan_table_len; ++n) {
-        const pulseqlib_block_table_element* bte;
-        int adc_def_idx, adc_nsamples, kzero;
-        int kx_id, ky_id, kz_id;
+    /* Iterate ADC scan-table entries.  Trajectory shape depends only
+     * on the base block definition (which is content-deduped on
+     * (gx_id, gy_id, gz_id, adc_id, duration)), so we memoize the
+     * computed shot IDs by block_def index (bte->id) to avoid redoing
+     * the same cumsum for every recurrence of the readout block.  The
+     * kzero anchor is per-occurrence (segment-derived); if a second
+     * occurrence of the same block_def uses a different kzero we
+     * recompute. */
+    {
+        adc_idx = 0;
+        for (n = 0; n < desc->scan_table_len; ++n) {
+            const pulseqlib_block_table_element* bte;
+            int adc_def_idx, adc_nsamples, kzero;
+            int kx_id, ky_id, kz_id;
 
-        b = desc->scan_table_block_idx[n];
-        bte = &desc->block_table[b];
-        adc_def_idx = bte->adc_id;
-        if (adc_def_idx < 0)
-            continue;
+            b = desc->scan_table_block_idx[n];
+            bte = &desc->block_table[b];
 
-        adc_nsamples = desc->adc_definitions[adc_def_idx].num_samples;
+            if (bte->adc_id < 0) continue;
+            adc_def_idx = desc->block_definitions[bte->id].adc_id;
+            if (adc_def_idx < 0) continue;
 
-        /* Find k-zero index from segment timing.
-         * Look up which segment this block belongs to and find the
-         * ADC anchor with matching block offset. */
-        kzero = adc_nsamples / 2;  /* default: center */
-        {
-            int seg_idx = desc->scan_table_seg_id[n];
-            if (seg_idx >= 0 && seg_idx < desc->num_unique_segments) {
-                const pulseqlib_tr_segment* seg_def = &desc->segment_definitions[seg_idx];
-                const pulseqlib_segment_timing* tim = &seg_def->timing;
-                int a;
-                for (a = 0; a < tim->num_adc_anchors; ++a) {
-                    if (tim->adc_anchors[a].block_offset ==
-                        (b - seg_def->start_block)) {
-                        kzero = tim->adc_anchors[a].kzero_index;
-                        break;
+            adc_nsamples = desc->adc_definitions[adc_def_idx].num_samples;
+
+            /* Find k-zero index from segment timing.
+             * Look up which segment this block belongs to and find the
+             * ADC anchor with matching block offset. */
+            kzero = adc_nsamples / 2;  /* default: center */
+            {
+                int seg_idx = desc->scan_table_seg_id[n];
+                if (seg_idx >= 0 && seg_idx < desc->num_unique_segments) {
+                    const pulseqlib_tr_segment* seg_def = &desc->segment_definitions[seg_idx];
+                    const pulseqlib_segment_timing* tim = &seg_def->timing;
+                    int a;
+                    for (a = 0; a < tim->num_adc_anchors; ++a) {
+                        if (tim->adc_anchors[a].block_offset ==
+                            (b - seg_def->start_block)) {
+                            kzero = tim->adc_anchors[a].kzero_index;
+                            break;
+                        }
                     }
                 }
             }
-        }
 
-        /* Compute block-level k-space */
-        rc = compute_block_kspace(desc, b, kzero,
-                                  kx_buf, ky_buf, kz_buf,
-                                  &adc_nsamples, diag);
-        if (PULSEQLIB_FAILED(rc)) goto compute_fail;
+            /* Memo lookup keyed by block_table index + kzero.
+             * (Not bte->id: block_definitions are deduped on the
+             * underlying gradient definition ids — shape only — so two
+             * scans with different per-slice rotations or amplitudes
+             * share bte->id but produce different physical waveforms.
+             * Block-table indices are unique per scan-table row;
+             * cross-block content equivalence is recovered by
+             * kshot_library_add which dedups identical k arrays.) */
+            if (cached_kx_id && b >= 0 && b < desc->num_blocks
+                && cached_kx_id[b] != -2
+                && cached_kzero[b] == kzero) {
+                kx_id = cached_kx_id[b];
+                ky_id = cached_ky_id[b];
+                kz_id = cached_kz_id[b];
+            } else {
+                int gx_const = 0, gy_const = 0, gz_const = 0;
+                rc = compute_block_kspace(desc, b, kzero,
+                                          kx_buf, ky_buf, kz_buf,
+                                          &adc_nsamples,
+                                          &gx_const, &gy_const, &gz_const,
+                                          diag);
+                if (PULSEQLIB_FAILED(rc)) goto compute_fail;
 
-        /* Per-axis dedup into kshot library */
-        if (is_trivial_shot(kx_buf, adc_nsamples)) {
-            kx_id = -1;
-        } else {
-            kx_id = kshot_library_add(&out->kshots, kx_buf, adc_nsamples);
-            if (kx_id < 0) goto compute_fail;
-        }
+                /* Per-axis dedup into kshot library.  An axis is
+                 * cartesian (kshot_id=-1) when g(t) is constant during
+                 * the active ADC window; the mrdserver reconstructs
+                 * coordinates from the gradient amplitude metadata
+                 * (and applies any rotation) without needing a kshot. */
+                if (gx_const) {
+                    kx_id = -1;
+                } else {
+                    kx_id = kshot_library_add(&out->kshots, kx_buf, adc_nsamples);
+                    if (kx_id < 0) goto compute_fail;
+                }
+                if (gy_const) {
+                    ky_id = -1;
+                } else {
+                    ky_id = kshot_library_add(&out->kshots, ky_buf, adc_nsamples);
+                    if (ky_id < 0) goto compute_fail;
+                }
+                if (gz_const) {
+                    kz_id = -1;
+                } else {
+                    kz_id = kshot_library_add(&out->kshots, kz_buf, adc_nsamples);
+                    if (kz_id < 0) goto compute_fail;
+                }
 
-        if (is_trivial_shot(ky_buf, adc_nsamples)) {
-            ky_id = -1;
-        } else {
-            ky_id = kshot_library_add(&out->kshots, ky_buf, adc_nsamples);
-            if (ky_id < 0) goto compute_fail;
-        }
-
-        if (is_trivial_shot(kz_buf, adc_nsamples)) {
-            kz_id = -1;
-        } else {
-            kz_id = kshot_library_add(&out->kshots, kz_buf, adc_nsamples);
-            if (kz_id < 0) goto compute_fail;
-        }
-
-        /* Populate table entry */
-        table[adc_idx].kx_shot_id = kx_id;
-        table[adc_idx].ky_shot_id = ky_id;
-        table[adc_idx].kz_shot_id = kz_id;
-
-        /* Gradient amplitudes */
-        table[adc_idx].gx_amplitude = (bte->gx_id >= 0 && bte->gx_id < desc->grad_table_size)
-            ? desc->grad_table[bte->gx_id].amplitude : 0.0f;
-        table[adc_idx].gy_amplitude = (bte->gy_id >= 0 && bte->gy_id < desc->grad_table_size)
-            ? desc->grad_table[bte->gy_id].amplitude : 0.0f;
-        table[adc_idx].gz_amplitude = (bte->gz_id >= 0 && bte->gz_id < desc->grad_table_size)
-            ? desc->grad_table[bte->gz_id].amplitude : 0.0f;
-
-        /* Rotation */
-        table[adc_idx].rotation_id = bte->rotation_id;
-
-        /* Metadata: center_sample, sample_time */
-        table[adc_idx].center_sample = kzero;
-        table[adc_idx].sample_time_us = (float)desc->adc_definitions[adc_def_idx].dwell_time * 1e-3f;
-        table[adc_idx].flags = 0;
-        table[adc_idx].off = (desc->off_table && adc_idx < desc->label_num_entries)
-                             ? (desc->off_table[adc_idx] ? 1 : 0) : 0;
-
-        /* Labels from label table */
-        if (label_buf && adc_idx < desc->label_num_entries) {
-            rc = pulseqlib_get_adc_label(coll, label_buf,
-                                         subseq_idx, adc_idx);
-            if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 10) {
-                /* Full Pulseq label mapping: col order matches label_table columns */
-                table[adc_idx].lin = label_buf[0];
-                table[adc_idx].slc = label_buf[1];
-                table[adc_idx].eco = label_buf[2];
-                table[adc_idx].rep = label_buf[3];
-                table[adc_idx].phs = label_buf[4];
-                table[adc_idx].set = label_buf[5];
-                table[adc_idx].seg = label_buf[6];
-                table[adc_idx].avg = label_buf[7];
-                table[adc_idx].par = label_buf[8];
-                table[adc_idx].acq = label_buf[9];
-
-                /* Override rep with the actual average (NEX) loop index from
-                 * the scan table; the seqfile label table cannot know NEX. */
-                if (desc->scan_table_avg_id)
-                    table[adc_idx].rep = desc->scan_table_avg_id[n];
-
-                /* Map Pulseq boolean flags to ISMRMRD flag bits
-                 * Column indices (0-based) match PULSEQLIB__* macros - 1.
-                 * Flags 1-18 (FIRST/LAST) are NOT set here; they are computed
-                 * per-encoding-space in the enrichment layer using actual min/max. */
-                if (label_ncols > 10 && label_buf[10]) /* NAV  col11 */
-                    table[adc_idx].flags |= (1UL << 22);  /* ACQ_IS_NAVIGATION_DATA (23) */
-                if (label_ncols > 11 && label_buf[11]) /* REV  col12 */
-                    table[adc_idx].flags |= (1UL << 21);  /* ACQ_IS_REVERSE (22) */
-                if (label_ncols > 13 && label_buf[13]) /* REF  col14 */
-                    table[adc_idx].flags |= (1UL << 19);  /* ACQ_IS_PARALLEL_CALIBRATION (20) */
-                if (label_ncols > 14 && label_buf[14]) /* IMA  col15 */
-                    table[adc_idx].flags |= (1UL << 20);  /* ACQ_IS_PARALLEL_CALIBRATION_AND_IMAGING (21) */
-                if (label_ncols > 15 && label_buf[15]) /* NOISE col16 */
-                    table[adc_idx].flags |= (1UL << 18);  /* ACQ_IS_NOISE_MEASUREMENT (19) */
-            } else if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 3) {
-                /* GEHC mapping fallback: col0=lin, col1=slc, col2=eco */
-                table[adc_idx].lin = label_buf[0];
-                table[adc_idx].slc = label_buf[1];
-                table[adc_idx].eco = label_buf[2];
+                if (cached_kx_id && b >= 0 && b < desc->num_blocks) {
+                    cached_kx_id[b] = kx_id;
+                    cached_ky_id[b] = ky_id;
+                    cached_kz_id[b] = kz_id;
+                    cached_kzero[b] = kzero;
+                }
             }
+
+            /* Populate table entry */
+            table[adc_idx].kx_shot_id = kx_id;
+            table[adc_idx].ky_shot_id = ky_id;
+            table[adc_idx].kz_shot_id = kz_id;
+
+            /* Gradient amplitudes */
+            table[adc_idx].gx_amplitude = (bte->gx_id >= 0 && bte->gx_id < desc->grad_table_size)
+                ? desc->grad_table[bte->gx_id].amplitude : 0.0f;
+            table[adc_idx].gy_amplitude = (bte->gy_id >= 0 && bte->gy_id < desc->grad_table_size)
+                ? desc->grad_table[bte->gy_id].amplitude : 0.0f;
+            table[adc_idx].gz_amplitude = (bte->gz_id >= 0 && bte->gz_id < desc->grad_table_size)
+                ? desc->grad_table[bte->gz_id].amplitude : 0.0f;
+
+            /* Rotation */
+            table[adc_idx].rotation_id = bte->rotation_id;
+
+            /* Metadata: center_sample, sample_time */
+            table[adc_idx].center_sample = kzero;
+            table[adc_idx].sample_time_us = (float)desc->adc_definitions[adc_def_idx].dwell_time * 1e-3f;
+            table[adc_idx].flags = 0;
+            table[adc_idx].off = (desc->off_table && adc_idx < desc->label_num_entries)
+                                 ? (desc->off_table[adc_idx] ? 1 : 0) : 0;
+
+            /* Labels from label table */
+            if (label_buf && adc_idx < desc->label_num_entries) {
+                rc = pulseqlib_get_adc_label(coll, label_buf,
+                                             subseq_idx, adc_idx);
+                if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 10) {
+                    /* Full Pulseq label mapping: col order matches label_table columns */
+                    table[adc_idx].lin = label_buf[0];
+                    table[adc_idx].slc = label_buf[1];
+                    table[adc_idx].eco = label_buf[2];
+                    table[adc_idx].rep = label_buf[3];
+                    table[adc_idx].phs = label_buf[4];
+                    table[adc_idx].set = label_buf[5];
+                    table[adc_idx].seg = label_buf[6];
+                    table[adc_idx].avg = label_buf[7];
+                    table[adc_idx].par = label_buf[8];
+                    table[adc_idx].acq = label_buf[9];
+
+                    /* Override rep with the actual average (NEX) loop index from
+                     * the scan table; the seqfile label table cannot know NEX. */
+                    if (desc->scan_table_avg_id)
+                        table[adc_idx].rep = desc->scan_table_avg_id[n];
+
+                    /* Map Pulseq boolean flags to ISMRMRD flag bits
+                     * Column indices (0-based) match PULSEQLIB__* macros - 1.
+                     * Flags 1-18 (FIRST/LAST) are NOT set here; they are computed
+                     * per-encoding-space in the enrichment layer using actual min/max. */
+                    if (label_ncols > 10 && label_buf[10]) /* NAV  col11 */
+                        table[adc_idx].flags |= (1UL << 22);  /* ACQ_IS_NAVIGATION_DATA (23) */
+                    if (label_ncols > 11 && label_buf[11]) /* REV  col12 */
+                        table[adc_idx].flags |= (1UL << 21);  /* ACQ_IS_REVERSE (22) */
+                    if (label_ncols > 13 && label_buf[13]) /* REF  col14 */
+                        table[adc_idx].flags |= (1UL << 19);  /* ACQ_IS_PARALLEL_CALIBRATION (20) */
+                    if (label_ncols > 14 && label_buf[14]) /* IMA  col15 */
+                        table[adc_idx].flags |= (1UL << 20);  /* ACQ_IS_PARALLEL_CALIBRATION_AND_IMAGING (21) */
+                    if (label_ncols > 15 && label_buf[15]) /* NOISE col16 */
+                        table[adc_idx].flags |= (1UL << 18);  /* ACQ_IS_NOISE_MEASUREMENT (19) */
+                } else if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 3) {
+                    /* GEHC mapping fallback: col0=lin, col1=slc, col2=eco */
+                    table[adc_idx].lin = label_buf[0];
+                    table[adc_idx].slc = label_buf[1];
+                    table[adc_idx].eco = label_buf[2];
+                }
+            }
+
+            /* NAV flag from block table (block-level nav_flag) */
+            if (bte->nav_flag)
+                table[adc_idx].flags |= (1UL << 22);  /* ACQ_IS_NAVIGATION_DATA */
+
+            /* Encoding space ref: local index 0 = normal, 1 = navigator */
+            table[adc_idx].encoding_space_ref =
+                (table[adc_idx].flags & (1UL << 22)) ? 1 : 0;
+
+            ++adc_idx;
         }
-
-        /* NAV flag from block table (block-level nav_flag) */
-        if (bte->nav_flag)
-            table[adc_idx].flags |= (1UL << 22);  /* ACQ_IS_NAVIGATION_DATA */
-
-        /* Encoding space ref: local index 0 = normal, 1 = navigator */
-        table[adc_idx].encoding_space_ref =
-            (table[adc_idx].flags & (1UL << 22)) ? 1 : 0;
-
-        ++adc_idx;
     }
 
     /* FIRST_IN / LAST_IN flags (bits 0-17, ISMRMRD flags 1-18) are computed
@@ -620,13 +1046,16 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
 
     out->num_adc_events = adc_idx;
     out->table = table;
-    table = NULL;
+    /* keep `table` valid until the navigator/label-limits passes below
+     * have finished reading it; nulled at end-of-function for cleanup. */
 
-    /* Detect whether any ADC carries the navigator flag */
+    /* Detect whether any ADC carries the navigator flag.
+     * Note: read via out->table since the local `table` was nulled above
+     * after ownership transfer. */
     {
         int has_nav = 0, num_es_local, es, i;
         for (i = 0; i < adc_idx; ++i) {
-            if (table[i].flags & (1UL << 22)) { has_nav = 1; break; }
+            if (out->table[i].flags & (1UL << 22)) { has_nav = 1; break; }
         }
         num_es_local = has_nav ? 2 : 1;
 
@@ -688,6 +1117,10 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
     PULSEQLIB_FREE(ky_buf);
     PULSEQLIB_FREE(kz_buf);
     PULSEQLIB_FREE(label_buf);
+    PULSEQLIB_FREE(cached_kx_id);
+    PULSEQLIB_FREE(cached_ky_id);
+    PULSEQLIB_FREE(cached_kz_id);
+    PULSEQLIB_FREE(cached_kzero);
     return PULSEQLIB_SUCCESS;
 
 compute_fail:
@@ -695,6 +1128,12 @@ compute_fail:
     PULSEQLIB_FREE(ky_buf);
     PULSEQLIB_FREE(kz_buf);
     PULSEQLIB_FREE(label_buf);
+    PULSEQLIB_FREE(cached_kx_id);
+    PULSEQLIB_FREE(cached_ky_id);
+    PULSEQLIB_FREE(cached_kz_id);
+    PULSEQLIB_FREE(cached_kzero);
+    /* If table ownership was already transferred to `out`, avoid double-free. */
+    if (out && out->table == table) table = NULL;
     PULSEQLIB_FREE(table);
     pulseqlib_free_trajectory(out);
     return PULSEQLIB_ERR_ALLOC_FAILED;

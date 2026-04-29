@@ -17,6 +17,7 @@ segment_5_num_blocks 3
 num_canonical_trs 1
 canonical_mode tr
 fmod_build_mode tr_scoped
+num_averages 1
 canonical_duration_us 84260
 num_freqmod_plan_probes 4
 num_freqmod_plan_entries 26

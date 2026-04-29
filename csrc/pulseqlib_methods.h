@@ -423,6 +423,38 @@ int pulseqlib_check_safety(
     const pulseqlib_pns_params*    pns_params,
     float                          pns_threshold_percent);
 
+/**
+ * @brief Vendor-neutral one-shot safety check from a `.seq` file path.
+ *
+ * Convenience facade for third-party vendors that do not want to manage
+ * a `pulseqlib_collection` lifetime: internally calls
+ * `pulseqlib_read()` (no cache, no signature verification, no label
+ * parsing), then `pulseqlib_check_safety()`, then
+ * `pulseqlib_collection_free()`.  Performs the same suite of checks as
+ * `pulseqlib_check_safety()` (max gradient amplitude, gradient
+ * continuity, max slew rate, structural mechanical-resonance forbidden
+ * bands, and the vendor PNS model selected by `pns_params->vendor`).
+ *
+ * @param[out] diag                   Diagnostic on violation / load error.
+ * @param[in]  seq_path               Path to a (possibly chained) `.seq` file.
+ * @param[in]  opts                   Scanner limits and rasters.
+ * @param[in]  num_forbidden_bands    Number of acoustic forbidden bands.
+ * @param[in]  forbidden_bands        Array of forbidden bands.
+ * @param[in]  pns_params             PNS model parameters
+ *                                    (NULL to skip PNS).
+ * @param[in]  pns_threshold_percent  PNS threshold (100 = 100 %).
+ * @return PULSEQLIB_SUCCESS if safe, negative error code on load failure
+ *         or safety violation.
+ */
+int pulseqlib_check_safety_from_file(
+    pulseqlib_diagnostic*           diag,
+    const char*                     seq_path,
+    const pulseqlib_opts*           opts,
+    int                             num_forbidden_bands,
+    const pulseqlib_forbidden_band* forbidden_bands,
+    const pulseqlib_pns_params*     pns_params,
+    float                           pns_threshold_percent);
+
 /* ================================================================== */
 /*  Acoustic spectra (for wrapper-side plotting)                      */
 /* ================================================================== */

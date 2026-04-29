@@ -72,6 +72,34 @@ The cache (`pulseqlib_cache.c`) is purely an acceleration aid — disable
 it via `cache_binary=0` or the `PULSEQLIB_BUILD_CACHE=OFF` build flag if
 the integration is one-shot and the on-disk artefact is unwanted.
 
+### 3a. Iterator-based safety entrypoint (no collection required)
+
+Vendors that don't want to manage a `pulseqlib_collection*` lifetime
+can use the one-shot facade `pulseqlib_check_safety_from_file()`. It
+takes a `.seq` file path and the same `opts` / forbidden-bands /
+`pns_params` triple as `pulseqlib_check_safety()`, and internally:
+
+1. calls `pulseqlib_read()` (no cache, no signature verification, no
+   label parsing);
+2. runs `pulseqlib_check_safety()` with the caller-supplied limits;
+3. frees the collection before returning.
+
+```c
+pulseqlib_diagnostic diag = PULSEQLIB_DIAGNOSTIC_INIT;
+int rc = pulseqlib_check_safety_from_file(
+    &diag, "scan.seq", &opts,
+    num_forbidden_bands, forbidden_bands,
+    &pns_params, pns_threshold_percent);
+```
+
+The performed checks are exactly those of `pulseqlib_check_safety()`:
+gradient continuity, max gradient amplitude, max slew rate, structural
+mechanical-resonance forbidden bands, and PNS thresholding under the
+vendor model selected by `pns_params.vendor`.
+
+A worked example ships under
+[`examples/cexamples/safety_with_external_sequence.c`](../../examples/cexamples/safety_with_external_sequence.c).
+
 For wrapper-side plotting (i.e. when a UI needs the sample-level
 waveforms / spectra rather than just a pass/fail verdict), use the
 collection-based getters:

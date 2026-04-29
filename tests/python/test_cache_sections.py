@@ -94,15 +94,20 @@ class TestInfo:
 # ── trajectory_info() — None for Cartesian (no .bin) ─────────────────
 
 class TestTrajectoryInfo:
-    def test_cartesian_returns_none(self, sc_gre):
-        # gre_2d has no .bin cache file alongside the fixture
+    def test_cartesian_returns_info(self, sc_gre):
+        # gre_2d now has a .bin cache file alongside the fixture (Phase A wiring)
         ti = sc_gre.trajectory_info()
-        assert ti is None
+        assert ti is not None
+        # Cartesian: no per-shot kspace samples are stored
+        assert ti.kshots == []
+        assert len(ti.encoding_spaces) >= 1
 
-    def test_noncart_returns_none_when_no_bin(self, sc_noncart):
-        # noncart fixture also has no .bin cache in expected/
+    def test_noncart_returns_info(self, sc_noncart):
+        # noncart fixture now has a .bin cache file alongside it
         ti = sc_noncart.trajectory_info()
-        assert ti is None
+        assert ti is not None
+        assert len(ti.kshots) >= 1
+        assert len(ti.encoding_spaces) >= 1
 
     def test_trajectory_info_from_in_memory_seq(self, simple_gre_seq):
         """When constructed from a pp.Sequence object (not a path), trajectory_info is None."""
@@ -112,7 +117,7 @@ class TestTrajectoryInfo:
     def test_trajectory_info_is_cached(self, sc_gre):
         ti1 = sc_gre.trajectory_info()
         ti2 = sc_gre.trajectory_info()
-        # Both None; sentinel is idempotent
+        # Cached: same object on repeat call
         assert ti1 is ti2
 
 

@@ -868,6 +868,12 @@ function seqs = write_epi_gre(write, num_averages)
     gre_truth = testutils.truth_parse_case(fullfile(tmp_dir, [base '_gre_part']));
     epi_truth = testutils.truth_parse_case(fullfile(tmp_dir, [base '_epi_part']));
     testutils.exportCollectionTruth(out_dir, base, {gre_truth, epi_truth});
+
+    % Merge per-part Section 5 truths into one collection seq_desc.bin.
+    testutils.mergeSeqDescBinaries( ...
+        fullfile(out_dir, [base '_seq_desc.bin']), ...
+        { fullfile(tmp_dir, [base '_gre_part_seq_desc.bin']), ...
+          fullfile(tmp_dir, [base '_epi_part_seq_desc.bin']) });
 end
 
 

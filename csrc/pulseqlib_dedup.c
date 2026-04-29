@@ -870,14 +870,33 @@ static int compute_rf_stats(
                                           time_us_uniform, num_uniform,
                                           time_us, rf_re, rf_im, num_samples);
 
-        /* compute stats */
-        sum_signed_re = 0.0f; sum_signed_im = 0.0f;
+        /* compute stats — use double accumulators + trapezoid integration
+         * on the NATIVE (un-interpolated) time grid to match MATLAB
+         * trapz(rf.t, rf.signal) byte-exactly when stored as float32. */
+        {
+            double dre = 0.0, dim = 0.0;
+            if (has_time && time_us && num_samples >= 2) {
+                for (i = 0; i < num_samples - 1; ++i) {
+                    double dt = ((double)time_us[i + 1] - (double)time_us[i]) * 1e-6;
+                    dre += 0.5 * dt * ((double)rf_re[i] + (double)rf_re[i + 1]);
+                    dim += 0.5 * dt * ((double)rf_im[i] + (double)rf_im[i + 1]);
+                }
+            } else {
+                /* fall back to uniform-grid integration */
+                double dt = (double)rf_raster_us * 1e-6;
+                for (i = 0; i < num_samples - 1; ++i) {
+                    dre += 0.5 * dt * ((double)rf_re[i] + (double)rf_re[i + 1]);
+                    dim += 0.5 * dt * ((double)rf_im[i] + (double)rf_im[i + 1]);
+                }
+            }
+            sum_signed = (float)sqrt(dre * dre + dim * dim);
+            sum_signed_re = (float)dre;  /* unused below, but keep filled */
+            sum_signed_im = (float)dim;
+        }
+        /* width / power / duty stats still need the uniform grid */
         sum_abs = 0.0f; sum_sq = 0.0f;
         time_above_threshold = 0.0f; maxpw = 0.0f; temp_pw = 0.0f;
-
         for (i = 0; i < num_uniform; ++i) {
-            sum_signed_re += rf_re_uniform[i];
-            sum_signed_im += rf_im_uniform[i];
             rf_abs = (float)sqrt(rf_re_uniform[i] * rf_re_uniform[i] +
                                  rf_im_uniform[i] * rf_im_uniform[i]);
             sum_abs += rf_abs;
@@ -888,15 +907,37 @@ static int compute_rf_stats(
         }
         if (temp_pw > maxpw) maxpw = temp_pw;
 
-        sum_signed = (float)sqrt(sum_signed_re * sum_signed_re +
-                                 sum_signed_im * sum_signed_im) *
-                     seq->opts.rf_raster_us * 1e-6f;
-
         rd->stats.area      = sum_signed;
         rd->stats.abs_width  = sum_abs / num_uniform;
         rd->stats.eff_width  = sum_sq  / num_uniform;
         rd->stats.duty_cycle    = time_above_threshold / num_uniform;
-        rd->stats.flip_angle_deg = (float)PULSEQLIB__TWO_PI * rd->stats.base_amplitude_hz * sum_signed;
+        {
+            /* Compute the signed integral in double using trapezoidal rule
+             * on the NATIVE time grid (matches MATLAB trapz(rf.t,rf.signal)).
+             * Store flip_angle in RADIANS in stats.flip_angle_deg
+             * (misnamed historically; consumers apply rad->deg). */
+            double dre = 0.0, dim = 0.0;
+            if (has_time && time_us && num_samples >= 2) {
+                for (i = 0; i < num_samples - 1; ++i) {
+                    double dt = ((double)time_us[i + 1] - (double)time_us[i]) * 1e-6;
+                    dre += 0.5 * dt * ((double)rf_re[i] + (double)rf_re[i + 1]);
+                    dim += 0.5 * dt * ((double)rf_im[i] + (double)rf_im[i + 1]);
+                }
+            } else {
+                double dt = (double)rf_raster_us * 1e-6;
+                for (i = 0; i < num_samples - 1; ++i) {
+                    dre += 0.5 * dt * ((double)rf_re[i] + (double)rf_re[i + 1]);
+                    dim += 0.5 * dt * ((double)rf_im[i] + (double)rf_im[i + 1]);
+                }
+            }
+            {
+                double mag_d = sqrt(dre * dre + dim * dim);
+                double flip_rad_d = 2.0 * 3.14159265358979323846
+                                  * (double)rd->stats.base_amplitude_hz
+                                  * mag_d;
+                rd->stats.flip_angle_deg = (float)flip_rad_d;  /* actually radians */
+            }
+        }
         rd->stats.max_pulse_width     = maxpw / num_uniform;
         if (rd->stats.duty_cycle < rd->stats.max_pulse_width) rd->stats.duty_cycle = rd->stats.max_pulse_width;
 

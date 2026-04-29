@@ -3799,3 +3799,45 @@ int pulseqlib_check_safety(
 
     return PULSEQLIB_SUCCESS;
 }
+
+/* ================================================================== */
+/*  Vendor-neutral safety entrypoint (load + check + free)            */
+/* ================================================================== */
+
+int pulseqlib_check_safety_from_file(
+    pulseqlib_diagnostic*           diag,
+    const char*                     seq_path,
+    const pulseqlib_opts*           opts,
+    int                             num_forbidden_bands,
+    const pulseqlib_forbidden_band* forbidden_bands,
+    const pulseqlib_pns_params*     pns_params,
+    float                           pns_threshold_percent)
+{
+    pulseqlib_collection* coll = NULL;
+    int rc;
+
+    if (diag) pulseqlib_diagnostic_init(diag);
+    if (!seq_path || !opts) {
+        if (diag) diag->code = PULSEQLIB_ERR_NULL_POINTER;
+        return PULSEQLIB_ERR_NULL_POINTER;
+    }
+
+    rc = pulseqlib_read(
+        &coll, diag, seq_path, opts,
+        /*cache_binary*/     0,
+        /*verify_signature*/ 0,
+        /*parse_labels*/     0,
+        /*num_averages*/     1);
+    if (PULSEQLIB_FAILED(rc)) {
+        if (coll) pulseqlib_collection_free(coll);
+        return rc;
+    }
+
+    rc = pulseqlib_check_safety(
+        coll, diag, opts,
+        num_forbidden_bands, forbidden_bands,
+        pns_params, pns_threshold_percent);
+
+    pulseqlib_collection_free(coll);
+    return rc;
+}
