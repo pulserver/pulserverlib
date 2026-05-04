@@ -12,15 +12,12 @@ Provides:
 from __future__ import annotations
 
 __all__ = [
-    'CompositeRfGroup',
     'EncodingSpace',
     'LabelLimits',
-    'RfShapeTuple',
-    'SeqEvent',
+    'SeqRow',
     'SequenceDescription',
     'SequenceDescriptionInfo',
     'SequenceParameters',
-    'ShimDef',
     'TrajTableEntry',
     'TrajectoryInfo',
     'build_sequence_description_info',
@@ -53,48 +50,23 @@ class SequenceParameters:
 
 
 @dataclass
-class RfShapeTuple:
-    """Normalised RF shape for one unique pulse (mirrors RfShapeTuple in C)."""
-    tuple_id:             int
-    N_tx:                 int
-    N_samples:            int
-    rf_raster_us:         float
-    num_bands:            int
-    band_freq_offsets_hz: list[float]
-    band_bandwidth_hz:    float
-    total_b1sq_power:     float
-    mag:                  list[float]  # [N_tx * N_samples], normalised to peak=1
-    phase:                list[float]  # [N_tx * N_samples] in rad; empty if all-zero
-    time:                 list[float]  # [N_samples] in us; empty for uniform grid
-
-
-@dataclass
-class ShimDef:
-    """Local pTx shim definition for one subsequence."""
-    shim_id_local: int
-    N_ch:          int
-    magnitudes:    list[float]
-    phases:        list[float]
-
-
-@dataclass
-class SeqEvent:
-    """Single TR event (WAIT / RF / ADC).
+class SeqRow:
+    """Single pass-block row in the compact sequence description.
 
     Param layout (mirrors pulseqlib_seq_event):
 
-    RF   — params[0]=center_us, [1]=duration_us, [2]=flip_deg, [3]=tuple_id,
-            [4]=shim_id_local, [5]=slice_selective (0/1), [6]=reserved
-    ADC  — params[0]=center_us, [1]=duration_us, [2]=num_samples, [3]=dwell_us,
-            [4]=adc_role, [5]=reserved, [6]=reserved
-    WAIT — params[0]=duration_us, [1..6]=reserved
+    RF    — params[0]=rf_def_id, [1]=rf_use, [2]=act_amplitude_hz,
+             [3]=phase_offset_rad, [4]=freq_offset_hz, [5]=rf_shim_id
+    ADC   — params[0]=adc_role, [1]=phase_offset_rad, [2..5]=0
+    OTHER — params[0..5]=0
     """
-    type:   int       # 0=WAIT, 1=RF, 2=ADC
-    params: list[float]
+    type:         int          # 0=OTHER, 1=RF, 2=ADC
+    timestamp_us: float        # pass-relative anchor time (us)
+    params:       list[float]  # 6 floats, type-specific
 
     @property
-    def is_wait(self) -> bool:
-        return self.type == _SEQ_EVENT_TYPE_WAIT
+    def is_other(self) -> bool:
+        return self.type == _SEQ_EVENT_TYPE_WAIT  # alias for OTHER
 
     @property
     def is_rf(self) -> bool:
@@ -106,80 +78,58 @@ class SeqEvent:
 
     # ── RF accessors ─────────────────────────────────────────
     @property
-    def rf_center_us(self) -> float:
-        return self.params[0]
+    def rf_def_id(self) -> int:
+        return int(self.params[0])
 
     @property
-    def rf_duration_us(self) -> float:
-        return self.params[1]
+    def rf_use(self) -> int:
+        return int(self.params[1])
 
     @property
-    def rf_flip_angle_deg(self) -> float:
-        import math
-        return math.degrees(self.params[2])
+    def rf_act_amplitude_hz(self) -> float:
+        return self.params[2]
 
     @property
-    def rf_tuple_id(self) -> int:
-        return int(self.params[3])
+    def rf_phase_offset_rad(self) -> float:
+        return self.params[3]
 
     @property
-    def rf_slice_selective(self) -> bool:
-        return self.params[5] > 0.5
+    def rf_freq_offset_hz(self) -> float:
+        return self.params[4]
+
+    @property
+    def rf_shim_id(self) -> int:
+        return int(self.params[5])
 
     # ── ADC accessors ────────────────────────────────────────
     @property
-    def adc_center_us(self) -> float:
-        return self.params[0]
+    def adc_role(self) -> int:
+        return int(self.params[0])
 
     @property
-    def adc_duration_us(self) -> float:
+    def adc_phase_offset_rad(self) -> float:
         return self.params[1]
-
-    @property
-    def adc_num_samples(self) -> int:
-        return int(self.params[2])
-
-    @property
-    def adc_dwell_us(self) -> float:
-        return self.params[3]
-
-    # ── WAIT accessor ────────────────────────────────────────
-    @property
-    def wait_duration_us(self) -> float:
-        return self.params[0]
-
-
-@dataclass
-class CompositeRfGroup:
-    """Contiguous RF run (>= 2 pulses, e.g. inversion + excitation)."""
-    group_id:        int
-    first_event_idx: int
-    last_event_idx:  int
-    num_pulses:      int
-    eff_te_us:       float
 
 
 @dataclass
 class SequenceDescription:
-    """Per-subsequence event list and waveform libraries."""
-    subseq_idx:          int
-    tr_duration_us:      float
-    rf_shape_tuples:     list[RfShapeTuple]
-    shim_defs:           list[ShimDef]
-    events:              list[SeqEvent]
-    composite_rf_groups: list[CompositeRfGroup]
+    """Per-subsequence compact row table (one row per pass block)."""
+    subseq_idx:    int
+    tr_duration_us: float
+    rows:          list[SeqRow]
 
     @property
-    def num_rf_events(self) -> int:
-        return sum(1 for e in self.events if e.is_rf)
+    def num_rf_rows(self) -> int:
+        return sum(1 for r in self.rows if r.is_rf)
 
     @property
-    def num_adc_events(self) -> int:
-        return sum(1 for e in self.events if e.is_adc)
+    def num_adc_rows(self) -> int:
+        return sum(1 for r in self.rows if r.is_adc)
 
     @property
     def flip_angles_deg(self) -> list[float]:
-        return [e.rf_flip_angle_deg for e in self.events if e.is_rf]
+        """Nominal flip angles (degrees) — requires rf_stats lookup; placeholder."""
+        return []
 
 
 @dataclass
@@ -263,52 +213,18 @@ def build_sequence_description_info(
 
     subseqs = []
     for d in desc_dicts:
-        tuples = [
-            RfShapeTuple(
-                tuple_id             = int(t['tuple_id']),
-                N_tx                 = int(t['N_tx']),
-                N_samples            = int(t['N_samples']),
-                rf_raster_us         = float(t['rf_raster_us']),
-                num_bands            = int(t['num_bands']),
-                band_freq_offsets_hz = [float(v) for v in t['band_freq_offsets_hz']],
-                band_bandwidth_hz    = float(t['band_bandwidth_hz']),
-                total_b1sq_power     = float(t['total_b1sq_power']),
-                mag                  = [float(v) for v in t['mag']],
-                phase                = [float(v) for v in t['phase']],
-                time                 = [float(v) for v in t['time']],
+        rows = [
+            SeqRow(
+                type         = int(r['type']),
+                timestamp_us = float(r['timestamp_us']),
+                params       = [float(v) for v in r['params']],
             )
-            for t in d['rf_shape_tuples']
-        ]
-        shims = [
-            ShimDef(
-                shim_id_local = int(s['shim_id_local']),
-                N_ch          = int(s['N_ch']),
-                magnitudes    = [float(v) for v in s['magnitudes']],
-                phases        = [float(v) for v in s['phases']],
-            )
-            for s in d['shim_defs']
-        ]
-        events = [
-            SeqEvent(type=int(e['type']), params=[float(v) for v in e['params']])
-            for e in d['events']
-        ]
-        groups = [
-            CompositeRfGroup(
-                group_id        = int(g['group_id']),
-                first_event_idx = int(g['first_event_idx']),
-                last_event_idx  = int(g['last_event_idx']),
-                num_pulses      = int(g['num_pulses']),
-                eff_te_us       = float(g['eff_te_us']),
-            )
-            for g in d['composite_rf_groups']
+            for r in d['rows']
         ]
         subseqs.append(SequenceDescription(
-            subseq_idx          = int(d['subseq_idx']),
-            tr_duration_us      = float(d['tr_duration_us']),
-            rf_shape_tuples     = tuples,
-            shim_defs           = shims,
-            events              = events,
-            composite_rf_groups = groups,
+            subseq_idx     = int(d['subseq_idx']),
+            tr_duration_us = float(d['tr_duration_us']),
+            rows           = rows,
         ))
 
     return SequenceDescriptionInfo(seq_params=sp, subseqs=subseqs)

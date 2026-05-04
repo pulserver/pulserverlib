@@ -23,9 +23,10 @@ namespace py = pybind11;
 
 // ─── Thin holder for the C++ Collection ─────────────────────────────
 
-class _PulseqCollection {
+class _PulseqCollection
+{
 public:
-    _PulseqCollection(const py::list& seq_bytes_list,
+    _PulseqCollection(const py::list &seq_bytes_list,
                       float gamma,
                       float B0,
                       float max_grad,
@@ -34,26 +35,27 @@ public:
                       float grad_raster_time,
                       float adc_raster_time,
                       float block_duration_raster,
-                      bool  parse_labels,
-                      int   num_averages)
+                      bool parse_labels,
+                      int num_averages)
     {
         pulseqlib::Opts opts;
-        opts.gamma_hz_per_t          = gamma;
-        opts.b0_t                    = B0;
-        opts.max_grad_hz_per_m       = max_grad;
+        opts.gamma_hz_per_t = gamma;
+        opts.b0_t = B0;
+        opts.max_grad_hz_per_m = max_grad;
         opts.max_slew_hz_per_m_per_s = max_slew;
-        opts.rf_raster_us            = rf_raster_time * 1e6f;
-        opts.grad_raster_us          = grad_raster_time * 1e6f;
-        opts.adc_raster_us           = adc_raster_time * 1e6f;
-        opts.block_raster_us         = block_duration_raster * 1e6f;
+        opts.rf_raster_us = rf_raster_time * 1e6f;
+        opts.grad_raster_us = grad_raster_time * 1e6f;
+        opts.adc_raster_us = adc_raster_time * 1e6f;
+        opts.block_raster_us = block_duration_raster * 1e6f;
 
         int n = static_cast<int>(seq_bytes_list.size());
         std::vector<std::string> buffers(n);
-        std::vector<const char*> buf_ptrs(n);
-        std::vector<int>         buf_sizes(n);
-        for (int i = 0; i < n; ++i) {
-            buffers[i]   = seq_bytes_list[i].cast<py::bytes>();
-            buf_ptrs[i]  = buffers[i].data();
+        std::vector<const char *> buf_ptrs(n);
+        std::vector<int> buf_sizes(n);
+        for (int i = 0; i < n; ++i)
+        {
+            buffers[i] = seq_bytes_list[i].cast<py::bytes>();
+            buf_ptrs[i] = buffers[i].data();
             buf_sizes[i] = static_cast<int>(buffers[i].size());
         }
 
@@ -64,8 +66,8 @@ public:
         source_size_ = (n > 0) ? buf_sizes[0] : 0;
     }
 
-    pulseqlib::Collection& coll() { return *coll_; }
-    const pulseqlib::Collection& coll() const { return *coll_; }
+    pulseqlib::Collection &coll() { return *coll_; }
+    const pulseqlib::Collection &coll() const { return *coll_; }
     int source_size() const { return source_size_; }
 
 private:
@@ -75,27 +77,28 @@ private:
 
 // ─── Thin conversion functions ──────────────────────────────────────
 
-static py::dict _find_tr(_PulseqCollection& pc, int subsequence_idx = 0) {
-    const auto& c = pc.coll();
+static py::dict _find_tr(_PulseqCollection &pc, int subsequence_idx = 0)
+{
+    const auto &c = pc.coll();
     auto si = c.subseq_info(subsequence_idx);
     py::dict out;
-    out["tr_size"]              = si.tr_size;
-    out["num_trs"]              = si.num_trs;
-    out["num_prep_blocks"]      = si.num_prep_blocks;
-    out["num_cooldown_blocks"]  = si.num_cooldown_blocks;
-    out["degenerate_prep"]      = si.degenerate_prep;
-    out["degenerate_cooldown"]  = si.degenerate_cooldown;
-    out["num_prep_trs"]         = si.num_prep_trs;
-    out["num_cooldown_trs"]     = si.num_cooldown_trs;
-    out["tr_duration_us"]       = si.tr_duration_us;
-    out["num_passes"]           = si.num_passes;
-    out["num_averages"]         = si.num_averages;
-    out["num_canonical_trs"]    = si.num_canonical_trs;
+    out["tr_size"] = si.tr_size;
+    out["num_trs"] = si.num_trs;
+    out["num_prep_blocks"] = si.num_prep_blocks;
+    out["num_cooldown_blocks"] = si.num_cooldown_blocks;
+    out["degenerate_prep"] = si.degenerate_prep;
+    out["degenerate_cooldown"] = si.degenerate_cooldown;
+    out["num_prep_trs"] = si.num_prep_trs;
+    out["num_cooldown_trs"] = si.num_cooldown_trs;
+    out["tr_duration_us"] = si.tr_duration_us;
+    out["num_passes"] = si.num_passes;
+    out["num_averages"] = si.num_averages;
+    out["num_canonical_trs"] = si.num_canonical_trs;
     return out;
 }
 
 static py::dict _get_tr_waveforms(
-    _PulseqCollection& pc,
+    _PulseqCollection &pc,
     int subsequence_idx,
     int amplitude_mode,
     int tr_index,
@@ -107,27 +110,29 @@ static py::dict _get_tr_waveforms(
         num_averages);
     py::dict out;
 
-    auto ch_to_dict = [](const pulseqlib::ChannelWaveform& ch) -> py::dict {
+    auto ch_to_dict = [](const pulseqlib::ChannelWaveform &ch) -> py::dict
+    {
         py::dict d;
-        d["time_us"]   = ch.time_us;
+        d["time_us"] = ch.time_us;
         d["amplitude"] = ch.amplitude;
         return d;
     };
-    out["gx"]       = ch_to_dict(wf.gx);
-    out["gy"]       = ch_to_dict(wf.gy);
-    out["gz"]       = ch_to_dict(wf.gz);
-    out["rf_mag"]          = ch_to_dict(wf.rf_mag);
-    out["rf_phase"]        = ch_to_dict(wf.rf_phase);
+    out["gx"] = ch_to_dict(wf.gx);
+    out["gy"] = ch_to_dict(wf.gy);
+    out["gz"] = ch_to_dict(wf.gz);
+    out["rf_mag"] = ch_to_dict(wf.rf_mag);
+    out["rf_phase"] = ch_to_dict(wf.rf_phase);
     out["num_rf_channels"] = wf.num_rf_channels;
 
     // ADC events
     py::list adc_list;
-    for (const auto& a : wf.adc_events) {
+    for (const auto &a : wf.adc_events)
+    {
         py::dict ad;
-        ad["onset_us"]         = a.onset_us;
-        ad["duration_us"]      = a.duration_us;
-        ad["num_samples"]      = a.num_samples;
-        ad["freq_offset_hz"]   = a.freq_offset_hz;
+        ad["onset_us"] = a.onset_us;
+        ad["duration_us"] = a.duration_us;
+        ad["num_samples"] = a.num_samples;
+        ad["freq_offset_hz"] = a.freq_offset_hz;
         ad["phase_offset_rad"] = a.phase_offset_rad;
         adc_list.append(ad);
     }
@@ -135,23 +140,24 @@ static py::dict _get_tr_waveforms(
 
     // Block descriptors
     py::list blk_list;
-    for (const auto& b : wf.blocks) {
+    for (const auto &b : wf.blocks)
+    {
         py::dict bd;
-        bd["start_us"]          = b.start_us;
-        bd["duration_us"]       = b.duration_us;
-        bd["segment_idx"]       = b.segment_idx;
-        bd["rf_isocenter_us"]   = b.rf_isocenter_us;
-        bd["adc_kzero_us"]      = b.adc_kzero_us;
+        bd["start_us"] = b.start_us;
+        bd["duration_us"] = b.duration_us;
+        bd["segment_idx"] = b.segment_idx;
+        bd["rf_isocenter_us"] = b.rf_isocenter_us;
+        bd["adc_kzero_us"] = b.adc_kzero_us;
         blk_list.append(bd);
     }
-    out["blocks"]             = blk_list;
-    out["total_duration_us"]  = wf.total_duration_us;
+    out["blocks"] = blk_list;
+    out["total_duration_us"] = wf.total_duration_us;
 
     return out;
 }
 
 static py::dict _calc_mech_resonances(
-    _PulseqCollection& pc,
+    _PulseqCollection &pc,
     int subsequence_idx,
     int canonical_tr_idx,
     float target_resolution_hz,
@@ -163,17 +169,20 @@ static py::dict _calc_mech_resonances(
     py::object peak_prominence)
 {
     std::vector<pulseqlib::ForbiddenBand> bands;
-    for (auto item : py_bands) {
+    for (auto item : py_bands)
+    {
         py::tuple t = item.cast<py::tuple>();
         pulseqlib::ForbiddenBand b;
-        b.freq_min_hz            = t[0].cast<float>();
-        b.freq_max_hz            = t[1].cast<float>();
+        b.freq_min_hz = t[0].cast<float>();
+        b.freq_max_hz = t[1].cast<float>();
         b.max_amplitude_hz_per_m = t[2].cast<float>();
         bands.push_back(b);
     }
 
-    auto parse_optional_float = [](const py::object& obj) -> float {
-        if (obj.is_none()) {
+    auto parse_optional_float = [](const py::object &obj) -> float
+    {
+        if (obj.is_none())
+        {
             return std::numeric_limits<float>::quiet_NaN();
         }
         return obj.cast<float>();
@@ -196,18 +205,18 @@ static py::dict _calc_mech_resonances(
         peak_prominence_val);
 
     py::dict out;
-    out["freq_min_hz"]       = sp.freq_min_hz;
-    out["freq_spacing_hz"]   = sp.freq_spacing_hz;
-    out["num_freq_bins"]     = sp.num_freq_bins;
+    out["freq_min_hz"] = sp.freq_min_hz;
+    out["freq_spacing_hz"] = sp.freq_spacing_hz;
+    out["num_freq_bins"] = sp.num_freq_bins;
 
-    out["spectrum_full_gx"]  = sp.spectrum_full_gx;
-    out["spectrum_full_gy"]  = sp.spectrum_full_gy;
-    out["spectrum_full_gz"]  = sp.spectrum_full_gz;
+    out["spectrum_full_gx"] = sp.spectrum_full_gx;
+    out["spectrum_full_gy"] = sp.spectrum_full_gy;
+    out["spectrum_full_gz"] = sp.spectrum_full_gz;
 
     out["num_instances"] = sp.num_instances;
 
-    out["num_analytical_peaks"]   = sp.num_analytical_peaks;
-    out["analytical_peak_freqs"]  = sp.analytical_peak_freqs;
+    out["num_analytical_peaks"] = sp.num_analytical_peaks;
+    out["analytical_peak_freqs"] = sp.analytical_peak_freqs;
     out["analytical_peak_amp_gx"] = sp.analytical_peak_amp_gx;
     out["analytical_peak_amp_gy"] = sp.analytical_peak_amp_gy;
     out["analytical_peak_amp_gz"] = sp.analytical_peak_amp_gz;
@@ -215,35 +224,35 @@ static py::dict _calc_mech_resonances(
     out["analytical_peak_phase_gy"] = sp.analytical_peak_phase_gy;
     out["analytical_peak_phase_gz"] = sp.analytical_peak_phase_gz;
     out["analytical_peak_widths_hz"] = sp.analytical_peak_widths_hz;
-    out["num_candidates"]          = sp.num_candidates;
-    out["candidate_freqs"]         = sp.candidate_freqs;
-    out["candidate_amps_gx"]       = sp.candidate_amps_gx;
-    out["candidate_amps_gy"]       = sp.candidate_amps_gy;
-    out["candidate_amps_gz"]       = sp.candidate_amps_gz;
-    out["candidate_grad_amps"]     = sp.candidate_grad_amps;
-    out["candidate_grad_amps_gx"]  = sp.candidate_grad_amps_gx;
-    out["candidate_grad_amps_gy"]  = sp.candidate_grad_amps_gy;
-    out["candidate_grad_amps_gz"]  = sp.candidate_grad_amps_gz;
-    out["candidate_violations"]    = sp.candidate_violations;
+    out["num_candidates"] = sp.num_candidates;
+    out["candidate_freqs"] = sp.candidate_freqs;
+    out["candidate_amps_gx"] = sp.candidate_amps_gx;
+    out["candidate_amps_gy"] = sp.candidate_amps_gy;
+    out["candidate_amps_gz"] = sp.candidate_amps_gz;
+    out["candidate_grad_amps"] = sp.candidate_grad_amps;
+    out["candidate_grad_amps_gx"] = sp.candidate_grad_amps_gx;
+    out["candidate_grad_amps_gy"] = sp.candidate_grad_amps_gy;
+    out["candidate_grad_amps_gz"] = sp.candidate_grad_amps_gz;
+    out["candidate_violations"] = sp.candidate_violations;
 
-    out["num_component_terms"]     = sp.num_component_terms;
-    out["component_freqs_hz"]      = sp.component_freqs_hz;
-    out["component_amps"]          = sp.component_amps;
-    out["component_phases_rad"]    = sp.component_phases_rad;
-    out["component_widths_hz"]     = sp.component_widths_hz;
-    out["component_axes"]          = sp.component_axes;
-    out["component_def_ids"]       = sp.component_def_ids;
-    out["component_contrib_ids"]   = sp.component_contrib_ids;
-    out["component_run_ids"]       = sp.component_run_ids;
+    out["num_component_terms"] = sp.num_component_terms;
+    out["component_freqs_hz"] = sp.component_freqs_hz;
+    out["component_amps"] = sp.component_amps;
+    out["component_phases_rad"] = sp.component_phases_rad;
+    out["component_widths_hz"] = sp.component_widths_hz;
+    out["component_axes"] = sp.component_axes;
+    out["component_def_ids"] = sp.component_def_ids;
+    out["component_contrib_ids"] = sp.component_contrib_ids;
+    out["component_run_ids"] = sp.component_run_ids;
 
-    out["num_surviving_freqs"]     = sp.num_surviving_freqs;
-    out["surviving_freqs_hz"]      = sp.surviving_freqs_hz;
+    out["num_surviving_freqs"] = sp.num_surviving_freqs;
+    out["surviving_freqs_hz"] = sp.surviving_freqs_hz;
 
     return out;
 }
 
 static py::dict _calc_pns(
-    _PulseqCollection& pc,
+    _PulseqCollection &pc,
     int subsequence_idx,
     int canonical_tr_idx,
     float chronaxie_us,
@@ -251,50 +260,53 @@ static py::dict _calc_pns(
     float alpha)
 {
     pulseqlib::PnsParams params;
-    params.chronaxie_us            = chronaxie_us;
+    params.chronaxie_us = chronaxie_us;
     params.rheobase_hz_per_m_per_s = rheobase;
-    params.alpha                   = alpha;
+    params.alpha = alpha;
 
     auto r = pc.coll().calc_pns(subsequence_idx, canonical_tr_idx, params);
 
     py::dict out;
     out["num_samples"] = r.num_samples;
-    out["slew_x"]      = r.slew_x;
-    out["slew_y"]      = r.slew_y;
-    out["slew_z"]      = r.slew_z;
+    out["slew_x"] = r.slew_x;
+    out["slew_y"] = r.slew_y;
+    out["slew_z"] = r.slew_z;
     return out;
 }
 
 // ─── Check functions ────────────────────────────────────────────────
 
-static void _check_consistency(_PulseqCollection& pc) {
+static void _check_consistency(_PulseqCollection &pc)
+{
     pc.coll().check_consistency();
 }
 
 static void _check_safety(
-    _PulseqCollection& pc,
+    _PulseqCollection &pc,
     py::list py_bands,
     float stim_threshold,
     float decay_constant_us,
     float pns_threshold_percent,
-    bool  skip_pns)
+    bool skip_pns)
 {
     std::vector<pulseqlib::ForbiddenBand> bands;
-    for (auto item : py_bands) {
+    for (auto item : py_bands)
+    {
         py::tuple t = item.cast<py::tuple>();
         pulseqlib::ForbiddenBand b;
-        b.freq_min_hz            = t[0].cast<float>();
-        b.freq_max_hz            = t[1].cast<float>();
+        b.freq_min_hz = t[0].cast<float>();
+        b.freq_max_hz = t[1].cast<float>();
         b.max_amplitude_hz_per_m = t[2].cast<float>();
         bands.push_back(b);
     }
 
-    const pulseqlib::PnsParams* pns_ptr = nullptr;
+    const pulseqlib::PnsParams *pns_ptr = nullptr;
     pulseqlib::PnsParams pns;
-    if (!skip_pns) {
-        pns.chronaxie_us            = decay_constant_us;
-        pns.rheobase_hz_per_m_per_s = stim_threshold;   // rheobase/alpha combined
-        pns.alpha                   = 1.0f;             // folded into stim_threshold
+    if (!skip_pns)
+    {
+        pns.chronaxie_us = decay_constant_us;
+        pns.rheobase_hz_per_m_per_s = stim_threshold; // rheobase/alpha combined
+        pns.alpha = 1.0f;                             // folded into stim_threshold
         pns_ptr = &pns;
     }
 
@@ -303,46 +315,49 @@ static void _check_safety(
 
 // ─── Report (collection + subseq + segment info) ───────────────────
 
-static py::dict _get_report(_PulseqCollection& pc) {
-    const auto& c = pc.coll();
+static py::dict _get_report(_PulseqCollection &pc)
+{
+    const auto &c = pc.coll();
     py::dict out;
 
     /* Collection-level */
     auto ci = c.collection_info();
-    out["num_subsequences"]  = ci.num_subsequences;
-    out["num_segments"]      = ci.num_segments;
+    out["num_subsequences"] = ci.num_subsequences;
+    out["num_segments"] = ci.num_segments;
     out["total_duration_us"] = ci.total_duration_us;
 
     /* Per-subsequence */
     py::list subseqs;
-    for (int ss = 0; ss < ci.num_subsequences; ++ss) {
+    for (int ss = 0; ss < ci.num_subsequences; ++ss)
+    {
         auto si = c.subseq_info(ss);
         py::dict sd;
-        sd["tr_size"]               = si.tr_size;
-        sd["num_trs"]               = si.num_trs;
-        sd["num_prep_blocks"]       = si.num_prep_blocks;
-        sd["num_cooldown_blocks"]   = si.num_cooldown_blocks;
-        sd["tr_duration_us"]        = si.tr_duration_us;
-        sd["num_passes"]            = si.num_passes;
-        sd["num_unique_segments"]   = si.num_prep_segments + si.num_main_segments + si.num_cooldown_segments;
-        sd["segment_offset"]        = si.segment_offset;
+        sd["tr_size"] = si.tr_size;
+        sd["num_trs"] = si.num_trs;
+        sd["num_prep_blocks"] = si.num_prep_blocks;
+        sd["num_cooldown_blocks"] = si.num_cooldown_blocks;
+        sd["tr_duration_us"] = si.tr_duration_us;
+        sd["num_passes"] = si.num_passes;
+        sd["num_unique_segments"] = si.num_prep_segments + si.num_main_segments + si.num_cooldown_segments;
+        sd["segment_offset"] = si.segment_offset;
 
         /* Unique segments in this subsequence */
         int seg_start = si.segment_offset;
         int seg_count = si.num_prep_segments + si.num_main_segments + si.num_cooldown_segments;
         py::list segs;
-        for (int j = seg_start; j < seg_start + seg_count; ++j) {
+        for (int j = seg_start; j < seg_start + seg_count; ++j)
+        {
             auto seg = c.segment_info(j);
             py::dict segd;
             segd["start_block"] = seg.start_block;
-            segd["num_blocks"]  = seg.num_blocks;
+            segd["num_blocks"] = seg.num_blocks;
             segs.append(segd);
         }
         sd["segments"] = segs;
 
         /* Segment tables */
-        sd["prep_segment_table"]     = c.prep_segment_table(ss);
-        sd["main_segment_table"]     = c.main_segment_table(ss);
+        sd["prep_segment_table"] = c.prep_segment_table(ss);
+        sd["main_segment_table"] = c.main_segment_table(ss);
         sd["cooldown_segment_table"] = c.cooldown_segment_table(ss);
 
         subseqs.append(sd);
@@ -353,121 +368,66 @@ static py::dict _get_report(_PulseqCollection& pc) {
 
 // ─── Unique-block queries ────────────────────────────────────────────
 
-static int _get_num_unique_blocks(_PulseqCollection& pc, int seq_idx) {
+static int _get_num_unique_blocks(_PulseqCollection &pc, int seq_idx)
+{
     return pc.coll().num_unique_blocks(seq_idx);
 }
 
-static int _get_unique_block_id(_PulseqCollection& pc, int seq_idx, int blk_def_idx) {
+static int _get_unique_block_id(_PulseqCollection &pc, int seq_idx, int blk_def_idx)
+{
     return pc.coll().unique_block_id(seq_idx, blk_def_idx);
 }
 
 // ─── Sequence description / parameters ─────────────────────────────
 
-static py::dict _get_sequence_parameters(_PulseqCollection& pc) {
+static py::dict _get_sequence_parameters(_PulseqCollection &pc)
+{
     pulseqlib_sequence_parameters sp;
     std::memset(&sp, 0, sizeof(sp));
     int rc = pulseqlib_get_sequence_parameters(&sp, pc.coll().handle());
-    if (rc != PULSEQLIB_SUCCESS) {
+    if (rc != PULSEQLIB_SUCCESS)
+    {
         throw std::runtime_error(
             "pulseqlib_get_sequence_parameters failed: " + std::to_string(rc));
     }
     py::dict result;
-    result["min_te_us"]          = sp.min_te_us;
-    result["min_tr_us"]          = sp.min_tr_us;
-    result["max_tr_us"]          = sp.max_tr_us;
+    result["min_te_us"] = sp.min_te_us;
+    result["min_tr_us"] = sp.min_tr_us;
+    result["max_tr_us"] = sp.max_tr_us;
     result["max_flip_angle_deg"] = sp.max_flip_angle_deg * (180.0f / static_cast<float>(M_PI));
     result["total_scan_time_us"] = sp.total_scan_time_us;
-    result["num_subseqs"]        = sp.num_subseqs;
+    result["num_subseqs"] = sp.num_subseqs;
     return result;
 }
 
-static py::dict _get_sequence_description(_PulseqCollection& pc, int subseq_idx) {
+static py::dict _get_sequence_description(_PulseqCollection &pc, int subseq_idx)
+{
     pulseqlib_sequence_description sd;
     std::memset(&sd, 0, sizeof(sd));
     int rc = pulseqlib_get_sequence_description(&sd, pc.coll().handle(), subseq_idx);
-    if (rc != PULSEQLIB_SUCCESS) {
+    if (rc != PULSEQLIB_SUCCESS)
+    {
         pulseqlib_free_sequence_description(&sd);
         throw std::runtime_error(
             "pulseqlib_get_sequence_description failed: " + std::to_string(rc));
     }
 
     py::dict result;
-    result["subseq_idx"]     = sd.subseq_idx;
+    result["subseq_idx"] = sd.subseq_idx;
     result["tr_duration_us"] = sd.tr_duration_us;
 
-    // ── RF shape tuples ────────────────────────────────────────────
-    py::list tuples;
-    for (int i = 0; i < sd.num_tuples; ++i) {
-        const pulseqlib_rf_shape_tuple* t = &sd.rf_shape_tuples[i];
-        py::dict td;
-        td["tuple_id"]     = t->tuple_id;
-        td["N_tx"]         = t->N_tx;
-        td["N_samples"]    = t->N_samples;
-        td["rf_raster_us"] = t->rf_raster_us;
-        td["num_bands"]    = t->num_bands;
-        int nb = (t->num_bands < PULSEQLIB_MAX_BANDS) ? t->num_bands : PULSEQLIB_MAX_BANDS;
-        py::list freqs;
-        for (int b = 0; b < nb; ++b)
-            freqs.append(t->band_freq_offsets_hz[b]);
-        td["band_freq_offsets_hz"] = freqs;
-        td["band_bandwidth_hz"]    = t->band_bandwidth_hz;
-        td["total_b1sq_power"]     = t->total_b1sq_power;
-        int tot = t->N_tx * t->N_samples;
-        if (t->mag && tot > 0)
-            td["mag"] = std::vector<float>(t->mag, t->mag + tot);
-        else
-            td["mag"] = std::vector<float>();
-        if (t->phase && tot > 0)
-            td["phase"] = std::vector<float>(t->phase, t->phase + tot);
-        else
-            td["phase"] = std::vector<float>();
-        if (t->time && t->N_samples > 0)
-            td["time"] = std::vector<float>(t->time, t->time + t->N_samples);
-        else
-            td["time"] = std::vector<float>();
-        tuples.append(td);
+    // ── Compact row table (one row per pass block) ─────────────────
+    py::list rows;
+    for (int i = 0; i < sd.num_rows; ++i)
+    {
+        const pulseqlib_seq_event *row = &sd.rows[i];
+        py::dict rd;
+        rd["type"] = row->type;
+        rd["timestamp_us"] = row->timestamp_us;
+        rd["params"] = std::vector<float>(row->params, row->params + PULSEQLIB_SEQ_EVENT_PARAMS);
+        rows.append(rd);
     }
-    result["rf_shape_tuples"] = tuples;
-
-    // ── Shim definitions ──────────────────────────────────────────
-    py::list shims;
-    for (int i = 0; i < sd.num_shims; ++i) {
-        const pulseqlib_shim_def_local* s = &sd.shim_defs[i];
-        py::dict sh;
-        sh["shim_id_local"] = s->shim_id_local;
-        sh["N_ch"]          = s->N_ch;
-        int nch = (s->N_ch < PULSEQLIB_MAX_RF_SHIM_CHANNELS)
-                  ? s->N_ch : PULSEQLIB_MAX_RF_SHIM_CHANNELS;
-        sh["magnitudes"] = std::vector<float>(s->magnitudes, s->magnitudes + nch);
-        sh["phases"]     = std::vector<float>(s->phases,     s->phases     + nch);
-        shims.append(sh);
-    }
-    result["shim_defs"] = shims;
-
-    // ── Events ────────────────────────────────────────────────────
-    py::list events;
-    for (int i = 0; i < sd.num_events; ++i) {
-        const pulseqlib_seq_event* ev = &sd.events[i];
-        py::dict evd;
-        evd["type"]   = ev->type;
-        evd["params"] = std::vector<float>(ev->params, ev->params + PULSEQLIB_SEQ_EVENT_PARAMS);
-        events.append(evd);
-    }
-    result["events"] = events;
-
-    // ── Composite RF groups ───────────────────────────────────────
-    py::list groups;
-    for (int i = 0; i < sd.num_composite_rf_groups; ++i) {
-        const pulseqlib_composite_rf_group* g = &sd.composite_rf_groups[i];
-        py::dict gd;
-        gd["group_id"]        = g->group_id;
-        gd["first_event_idx"] = g->first_event_idx;
-        gd["last_event_idx"]  = g->last_event_idx;
-        gd["num_pulses"]      = g->num_pulses;
-        gd["eff_te_us"]       = g->eff_te_us;
-        groups.append(gd);
-    }
-    result["composite_rf_groups"] = groups;
+    result["rows"] = rows;
 
     pulseqlib_free_sequence_description(&sd);
     return result;
@@ -475,10 +435,11 @@ static py::dict _get_sequence_description(_PulseqCollection& pc, int subseq_idx)
 
 // ─── Module ─────────────────────────────────────────────────────────
 
-PYBIND11_MODULE(_pulseqlib_wrapper, m) {
+PYBIND11_MODULE(_pulseqlib_wrapper, m)
+{
     py::class_<_PulseqCollection>(m, "_PulseqCollection")
         .def(py::init<py::list, float, float, float, float,
-                       float, float, float, float, bool, int>(),
+                      float, float, float, float, bool, int>(),
              py::arg("seq_bytes_list"),
              py::arg("gamma"),
              py::arg("B0"),
@@ -489,40 +450,39 @@ PYBIND11_MODULE(_pulseqlib_wrapper, m) {
              py::arg("adc_raster_time"),
              py::arg("block_duration_raster"),
              py::arg("parse_labels") = true,
-             py::arg("num_averages") = 1)
-        ;
+             py::arg("num_averages") = 1);
 
     m.def("_find_tr", &_find_tr,
           py::arg("collection"),
           py::arg("subsequence_idx") = 0);
 
-        m.def("_get_tr_waveforms", &_get_tr_waveforms,
-            py::arg("collection"),
-            py::arg("subsequence_idx") = 0,
-            py::arg("amplitude_mode") = 0,
-            py::arg("tr_index") = 0,
-            py::arg("collapse_delays") = false,
-            py::arg("num_averages") = 0);
+    m.def("_get_tr_waveforms", &_get_tr_waveforms,
+          py::arg("collection"),
+          py::arg("subsequence_idx") = 0,
+          py::arg("amplitude_mode") = 0,
+          py::arg("tr_index") = 0,
+          py::arg("collapse_delays") = false,
+          py::arg("num_averages") = 0);
 
-        m.def("_calc_mech_resonances", &_calc_mech_resonances,
-            py::arg("collection"),
-            py::arg("subsequence_idx") = 0,
-            py::arg("canonical_tr_idx") = 0,
-            py::arg("target_resolution_hz"),
-            py::arg("max_freq_hz"),
-            py::arg("forbidden_bands") = py::list(),
-            py::arg("peak_log10_threshold") = py::none(),
-            py::arg("peak_norm_scale") = py::none(),
-            py::arg("peak_eps") = py::none(),
-            py::arg("peak_prominence") = py::none());
+    m.def("_calc_mech_resonances", &_calc_mech_resonances,
+          py::arg("collection"),
+          py::arg("subsequence_idx") = 0,
+          py::arg("canonical_tr_idx") = 0,
+          py::arg("target_resolution_hz"),
+          py::arg("max_freq_hz"),
+          py::arg("forbidden_bands") = py::list(),
+          py::arg("peak_log10_threshold") = py::none(),
+          py::arg("peak_norm_scale") = py::none(),
+          py::arg("peak_eps") = py::none(),
+          py::arg("peak_prominence") = py::none());
 
-        m.def("_calc_pns", &_calc_pns,
-            py::arg("collection"),
-            py::arg("subsequence_idx") = 0,
-            py::arg("canonical_tr_idx") = 0,
-            py::arg("chronaxie_us"),
-            py::arg("rheobase"),
-            py::arg("alpha"));
+    m.def("_calc_pns", &_calc_pns,
+          py::arg("collection"),
+          py::arg("subsequence_idx") = 0,
+          py::arg("canonical_tr_idx") = 0,
+          py::arg("chronaxie_us"),
+          py::arg("rheobase"),
+          py::arg("alpha"));
 
     m.def("_check_consistency", &_check_consistency,
           py::arg("collection"));
@@ -553,5 +513,4 @@ PYBIND11_MODULE(_pulseqlib_wrapper, m) {
     m.def("_get_sequence_description", &_get_sequence_description,
           py::arg("collection"),
           py::arg("subseq_idx") = 0);
-
 }

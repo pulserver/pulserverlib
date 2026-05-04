@@ -8,9 +8,9 @@ Public API:
     deserialize           Restore collection from linked .seq file chain.
 
     Sequence-description dataclasses (from info() / trajectory_info()):
-    CompositeRfGroup, EncodingSpace, LabelLimits, RfShapeTuple, SeqEvent,
+    EncodingSpace, LabelLimits, SeqRow,
     SequenceDescription, SequenceDescriptionInfo, SequenceParameters,
-    ShimDef, TrajTableEntry, TrajectoryInfo
+    TrajTableEntry, TrajectoryInfo
 """
 
 __all__ = [
@@ -20,15 +20,12 @@ __all__ = [
     'deserialize',
     'serialize',
     # ── sequence description ──────────────────────────────────
-    'CompositeRfGroup',
     'EncodingSpace',
     'LabelLimits',
-    'RfShapeTuple',
-    'SeqEvent',
+    'SeqRow',
     'SequenceDescription',
     'SequenceDescriptionInfo',
     'SequenceParameters',
-    'ShimDef',
     'TrajTableEntry',
     'TrajectoryInfo',
 ]
@@ -42,15 +39,12 @@ from .core import (
 )
 
 from .core._cache_sections import (
-    CompositeRfGroup,
     EncodingSpace,
     LabelLimits,
-    RfShapeTuple,
-    SeqEvent,
+    SeqRow,
     SequenceDescription,
     SequenceDescriptionInfo,
     SequenceParameters,
-    ShimDef,
     TrajTableEntry,
     TrajectoryInfo,
 )

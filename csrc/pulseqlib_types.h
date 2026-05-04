@@ -39,24 +39,24 @@
  *  consumers.
  *  @{ */
 
-#define PULSEQLIB_SUCCESS  1
+#define PULSEQLIB_SUCCESS 1
 
 #define PULSEQLIB_SUCCEEDED(code) ((code) > 0)
-#define PULSEQLIB_FAILED(code)    ((code) < 0)
+#define PULSEQLIB_FAILED(code) ((code) < 0)
 
 /** @} */
 
 /* ================================================================== */
 /*  Cursor states                                                     */
 /* ================================================================== */
-#define PULSEQLIB_CURSOR_BLOCK  0
-#define PULSEQLIB_CURSOR_DONE   1
+#define PULSEQLIB_CURSOR_BLOCK 0
+#define PULSEQLIB_CURSOR_DONE 1
 
 /* ================================================================== */
 /*  Max-size constants                                                */
 /* ================================================================== */
-#define PULSEQLIB_MAX_GRAD_SHOTS       16
-#define PULSEQLIB_DIAG_MSG_LEN        256
+#define PULSEQLIB_MAX_GRAD_SHOTS 16
+#define PULSEQLIB_DIAG_MSG_LEN 256
 
 /* ================================================================== */
 /*  Diagnostic                                                        */
@@ -69,8 +69,9 @@
  * @c message contains a human-readable description (may include
  * offending block index, axis, amplitude, etc.).
  */
-typedef struct pulseqlib_diagnostic {
-    int  code;
+typedef struct pulseqlib_diagnostic
+{
+    int code;
     char message[PULSEQLIB_DIAG_MSG_LEN];
 } pulseqlib_diagnostic;
 
@@ -86,29 +87,29 @@ typedef struct pulseqlib_diagnostic {
  * All raster times are in microseconds.  Gradient / slew limits use
  * internal Pulseq units (Hz/m and Hz/m/s respectively).
  */
-typedef struct pulseqlib_opts {
-    int   vendor;                    /**< PULSEQLIB_VENDOR_* constant       */
-    float gamma_hz_per_t;            /**< gyromagnetic ratio  (Hz / T)      */
-    float b0_t;                      /**< static field strength (T)         */
-    float max_grad_hz_per_m;         /**< gradient amplitude limit (Hz / m) */
-    float max_slew_hz_per_m_per_s;   /**< slew rate limit (Hz / m / s)      */
-    float rf_raster_us;              /**< RF sample raster (us)             */
-    float grad_raster_us;            /**< gradient sample raster (us)       */
-    float adc_raster_us;             /**< ADC dwell raster (us)             */
-    float block_raster_us;           /**< block duration raster (us)        */
-    float peak_log10_threshold;      /**< resonance detector log10 threshold */
-    float peak_norm_scale;           /**< resonance detector normalization   */
-    float peak_eps;                  /**< resonance detector epsilon         */
-    float peak_prominence;           /**< resonance detector min prominence  */
+typedef struct pulseqlib_opts
+{
+    int vendor;                    /**< PULSEQLIB_VENDOR_* constant       */
+    float gamma_hz_per_t;          /**< gyromagnetic ratio  (Hz / T)      */
+    float b0_t;                    /**< static field strength (T)         */
+    float max_grad_hz_per_m;       /**< gradient amplitude limit (Hz / m) */
+    float max_slew_hz_per_m_per_s; /**< slew rate limit (Hz / m / s)      */
+    float rf_raster_us;            /**< RF sample raster (us)             */
+    float grad_raster_us;          /**< gradient sample raster (us)       */
+    float adc_raster_us;           /**< ADC dwell raster (us)             */
+    float block_raster_us;         /**< block duration raster (us)        */
+    float peak_log10_threshold;    /**< resonance detector log10 threshold */
+    float peak_norm_scale;         /**< resonance detector normalization   */
+    float peak_eps;                /**< resonance detector epsilon         */
+    float peak_prominence;         /**< resonance detector min prominence  */
 } pulseqlib_opts;
 
-#define PULSEQLIB_OPTS_INIT { \
+#define PULSEQLIB_OPTS_INIT {                          \
     0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, \
-    PULSEQLIB_PEAK_LOG10_THRESHOLD_DEFAULT, \
-    PULSEQLIB_PEAK_NORM_SCALE_DEFAULT, \
-    PULSEQLIB_PEAK_EPS_DEFAULT, \
-    PULSEQLIB_PEAK_PROMINENCE_DEFAULT \
-}
+    PULSEQLIB_PEAK_LOG10_THRESHOLD_DEFAULT,            \
+    PULSEQLIB_PEAK_NORM_SCALE_DEFAULT,                 \
+    PULSEQLIB_PEAK_EPS_DEFAULT,                        \
+    PULSEQLIB_PEAK_PROMINENCE_DEFAULT}
 
 /* ================================================================== */
 /*  RF statistics                                                     */
@@ -120,43 +121,42 @@ typedef struct pulseqlib_opts {
 /**
  * @brief Per-RF-definition statistics (always available).
  */
-typedef struct pulseqlib_rf_stats {
-    float flip_angle_deg;       /**< nominal flip angle (degrees)           */
-    float act_amplitude_hz;     /**< actual |gamma*B1| amplitude (Hz)       */
-    float area;                 /**< integral of |B1(t)| dt  (a.u.)        */
-    float abs_width;            /**< fraction of duration with |B1|>0      */
-    float eff_width;            /**< equivalent rectangular pulse fraction */
-    float duty_cycle;           /**< fraction of TR occupied by RF         */
-    float max_pulse_width;      /**< longest contiguous |B1|>0 segment (s) */
-    float duration_us;          /**< total RF event duration (us)          */
-    int   isodelay_us;          /**< isodelay from center to echo (us)     */
-    float bandwidth_hz;         /**< estimated bandwidth (Hz, via FFT)     */
-    float base_amplitude_hz;    /**< base (nominal) peak |gamma*B1| (Hz)   */
-    int   num_samples;          /**< waveform sample count                 */
-    int   num_instances;        /**< repetition count for this RF pulse    */
+typedef struct pulseqlib_rf_stats
+{
+    float flip_angle_deg;    /**< nominal flip angle (degrees)           */
+    float act_amplitude_hz;  /**< actual |gamma*B1| amplitude (Hz)       */
+    float area;              /**< integral of |B1(t)| dt  (a.u.)        */
+    float abs_width;         /**< fraction of duration with |B1|>0      */
+    float eff_width;         /**< equivalent rectangular pulse fraction */
+    float duty_cycle;        /**< fraction of TR occupied by RF         */
+    float max_pulse_width;   /**< longest contiguous |B1|>0 segment (s) */
+    float duration_us;       /**< total RF event duration (us)          */
+    int isodelay_us;         /**< isodelay from center to echo (us)     */
+    float bandwidth_hz;      /**< estimated bandwidth (Hz, via FFT)     */
+    float base_amplitude_hz; /**< base (nominal) peak |gamma*B1| (Hz)   */
+    int num_samples;         /**< waveform sample count                 */
+    int num_instances;       /**< repetition count for this RF pulse    */
     /* --- multiband / power fields (appended; do not reorder above) --- */
-    int   num_bands;                                    /**< number of simultaneous frequency bands (>=1) */
-    float band_freq_offsets_hz[PULSEQLIB_MAX_BANDS];    /**< per-band center offsets relative to carrier (Hz) */
-    float band_bandwidth_hz;                            /**< per-band bandwidth (Hz) */
-    float total_b1sq_power;                             /**< integral |B1(t)|^2 dt normalised (a.u.) */
+    int num_bands;                                   /**< number of simultaneous frequency bands (>=1) */
+    float band_freq_offsets_hz[PULSEQLIB_MAX_BANDS]; /**< per-band center offsets relative to carrier (Hz) */
+    float band_bandwidth_hz;                         /**< per-band bandwidth (Hz) */
+    float total_b1sq_power;                          /**< integral |B1(t)|^2 dt normalised (a.u.) */
     /* --- vendor tag (appended; identifies the meaning of the
      *     vendor-specific interpretation of the fields above; for new
      *     vendor variants, a sibling struct may be added later and
      *     selected via this field) ---                                 */
-    int   vendor;                                       /**< PULSEQLIB_VENDOR_* constant (0 = unspecified -> GEHC for back-compat) */
+    int vendor; /**< PULSEQLIB_VENDOR_* constant (0 = unspecified -> GEHC for back-compat) */
 } pulseqlib_rf_stats;
 
 #define PULSEQLIB_RF_STATS_INIT { \
-    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0.0f, 0.0f, 0, 0, \
-    1, {0.0f}, 0.0f, 0.0f, 0 \
-}
+    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0.0f, 0.0f, 0, 0, 1, {0.0f}, 0.0f, 0.0f, 0}
 
 /* ================================================================== */
 /*  TR region selectors (for freq-mod plan)                           */
 /* ================================================================== */
-#define PULSEQLIB_TR_REGION_PREP       0
-#define PULSEQLIB_TR_REGION_MAIN       1
-#define PULSEQLIB_TR_REGION_COOLDOWN   2
+#define PULSEQLIB_TR_REGION_PREP 0
+#define PULSEQLIB_TR_REGION_MAIN 1
+#define PULSEQLIB_TR_REGION_COOLDOWN 2
 
 /* ================================================================== */
 /*  Frequency modulation collection                                   */
@@ -199,11 +199,12 @@ typedef struct pulseqlib_collection pulseqlib_collection;
  * segment it belongs to.  The time array is NOT interpolated to a
  * uniform raster -- it follows the native event timing.
  */
-typedef struct pulseqlib_grad_axis_waveform {
-    int    num_samples;           /**< number of time-points          */
-    float* time_us;               /**< time of each sample (us)       */
-    float* amplitude_hz_per_m;    /**< gradient amplitude (Hz / m)    */
-    int*   seg_label;             /**< segment index for each sample  */
+typedef struct pulseqlib_grad_axis_waveform
+{
+    int num_samples;           /**< number of time-points          */
+    float *time_us;            /**< time of each sample (us)       */
+    float *amplitude_hz_per_m; /**< gradient amplitude (Hz / m)    */
+    int *seg_label;            /**< segment index for each sample  */
 } pulseqlib_grad_axis_waveform;
 
 #define PULSEQLIB_GRAD_AXIS_WAVEFORM_INIT {0, NULL, NULL, NULL}
@@ -214,26 +215,26 @@ typedef struct pulseqlib_grad_axis_waveform {
  * Used for gradient-shape plotting in the wrapper.  Each axis carries
  * its own time base (not interpolated to a common raster).
  */
-typedef struct pulseqlib_tr_gradient_waveforms {
+typedef struct pulseqlib_tr_gradient_waveforms
+{
     pulseqlib_grad_axis_waveform gx;
     pulseqlib_grad_axis_waveform gy;
     pulseqlib_grad_axis_waveform gz;
 } pulseqlib_tr_gradient_waveforms;
 
 #define PULSEQLIB_TR_GRADIENT_WAVEFORMS_INIT { \
-    PULSEQLIB_GRAD_AXIS_WAVEFORM_INIT, \
-    PULSEQLIB_GRAD_AXIS_WAVEFORM_INIT, \
-    PULSEQLIB_GRAD_AXIS_WAVEFORM_INIT  \
-}
+    PULSEQLIB_GRAD_AXIS_WAVEFORM_INIT,         \
+    PULSEQLIB_GRAD_AXIS_WAVEFORM_INIT,         \
+    PULSEQLIB_GRAD_AXIS_WAVEFORM_INIT}
 
 /* ================================================================== */
 /*  Native-timing TR waveforms (for plotting)                        */
 /* ================================================================== */
 
 /** @brief Amplitude modes for pulseqlib_get_tr_waveforms. */
-#define PULSEQLIB_AMP_MAX_POS  0  /**< Position-max (safety worst case) */
-#define PULSEQLIB_AMP_ZERO_VAR 1  /**< Zero variable-amplitude gradients, keep constant ones */
-#define PULSEQLIB_AMP_ACTUAL   2  /**< Actual signed amplitude for given TR */
+#define PULSEQLIB_AMP_MAX_POS 0  /**< Position-max (safety worst case) */
+#define PULSEQLIB_AMP_ZERO_VAR 1 /**< Zero variable-amplitude gradients, keep constant ones */
+#define PULSEQLIB_AMP_ACTUAL 2   /**< Actual signed amplitude for given TR */
 
 /**
  * @brief Single-channel waveform with native (non-uniform) timing.
@@ -242,10 +243,11 @@ typedef struct pulseqlib_tr_gradient_waveforms {
  * channel:  Hz/m for gradients, Hz for RF magnitude, radians for
  * RF phase.
  */
-typedef struct pulseqlib_channel_waveform {
-    int    num_samples;
-    float* time_us;       /**< [num_samples] */
-    float* amplitude;     /**< [num_samples] */
+typedef struct pulseqlib_channel_waveform
+{
+    int num_samples;
+    float *time_us;   /**< [num_samples] */
+    float *amplitude; /**< [num_samples] */
 } pulseqlib_channel_waveform;
 
 #define PULSEQLIB_CHANNEL_WAVEFORM_INIT {0, NULL, NULL}
@@ -253,12 +255,13 @@ typedef struct pulseqlib_channel_waveform {
 /**
  * @brief ADC event descriptor within a TR.
  */
-typedef struct pulseqlib_adc_event {
-    float onset_us;           /**< start time within TR (us)         */
-    float duration_us;        /**< num_samples * dwell_time (us)     */
-    int   num_samples;        /**< number of ADC samples             */
-    float freq_offset_hz;     /**< per-instance freq offset (Hz)     */
-    float phase_offset_rad;   /**< per-instance phase offset (rad)   */
+typedef struct pulseqlib_adc_event
+{
+    float onset_us;         /**< start time within TR (us)         */
+    float duration_us;      /**< num_samples * dwell_time (us)     */
+    int num_samples;        /**< number of ADC samples             */
+    float freq_offset_hz;   /**< per-instance freq offset (Hz)     */
+    float phase_offset_rad; /**< per-instance phase offset (rad)   */
 } pulseqlib_adc_event;
 
 #define PULSEQLIB_ADC_EVENT_INIT {0.0f, 0.0f, 0, 0.0f, 0.0f}
@@ -266,12 +269,13 @@ typedef struct pulseqlib_adc_event {
 /**
  * @brief Per-block metadata within a TR.
  */
-typedef struct pulseqlib_tr_block_descriptor {
-    float start_us;           /**< block start time within TR (us)   */
-    float duration_us;        /**< block duration (us)               */
-    int   segment_idx;        /**< segment index, or -1 (prep/cooldown) */
-    float rf_isocenter_us;    /**< RF isocenter time within TR (us), or -1.0 */
-    float adc_kzero_us;       /**< ADC k=0 time within TR (us), or -1.0 */
+typedef struct pulseqlib_tr_block_descriptor
+{
+    float start_us;        /**< block start time within TR (us)   */
+    float duration_us;     /**< block duration (us)               */
+    int segment_idx;       /**< segment index, or -1 (prep/cooldown) */
+    float rf_isocenter_us; /**< RF isocenter time within TR (us), or -1.0 */
+    float adc_kzero_us;    /**< ADC k=0 time within TR (us), or -1.0 */
 } pulseqlib_tr_block_descriptor;
 
 #define PULSEQLIB_TR_BLOCK_DESCRIPTOR_INIT {0.0f, 0.0f, -1, -1.0f, -1.0f}
@@ -286,7 +290,8 @@ typedef struct pulseqlib_tr_block_descriptor {
  * Block descriptors provide timing and segment assignment for
  * drawing block/segment boundaries.
  */
-typedef struct pulseqlib_tr_waveforms {
+typedef struct pulseqlib_tr_waveforms
+{
     /* Gradient channels (Hz/m) */
     pulseqlib_channel_waveform gx;
     pulseqlib_channel_waveform gy;
@@ -296,31 +301,30 @@ typedef struct pulseqlib_tr_waveforms {
      * (num_rf_channels > 1), rf_mag.amplitude and rf_phase.amplitude
      * are channel-major flat arrays: ch0[0..npts-1], ch1[0..npts-1], ...
      * rf_mag.num_samples == num_rf_channels * npts_per_channel.       */
-    int                        num_rf_channels;  /**< 1 for single-Tx, nch for pTx */
-    pulseqlib_channel_waveform rf_mag;    /**< amplitude in Hz           */
-    pulseqlib_channel_waveform rf_phase;  /**< amplitude in rad          */
+    int num_rf_channels;                 /**< 1 for single-Tx, nch for pTx */
+    pulseqlib_channel_waveform rf_mag;   /**< amplitude in Hz           */
+    pulseqlib_channel_waveform rf_phase; /**< amplitude in rad          */
 
     /* ADC events */
-    int                  num_adc_events;
-    pulseqlib_adc_event* adc_events;
+    int num_adc_events;
+    pulseqlib_adc_event *adc_events;
 
     /* Block-level metadata */
-    int                          num_blocks;
-    pulseqlib_tr_block_descriptor* blocks;
+    int num_blocks;
+    pulseqlib_tr_block_descriptor *blocks;
 
     /* Total duration */
     float total_duration_us;
 } pulseqlib_tr_waveforms;
 
 #define PULSEQLIB_TR_WAVEFORMS_INIT { \
-    PULSEQLIB_CHANNEL_WAVEFORM_INIT, \
-    PULSEQLIB_CHANNEL_WAVEFORM_INIT, \
-    PULSEQLIB_CHANNEL_WAVEFORM_INIT, \
-    1,                               \
-    PULSEQLIB_CHANNEL_WAVEFORM_INIT, \
-    PULSEQLIB_CHANNEL_WAVEFORM_INIT, \
-    0, NULL,  0, NULL,  0.0f \
-}
+    PULSEQLIB_CHANNEL_WAVEFORM_INIT,  \
+    PULSEQLIB_CHANNEL_WAVEFORM_INIT,  \
+    PULSEQLIB_CHANNEL_WAVEFORM_INIT,  \
+    1,                                \
+    PULSEQLIB_CHANNEL_WAVEFORM_INIT,  \
+    PULSEQLIB_CHANNEL_WAVEFORM_INIT,  \
+    0, NULL, 0, NULL, 0.0f}
 
 /* ================================================================== */
 /*  Mechanical resonances spectra (for plotting)                      */
@@ -337,73 +341,67 @@ typedef struct pulseqlib_tr_waveforms {
  * surviving_*).  spectrum_full_g{x,y,z} are display-only full-TR
  * magnitude spectra.
  */
-typedef struct pulseqlib_mech_resonances_spectra {
+typedef struct pulseqlib_mech_resonances_spectra
+{
     /* -- full TR spectrum (display-only) --------------------------- */
-    float freq_min_hz;          /**< lowest frequency bin (Hz)         */
-    float freq_spacing_hz;      /**< bin width (Hz)                    */
-    int   num_freq_bins;        /**< frequency bins                    */
-    float* spectrum_full_gx;    /**< [num_freq_bins]                   */
-    float* spectrum_full_gy;
-    float* spectrum_full_gz;
+    float freq_min_hz;       /**< lowest frequency bin (Hz)         */
+    float freq_spacing_hz;   /**< bin width (Hz)                    */
+    int num_freq_bins;       /**< frequency bins                    */
+    float *spectrum_full_gx; /**< [num_freq_bins]                   */
+    float *spectrum_full_gy;
+    float *spectrum_full_gz;
 
     /* -- repetition info ------------------------------------------- */
-    int    num_instances;        /**< TR repetition count (for display) */
+    int num_instances; /**< TR repetition count (for display) */
 
     /* -- analytical structural spectrum (sparse TR-harmonic grid) -- */
-    int    num_analytical_peaks;      /**< evaluated harmonic count        */
-    float* analytical_peak_freqs;     /**< [num_analytical_peaks] (Hz)     */
-    float* analytical_peak_amp_gx;    /**< [num_analytical_peaks] |S_gx|   */
-    float* analytical_peak_amp_gy;
-    float* analytical_peak_amp_gz;
-    float* analytical_peak_phase_gx;  /**< [num_analytical_peaks] arg(S_gx) (rad) */
-    float* analytical_peak_phase_gy;
-    float* analytical_peak_phase_gz;
-    float* analytical_peak_widths_hz; /**< [num_analytical_peaks] FWHM (Hz) */
+    int num_analytical_peaks;      /**< evaluated harmonic count        */
+    float *analytical_peak_freqs;  /**< [num_analytical_peaks] (Hz)     */
+    float *analytical_peak_amp_gx; /**< [num_analytical_peaks] |S_gx|   */
+    float *analytical_peak_amp_gy;
+    float *analytical_peak_amp_gz;
+    float *analytical_peak_phase_gx; /**< [num_analytical_peaks] arg(S_gx) (rad) */
+    float *analytical_peak_phase_gy;
+    float *analytical_peak_phase_gz;
+    float *analytical_peak_widths_hz; /**< [num_analytical_peaks] FWHM (Hz) */
 
     /* -- structural candidate frequencies (shared cross-axis) ----- */
-    int    num_candidates;       /**< candidate count (shared)         */
-    float* candidate_freqs;      /**< [num_candidates] (Hz)            */
-    float* candidate_amps_gx;    /**< per-axis analytical amplitudes   */
-    float* candidate_amps_gy;
-    float* candidate_amps_gz;
-    float* candidate_grad_amps;  /**< max time-domain grad amp (Hz/m)  */
-    float* candidate_grad_amps_gx; /**< per-axis contributing grad amp (Hz/m) */
-    float* candidate_grad_amps_gy;
-    float* candidate_grad_amps_gz;
-    int*   candidate_violations; /**< 1 = violates a band              */
+    int num_candidates;       /**< candidate count (shared)         */
+    float *candidate_freqs;   /**< [num_candidates] (Hz)            */
+    float *candidate_amps_gx; /**< per-axis analytical amplitudes   */
+    float *candidate_amps_gy;
+    float *candidate_amps_gz;
+    float *candidate_grad_amps;    /**< max time-domain grad amp (Hz/m)  */
+    float *candidate_grad_amps_gx; /**< per-axis contributing grad amp (Hz/m) */
+    float *candidate_grad_amps_gy;
+    float *candidate_grad_amps_gz;
+    int *candidate_violations; /**< 1 = violates a band              */
 
     /* -- component-level sparse analytical terms ------------------ */
-    int    num_component_terms;       /**< number of sparse component terms */
-    float* component_freqs_hz;        /**< [num_component_terms] term center (Hz) */
-    float* component_amps;            /**< [num_component_terms] |term| (Hz/m) */
-    float* component_phases_rad;      /**< [num_component_terms] arg(term) (rad) */
-    float* component_widths_hz;       /**< [num_component_terms] FWHM (Hz) */
-    int*   component_axes;            /**< [num_component_terms] 0=gx,1=gy,2=gz */
-    int*   component_def_ids;         /**< [num_component_terms] grad def id */
-    int*   component_contrib_ids;     /**< [num_component_terms] axis-local contrib id */
-    int*   component_run_ids;         /**< [num_component_terms] run index within contrib */
+    int num_component_terms;     /**< number of sparse component terms */
+    float *component_freqs_hz;   /**< [num_component_terms] term center (Hz) */
+    float *component_amps;       /**< [num_component_terms] |term| (Hz/m) */
+    float *component_phases_rad; /**< [num_component_terms] arg(term) (rad) */
+    float *component_widths_hz;  /**< [num_component_terms] FWHM (Hz) */
+    int *component_axes;         /**< [num_component_terms] 0=gx,1=gy,2=gz */
+    int *component_def_ids;      /**< [num_component_terms] grad def id */
+    int *component_contrib_ids;  /**< [num_component_terms] axis-local contrib id */
+    int *component_run_ids;      /**< [num_component_terms] run index within contrib */
 
     /* -- surviving sparse peak positions (positions only) --------- */
-    int    num_surviving_freqs;       /**< surviving candidate frequency count */
-    float* surviving_freqs_hz;        /**< [num_surviving_freqs] (Hz) */
+    int num_surviving_freqs;   /**< surviving candidate frequency count */
+    float *surviving_freqs_hz; /**< [num_surviving_freqs] (Hz) */
 } pulseqlib_mech_resonances_spectra;
 
-#define PULSEQLIB_MECH_RESONANCES_SPECTRA_INIT { \
-    /* freq_min_hz, freq_spacing_hz, num_freq_bins */ \
-    0.0f, 0.0f, 0, \
-    /* spectrum_full_gx/gy/gz */ \
-    NULL, NULL, NULL, \
-    /* num_instances */ \
-    0, \
-    /* num_analytical_peaks, analytical_peak_freqs, amp_gx/gy/gz, phase_gx/gy/gz, widths */ \
-    0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
-    /* num_candidates, candidate_freqs, amps_gx/gy/gz, grad_amps, grad_amps_gx/gy/gz, violations */ \
-    0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
-    /* num_component_terms, component_{freqs,amps,phases,widths,axes,def_ids,contrib_ids,run_ids} */ \
-    0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
-    /* num_surviving_freqs, surviving_freqs_hz */ \
-    0, NULL \
-}
+#define PULSEQLIB_MECH_RESONANCES_SPECTRA_INIT {                                                                                                              \
+    /* freq_min_hz, freq_spacing_hz, num_freq_bins */                                                                                                         \
+    0.0f, 0.0f, 0,                                           /* spectrum_full_gx/gy/gz */                                                                     \
+    NULL, NULL, NULL,                                        /* num_instances */                                                                              \
+    0,                                                       /* num_analytical_peaks, analytical_peak_freqs, amp_gx/gy/gz, phase_gx/gy/gz, widths */          \
+    0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,       /* num_candidates, candidate_freqs, amps_gx/gy/gz, grad_amps, grad_amps_gx/gy/gz, violations */  \
+    0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, /* num_component_terms, component_{freqs,amps,phases,widths,axes,def_ids,contrib_ids,run_ids} */ \
+    0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,       /* num_surviving_freqs, surviving_freqs_hz */                                                    \
+    0, NULL}
 
 /* ================================================================== */
 /*  Forbidden frequency band (for mechanical resonance check)         */
@@ -415,10 +413,11 @@ typedef struct pulseqlib_mech_resonances_spectra {
  * @c max_amplitude_hz_per_m is the maximum allowed gradient spectral
  * amplitude (in Hz / m) within the band [freq_min_hz, freq_max_hz].
  */
-typedef struct pulseqlib_forbidden_band {
-    float freq_min_hz;              /**< lower band edge (Hz)          */
-    float freq_max_hz;              /**< upper band edge (Hz)          */
-    float max_amplitude_hz_per_m;   /**< max spectral amplitude (Hz/m) */
+typedef struct pulseqlib_forbidden_band
+{
+    float freq_min_hz;            /**< lower band edge (Hz)          */
+    float freq_max_hz;            /**< upper band edge (Hz)          */
+    float max_amplitude_hz_per_m; /**< max spectral amplitude (Hz/m) */
 } pulseqlib_forbidden_band;
 
 #define PULSEQLIB_FORBIDDEN_BAND_INIT {0.0f, 0.0f, 0.0f}
@@ -434,11 +433,12 @@ typedef struct pulseqlib_forbidden_band {
  * Currently only PULSEQLIB_VENDOR_GEHC is implemented (exponential
  * model with chronaxie / rheobase / alpha).
  */
-typedef struct pulseqlib_pns_params {
-    int   vendor;                   /**< PULSEQLIB_VENDOR_* constant   */
-    float chronaxie_us;             /**< nerve time constant (us)      */
-    float rheobase_hz_per_m_per_s;  /**< threshold slew rate (Hz/m/s)  */
-    float alpha;                    /**< model exponent (dimensionless) */
+typedef struct pulseqlib_pns_params
+{
+    int vendor;                    /**< PULSEQLIB_VENDOR_* constant   */
+    float chronaxie_us;            /**< nerve time constant (us)      */
+    float rheobase_hz_per_m_per_s; /**< threshold slew rate (Hz/m/s)  */
+    float alpha;                   /**< model exponent (dimensionless) */
 } pulseqlib_pns_params;
 
 #define PULSEQLIB_PNS_PARAMS_INIT {0, 0.0f, 0.0f, 1.0f}
@@ -454,11 +454,12 @@ typedef struct pulseqlib_pns_params {
  * percentage = slew / rheobase.  This avoids duplicating model
  * logic across languages.
  */
-typedef struct pulseqlib_pns_result {
-    int    num_samples;
-    float* slew_x_hz_per_m_per_s;   /**< convolved dG/dt on X (Hz/m/s) */
-    float* slew_y_hz_per_m_per_s;   /**< convolved dG/dt on Y (Hz/m/s) */
-    float* slew_z_hz_per_m_per_s;   /**< convolved dG/dt on Z (Hz/m/s) */
+typedef struct pulseqlib_pns_result
+{
+    int num_samples;
+    float *slew_x_hz_per_m_per_s; /**< convolved dG/dt on X (Hz/m/s) */
+    float *slew_y_hz_per_m_per_s; /**< convolved dG/dt on Y (Hz/m/s) */
+    float *slew_z_hz_per_m_per_s; /**< convolved dG/dt on Z (Hz/m/s) */
 } pulseqlib_pns_result;
 
 #define PULSEQLIB_PNS_RESULT_INIT {0, NULL, NULL, NULL}
@@ -467,12 +468,14 @@ typedef struct pulseqlib_pns_result {
 /*  Label limits                                                      */
 /* ================================================================== */
 
-typedef struct pulseqlib_label_limit {
+typedef struct pulseqlib_label_limit
+{
     int min;
     int max;
 } pulseqlib_label_limit;
 
-typedef struct pulseqlib_label_limits {
+typedef struct pulseqlib_label_limits
+{
     pulseqlib_label_limit slc;
     pulseqlib_label_limit phs;
     pulseqlib_label_limit rep;
@@ -495,50 +498,65 @@ typedef struct pulseqlib_label_limits {
  * Returned by pulseqlib_get_block_instance().  Amplitudes are in
  * Pulseq native units (Hz for RF, Hz/m for gradients).
  */
-typedef struct pulseqlib_block_instance {
-    int   duration_us;          /**< block duration (us)                */
+typedef struct pulseqlib_block_instance
+{
+    int duration_us; /**< block duration (us)                */
 
     /* RF */
-    float rf_amp_hz;            /**< RF amplitude (Hz, = gamma*B1)     */
-    float rf_freq_hz;           /**< RF frequency offset (Hz)          */
-    float rf_phase_rad;         /**< RF phase offset (rad)             */
-    int   rf_shim_id;           /**< RF shim definition index (-1=none)*/
+    float rf_amp_hz;    /**< RF amplitude (Hz, = gamma*B1)     */
+    float rf_freq_hz;   /**< RF frequency offset (Hz)          */
+    float rf_phase_rad; /**< RF phase offset (rad)             */
+    int rf_shim_id;     /**< RF shim definition index (-1=none)*/
 
     /* Gradients */
-    float gx_amp_hz_per_m;      /**< GX amplitude (Hz / m)             */
-    float gy_amp_hz_per_m;      /**< GY amplitude (Hz / m)             */
-    float gz_amp_hz_per_m;      /**< GZ amplitude (Hz / m)             */
-    int   gx_shot_idx;          /**< GX multi-shot index               */
-    int   gy_shot_idx;          /**< GY multi-shot index               */
-    int   gz_shot_idx;          /**< GZ multi-shot index               */
-    int   gx_variable;          /**< 1 if GX amplitude varies across TRs */
-    int   gy_variable;          /**< 1 if GY amplitude varies across TRs */
-    int   gz_variable;          /**< 1 if GZ amplitude varies across TRs */
+    float gx_amp_hz_per_m; /**< GX amplitude (Hz / m)             */
+    float gy_amp_hz_per_m; /**< GY amplitude (Hz / m)             */
+    float gz_amp_hz_per_m; /**< GZ amplitude (Hz / m)             */
+    int gx_shot_idx;       /**< GX multi-shot index               */
+    int gy_shot_idx;       /**< GY multi-shot index               */
+    int gz_shot_idx;       /**< GZ multi-shot index               */
+    int gx_variable;       /**< 1 if GX amplitude varies across TRs */
+    int gy_variable;       /**< 1 if GY amplitude varies across TRs */
+    int gz_variable;       /**< 1 if GZ amplitude varies across TRs */
 
     /* Rotation */
-    float rotmat[9];            /**< 3x3 rotation matrix (row-major)   */
-    int   norot_flag;           /**< 1 = skip rotation for this block  */
-    int   nopos_flag;           /**< 1 = skip repositioning            */
+    float rotmat[9]; /**< 3x3 rotation matrix (row-major)   */
+    int norot_flag;  /**< 1 = skip rotation for this block  */
+    int nopos_flag;  /**< 1 = skip repositioning            */
 
     /* Digital output */
-    int   digitalout_flag;      /**< 1 = digital output event present  */
-    int   digitalout_channel;   /**< trigger channel, -1 if absent     */
+    int digitalout_flag;    /**< 1 = digital output event present  */
+    int digitalout_channel; /**< trigger channel, -1 if absent     */
 
     /* ADC */
-    int   adc_flag;             /**< 1 = ADC acquisition active        */
-    float adc_freq_hz;          /**< ADC frequency offset (Hz)         */
-    float adc_phase_rad;        /**< ADC phase offset (rad)            */
+    int adc_flag;        /**< 1 = ADC acquisition active        */
+    float adc_freq_hz;   /**< ADC frequency offset (Hz)         */
+    float adc_phase_rad; /**< ADC phase offset (rad)            */
 } pulseqlib_block_instance;
 
 #define PULSEQLIB_BLOCK_INSTANCE_INIT { \
-    0, \
-    0.0f, 0.0f, 0.0f, -1, \
-    0.0f, 0.0f, 0.0f, \
-    0, 0, 0, \
-    0, 0, 0, \
-    {1,0,0, 0,1,0, 0,0,1}, 0, 0, \
-    0, -1, \
-    0, 0.0f, 0.0f, \
+    0,                                  \
+    0.0f,                               \
+    0.0f,                               \
+    0.0f,                               \
+    -1,                                 \
+    0.0f,                               \
+    0.0f,                               \
+    0.0f,                               \
+    0,                                  \
+    0,                                  \
+    0,                                  \
+    0,                                  \
+    0,                                  \
+    0,                                  \
+    {1, 0, 0, 0, 1, 0, 0, 0, 1},        \
+    0,                                  \
+    0,                                  \
+    0,                                  \
+    -1,                                 \
+    0,                                  \
+    0.0f,                               \
+    0.0f,                               \
 }
 
 /* ================================================================== */
@@ -551,16 +569,17 @@ typedef struct pulseqlib_block_instance {
  * Returned by pulseqlib_cursor_get_info() after a successful
  * pulseqlib_cursor_next() call.
  */
-typedef struct pulseqlib_cursor_info {
-    int subseq_idx;       /**< current subsequence index                     */
-    int scan_pos;         /**< scan-table position (for freq-mod lookup)     */
-    int segment_id;       /**< current segment ID (global)                   */
-    int segment_start;    /**< 1 if first block of current segment           */
-    int segment_end;      /**< 1 if last block of current segment            */
-    int is_nav;           /**< 1 if current segment is a NAV segment         */
-    int has_trigger;      /**< 1 if current segment has a trigger/digitalout */
-    int tr_start;         /**< 1 if first block of a main-region TR          */
-    int pmc;              /**< 1 if current subsequence has PMC enabled      */
+typedef struct pulseqlib_cursor_info
+{
+    int subseq_idx;    /**< current subsequence index                     */
+    int scan_pos;      /**< scan-table position (for freq-mod lookup)     */
+    int segment_id;    /**< current segment ID (global)                   */
+    int segment_start; /**< 1 if first block of current segment           */
+    int segment_end;   /**< 1 if last block of current segment            */
+    int is_nav;        /**< 1 if current segment is a NAV segment         */
+    int has_trigger;   /**< 1 if current segment has a trigger/digitalout */
+    int tr_start;      /**< 1 if first block of a main-region TR          */
+    int pmc;           /**< 1 if current subsequence has PMC enabled      */
 } pulseqlib_cursor_info;
 
 #define PULSEQLIB_CURSOR_INFO_INIT {0, 0, -1, 0, 0, 0, 0, 0, 0}
@@ -583,9 +602,10 @@ typedef struct pulseqlib_cursor_info {
  * account for prep/cooldown block durations, degenerate
  * TR folding, and the consumer-supplied @c num_reps.
  */
-typedef struct pulseqlib_scan_time_info {
-    float total_duration_us;        /**< total sequence duration (us)  */
-    int   total_segment_boundaries; /**< total segment boundary count  */
+typedef struct pulseqlib_scan_time_info
+{
+    float total_duration_us;      /**< total sequence duration (us)  */
+    int total_segment_boundaries; /**< total segment boundary count  */
 } pulseqlib_scan_time_info;
 
 #define PULSEQLIB_SCAN_TIME_INFO_INIT {0.0f, 0}
@@ -599,12 +619,13 @@ typedef struct pulseqlib_scan_time_info {
  *
  * Returned by pulseqlib_get_collection_info().
  */
-typedef struct pulseqlib_collection_info {
-    int   num_subsequences;     /**< number of subsequences              */
-    int   num_segments;         /**< total unique segments               */
-    int   max_adc_samples;      /**< max sample count across all ADCs    */
-    int   total_readouts;       /**< total ADC readout events            */
-    float total_duration_us;    /**< total sequence duration (us)        */
+typedef struct pulseqlib_collection_info
+{
+    int num_subsequences;    /**< number of subsequences              */
+    int num_segments;        /**< total unique segments               */
+    int max_adc_samples;     /**< max sample count across all ADCs    */
+    int total_readouts;      /**< total ADC readout events            */
+    float total_duration_us; /**< total sequence duration (us)        */
 } pulseqlib_collection_info;
 
 #define PULSEQLIB_COLLECTION_INFO_INIT {0, 0, 0, 0, 0.0f}
@@ -618,33 +639,33 @@ typedef struct pulseqlib_collection_info {
  *
  * Returned by pulseqlib_get_subseq_info().
  */
-typedef struct pulseqlib_subseq_info {
-    float tr_duration_us;       /**< TR duration (us)                    */
-    int   num_trs;              /**< number of TRs                       */
-    int   tr_size;              /**< blocks per TR                       */
-    int   num_prep_blocks;      /**< preparation blocks before first TR  */
-    int   num_cooldown_blocks;  /**< cooldown blocks after last TR       */
-    int   num_prep_trs;         /**< preparation TRs                     */
-    int   num_cooldown_trs;     /**< cooldown TRs                        */
-    int   degenerate_prep;      /**< 1 if prep == first TR               */
-    int   degenerate_cooldown;  /**< 1 if cooldown == last TR            */
-    int   num_unique_adcs;      /**< unique ADC definitions              */
-    int   num_unique_rf;        /**< unique RF definitions               */
-    int   pmc_enabled;          /**< 1 if PMC (prospective motion corr)  */
-    int   segment_offset;       /**< global segment index offset         */
-    int   num_prep_segments;    /**< segments in prep region             */
-    int   num_main_segments;    /**< segments in main TR region          */
-    int   num_cooldown_segments;/**< segments in cooldown region         */
-    int   num_adc_occurrences;  /**< ADC entries in label table          */
-    int   num_label_columns;    /**< label columns (vendor-dependent)    */
-    int   num_passes;           /**< number of inner-loop passes (>=1)   */
-    int   num_averages;         /**< number of averages (>=1)            */
-    int   num_canonical_trs;    /**< unique shot-ID combinations (>=1)   */
+typedef struct pulseqlib_subseq_info
+{
+    float tr_duration_us;      /**< TR duration (us)                    */
+    int num_trs;               /**< number of TRs                       */
+    int tr_size;               /**< blocks per TR                       */
+    int num_prep_blocks;       /**< preparation blocks before first TR  */
+    int num_cooldown_blocks;   /**< cooldown blocks after last TR       */
+    int num_prep_trs;          /**< preparation TRs                     */
+    int num_cooldown_trs;      /**< cooldown TRs                        */
+    int degenerate_prep;       /**< 1 if prep == first TR               */
+    int degenerate_cooldown;   /**< 1 if cooldown == last TR            */
+    int num_unique_adcs;       /**< unique ADC definitions              */
+    int num_unique_rf;         /**< unique RF definitions               */
+    int pmc_enabled;           /**< 1 if PMC (prospective motion corr)  */
+    int segment_offset;        /**< global segment index offset         */
+    int num_prep_segments;     /**< segments in prep region             */
+    int num_main_segments;     /**< segments in main TR region          */
+    int num_cooldown_segments; /**< segments in cooldown region         */
+    int num_adc_occurrences;   /**< ADC entries in label table          */
+    int num_label_columns;     /**< label columns (vendor-dependent)    */
+    int num_passes;            /**< number of inner-loop passes (>=1)   */
+    int num_averages;          /**< number of averages (>=1)            */
+    int num_canonical_trs;     /**< unique shot-ID combinations (>=1)   */
 } pulseqlib_subseq_info;
 
 #define PULSEQLIB_SUBSEQ_INFO_INIT { \
-    0.0f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1 \
-}
+    0.0f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1}
 
 /* ================================================================== */
 /*  Segment info (replaces per-segment getters)                       */
@@ -655,28 +676,28 @@ typedef struct pulseqlib_subseq_info {
  *
  * Returned by pulseqlib_get_segment_info().
  */
-typedef struct pulseqlib_segment_info {
-    int   duration_us;          /**< total segment duration (us)         */
-    int   num_blocks;           /**< unique blocks in the segment        */
-    int   start_block;          /**< start block index in the sequence   */
-    int   pure_delay;           /**< 1 if segment is a bare delay        */
-    int   has_trigger;          /**< 1 if physio trigger attached        */
-    int   trigger_type;         /**< trigger type (1=output/TTL, 2=input/ECG), 0 if none */
-    int   trigger_delay_us;     /**< trigger delay (us), -1 if none      */
-    int   trigger_duration_us;  /**< trigger duration (us), -1 if none   */
-    int   is_nav;               /**< 1 if navigator segment              */
-    int   num_kzero_crossings;  /**< k-space zero-crossings              */
-    int   rf_adc_gap_us;        /**< RF->ADC gap (us), -1 if no pair     */
-    int   adc_adc_gap_us;       /**< min ADC->ADC gap (us), -1 if < 2    */
+typedef struct pulseqlib_segment_info
+{
+    int duration_us;         /**< total segment duration (us)         */
+    int num_blocks;          /**< unique blocks in the segment        */
+    int start_block;         /**< start block index in the sequence   */
+    int pure_delay;          /**< 1 if segment is a bare delay        */
+    int has_trigger;         /**< 1 if physio trigger attached        */
+    int trigger_type;        /**< trigger type (1=output/TTL, 2=input/ECG), 0 if none */
+    int trigger_delay_us;    /**< trigger delay (us), -1 if none      */
+    int trigger_duration_us; /**< trigger duration (us), -1 if none   */
+    int is_nav;              /**< 1 if navigator segment              */
+    int num_kzero_crossings; /**< k-space zero-crossings              */
+    int rf_adc_gap_us;       /**< RF->ADC gap (us), -1 if no pair     */
+    int adc_adc_gap_us;      /**< min ADC->ADC gap (us), -1 if < 2    */
 } pulseqlib_segment_info;
 
 #define PULSEQLIB_SEGMENT_INFO_INIT { \
-    0, 0, 0, 0, 0, 0, -1, -1, 0, 0, -1, -1 \
-}
+    0, 0, 0, 0, 0, 0, -1, -1, 0, 0, -1, -1}
 
 /** Trigger type constants (public, matching internal definitions). */
-#define PULSEQLIB_TRIGGER_TYPE_OUTPUT  1  /**< TTL / digital output */
-#define PULSEQLIB_TRIGGER_TYPE_INPUT   2  /**< ECG / cardiac gating */
+#define PULSEQLIB_TRIGGER_TYPE_OUTPUT 1 /**< TTL / digital output */
+#define PULSEQLIB_TRIGGER_TYPE_INPUT 2  /**< ECG / cardiac gating */
 
 /* ================================================================== */
 /*  Block info (replaces per-block has/get accessor pairs)            */
@@ -689,52 +710,47 @@ typedef struct pulseqlib_segment_info {
  * Waveform data is NOT included — use the dedicated waveform getters
  * (e.g.\ pulseqlib_get_grad_amplitude) keyed by the metadata here.
  */
-typedef struct pulseqlib_block_info {
-    int   duration_us;            /**< block duration (us)               */
-    int   start_time_us;          /**< start time within segment (us)    */
+typedef struct pulseqlib_block_info
+{
+    int duration_us;   /**< block duration (us)               */
+    int start_time_us; /**< start time within segment (us)    */
 
     /* Gradient (per axis: [0]=X, [1]=Y, [2]=Z) */
-    int   has_grad[3];            /**< 1 if gradient present             */
-    int   grad_is_trapezoid[3];   /**< 1 if trapezoid (not arbitrary)    */
-    int   grad_delay_us[3];       /**< gradient delay (us), -1 if absent */
-    int   grad_num_shots[3];      /**< shot count, -1 if absent          */
-    int   grad_num_samples[3];    /**< sample count, -1 if absent        */
+    int has_grad[3];          /**< 1 if gradient present             */
+    int grad_is_trapezoid[3]; /**< 1 if trapezoid (not arbitrary)    */
+    int grad_delay_us[3];     /**< gradient delay (us), -1 if absent */
+    int grad_num_shots[3];    /**< shot count, -1 if absent          */
+    int grad_num_samples[3];  /**< sample count, -1 if absent        */
 
     /* RF */
-    int   has_rf;                 /**< 1 if RF event present             */
-    int   rf_delay_us;            /**< RF delay (us), -1 if absent       */
-    int   rf_num_channels;        /**< Tx channel count, -1 if absent    */
-    int   rf_num_samples;         /**< samples per channel, -1 if absent */
-    int   rf_duration_us;         /**< RF duration (us) from last time-shape sample; -1 if absent */
-    int   rf_is_complex;          /**< 1 if phase shape exists           */
-    int   rf_uniform_raster;      /**< 1 if time shape present           */
+    int has_rf;            /**< 1 if RF event present             */
+    int rf_delay_us;       /**< RF delay (us), -1 if absent       */
+    int rf_num_channels;   /**< Tx channel count, -1 if absent    */
+    int rf_num_samples;    /**< samples per channel, -1 if absent */
+    int rf_duration_us;    /**< RF duration (us) from last time-shape sample; -1 if absent */
+    int rf_is_complex;     /**< 1 if phase shape exists           */
+    int rf_uniform_raster; /**< 1 if time shape present           */
 
     /* ADC */
-    int   has_adc;                /**< 1 if ADC acquisition active       */
-    int   adc_delay_us;           /**< ADC delay (us), -1 if absent      */
-    int   adc_def_id;             /**< global ADC library index, -1      */
+    int has_adc;      /**< 1 if ADC acquisition active       */
+    int adc_delay_us; /**< ADC delay (us), -1 if absent      */
+    int adc_def_id;   /**< global ADC library index, -1      */
 
     /* Digital output */
-    int   has_digitalout;         /**< 1 if digital output present       */
-    int   digitalout_delay_us;    /**< delay (us), -1 if absent          */
-    int   digitalout_duration_us; /**< duration (us), -1 if absent       */
-    int   digitalout_channel;     /**< trigger channel, -1 if absent     */
+    int has_digitalout;         /**< 1 if digital output present       */
+    int digitalout_delay_us;    /**< delay (us), -1 if absent          */
+    int digitalout_duration_us; /**< duration (us), -1 if absent       */
+    int digitalout_channel;     /**< trigger channel, -1 if absent     */
 
     /* Flags */
-    int   has_rotation;           /**< 1 if rotation event present       */
-    int   norot_flag;             /**< 1 if no-rotation override         */
-    int   nopos_flag;             /**< 1 if no-position override         */
-    int   has_freq_mod;           /**< 1 if frequency modulation present */
+    int has_rotation; /**< 1 if rotation event present       */
+    int norot_flag;   /**< 1 if no-rotation override         */
+    int nopos_flag;   /**< 1 if no-position override         */
+    int has_freq_mod; /**< 1 if frequency modulation present */
 } pulseqlib_block_info;
 
 #define PULSEQLIB_BLOCK_INFO_INIT { \
-    0, 0, \
-    {0,0,0}, {0,0,0}, {-1,-1,-1}, {-1,-1,-1}, {-1,-1,-1}, \
-    0, -1, -1, -1, -1, 0, 0, \
-    0, -1, -1, \
-    0, -1, -1, -1, \
-    0, 0, 0, 0 \
-}
+    0, 0, {0, 0, 0}, {0, 0, 0}, {-1, -1, -1}, {-1, -1, -1}, {-1, -1, -1}, 0, -1, -1, -1, -1, 0, 0, 0, -1, -1, 0, -1, -1, -1, 0, 0, 0, 0}
 
 /* ================================================================== */
 /*  ADC definition (replaces per-ADC getters)                         */
@@ -745,9 +761,10 @@ typedef struct pulseqlib_block_info {
  *
  * Returned by pulseqlib_get_adc_def().
  */
-typedef struct pulseqlib_adc_def {
-    int   dwell_ns;             /**< dwell time (ns)                     */
-    int   num_samples;          /**< sample count                        */
+typedef struct pulseqlib_adc_def
+{
+    int dwell_ns;    /**< dwell time (ns)                     */
+    int num_samples; /**< sample count                        */
 } pulseqlib_adc_def;
 
 #define PULSEQLIB_ADC_DEF_INIT {0, 0}
@@ -765,10 +782,11 @@ typedef struct pulseqlib_adc_def {
  * pulseqlib_block_instance is LOCAL to its subsequence (same convention as
  * rf_id, gx_id, etc.) — index 0 is the first shim of that subsequence.
  */
-typedef struct pulseqlib_rf_shim_def {
-    int   num_channels;                                /**< Tx channel count       */
-    float magnitudes[PULSEQLIB_MAX_RF_SHIM_CHANNELS];  /**< per-ch magnitude [0,1] */
-    float phases[PULSEQLIB_MAX_RF_SHIM_CHANNELS];      /**< per-ch phase (rad)     */
+typedef struct pulseqlib_rf_shim_def
+{
+    int num_channels;                                 /**< Tx channel count       */
+    float magnitudes[PULSEQLIB_MAX_RF_SHIM_CHANNELS]; /**< per-ch magnitude [0,1] */
+    float phases[PULSEQLIB_MAX_RF_SHIM_CHANNELS];     /**< per-ch phase (rad)     */
 } pulseqlib_rf_shim_def;
 
 #define PULSEQLIB_RF_SHIM_DEF_INIT {0, {0}, {0}}
@@ -778,182 +796,153 @@ typedef struct pulseqlib_rf_shim_def {
 /* ================================================================== */
 
 /** @brief Single k-space shot (one axis, ADC-sampled, k-zero centred). */
-typedef struct pulseqlib_kshot {
-    int    num_samples;
-    float* k;                  /**< k-space values [num_samples], Hz·s/m */
+typedef struct pulseqlib_kshot
+{
+    int num_samples;
+    float *k; /**< k-space values [num_samples], Hz·s/m */
 } pulseqlib_kshot;
 
 /** @brief Library of unique per-axis k-space shots. */
-typedef struct pulseqlib_kshot_library {
-    int               num_shots;
-    pulseqlib_kshot*  shots;
+typedef struct pulseqlib_kshot_library
+{
+    int num_shots;
+    pulseqlib_kshot *shots;
 } pulseqlib_kshot_library;
 
 /** @brief Per-ADC-event trajectory table entry. */
-typedef struct pulseqlib_traj_table_entry {
-    int   kx_shot_id;          /**< kshot index for X axis (-1 = trivial) */
-    int   ky_shot_id;          /**< kshot index for Y axis (-1 = trivial) */
-    int   kz_shot_id;          /**< kshot index for Z axis (-1 = trivial) */
-    float gx_amplitude;        /**< gradient amplitude for X (Hz/m)      */
-    float gy_amplitude;        /**< gradient amplitude for Y (Hz/m)      */
-    float gz_amplitude;        /**< gradient amplitude for Z (Hz/m)      */
-    int   rotation_id;         /**< index into rotation_matrices          */
-    int   slc, seg, rep, avg, set, eco, phs, lin, par, acq;
-    unsigned long flags;       /**< ISMRMRD-compatible flag bitmask       */
-    int   center_sample;       /**< k-zero sample index within readout   */
-    float sample_time_us;      /**< ADC dwell time in microseconds       */
-    int   encoding_space_ref;  /**< encoding space index                  */
-    int   off;                 /**< Pulseq LABELSET OFF flag (1=discard) */
+typedef struct pulseqlib_traj_table_entry
+{
+    int kx_shot_id;     /**< kshot index for X axis (-1 = trivial) */
+    int ky_shot_id;     /**< kshot index for Y axis (-1 = trivial) */
+    int kz_shot_id;     /**< kshot index for Z axis (-1 = trivial) */
+    float gx_amplitude; /**< gradient amplitude for X (Hz/m)      */
+    float gy_amplitude; /**< gradient amplitude for Y (Hz/m)      */
+    float gz_amplitude; /**< gradient amplitude for Z (Hz/m)      */
+    int rotation_id;    /**< index into rotation_matrices          */
+    int slc, seg, rep, avg, set, eco, phs, lin, par, acq;
+    unsigned long flags;    /**< ISMRMRD-compatible flag bitmask       */
+    int center_sample;      /**< k-zero sample index within readout   */
+    float sample_time_us;   /**< ADC dwell time in microseconds       */
+    int encoding_space_ref; /**< encoding space index                  */
+    int off;                /**< Pulseq LABELSET OFF flag (1=discard) */
 } pulseqlib_traj_table_entry;
 
 /** @brief Per-subsequence encoding-space descriptor. */
-typedef struct pulseqlib_encoding_space {
-    float fov[3];              /**< field of view (mm)                    */
-    float matrix[3];           /**< matrix size (voxels)                  */
-    float nav_fov[3];          /**< navigator FOV (mm), 0 if none         */
-    float nav_matrix[3];       /**< navigator matrix size, 0 if none      */
-    int   subseq_idx;          /**< owning subsequence index              */
-    int   nav_subseq_offset;   /**< navigator subseq offset, 0 if none    */
+typedef struct pulseqlib_encoding_space
+{
+    float fov[3];                        /**< field of view (mm)                    */
+    float matrix[3];                     /**< matrix size (voxels)                  */
+    float nav_fov[3];                    /**< navigator FOV (mm), 0 if none         */
+    float nav_matrix[3];                 /**< navigator matrix size, 0 if none      */
+    int subseq_idx;                      /**< owning subsequence index              */
+    int nav_subseq_offset;               /**< navigator subseq offset, 0 if none    */
     pulseqlib_label_limits label_limits; /**< per-encoding-space label limits */
 } pulseqlib_encoding_space;
 
 /** @brief Complete trajectory description for a collection. */
-typedef struct pulseqlib_trajectory {
-    pulseqlib_kshot_library      kshots;
-    int                          num_encoding_spaces;
-    pulseqlib_encoding_space*    encoding_spaces;
-    int                          num_adc_events;
-    pulseqlib_traj_table_entry*  table;
+typedef struct pulseqlib_trajectory
+{
+    pulseqlib_kshot_library kshots;
+    int num_encoding_spaces;
+    pulseqlib_encoding_space *encoding_spaces;
+    int num_adc_events;
+    pulseqlib_traj_table_entry *table;
 } pulseqlib_trajectory;
 
 /* ================================================================== */
-/*  Sequence description (Section 5 — state-machine Bloch simulator)  */
+/*  Sequence description (Section 5 — compact canonical-TR table)     */
 /* ================================================================== */
 
-/** ADC role flags for sequence-description events. */
-#define PULSEQLIB_ADC_ROLE_NON_ACQUIRED  0  /**< navigator / PMC — skip in recon  */
-#define PULSEQLIB_ADC_ROLE_SINGLE        1  /**< single ADC in its echo group     */
-#define PULSEQLIB_ADC_ROLE_ECHO_CENTER   2  /**< nearest-to-k-zero ADC in group   */
-#define PULSEQLIB_ADC_ROLE_NON_CENTER    3  /**< other ADC in a multi-ADC group   */
+/** ADC role codes for sequence-description rows. */
+#define PULSEQLIB_ADC_ROLE_NON_ACQUIRED 0 /**< navigator / PMC — skip in recon  */
+#define PULSEQLIB_ADC_ROLE_SINGLE 1       /**< single ADC in its echo group     */
+#define PULSEQLIB_ADC_ROLE_ECHO_CENTER 2  /**< nearest-to-k-zero ADC in group   */
+#define PULSEQLIB_ADC_ROLE_NON_CENTER 3   /**< other ADC in a multi-ADC group   */
 
-/** Sequence-event type codes. */
-#define PULSEQLIB_SEQ_EVENT_WAIT  0  /**< silent interval */
-#define PULSEQLIB_SEQ_EVENT_RF    1  /**< RF pulse        */
-#define PULSEQLIB_SEQ_EVENT_ADC   2  /**< readout event   */
+/** Event type codes for Section 5 rows. */
+#define PULSEQLIB_SEQ_EVENT_OTHER 0 /**< pure wait / no RF or ADC event */
+#define PULSEQLIB_SEQ_EVENT_RF 1    /**< RF pulse                       */
+#define PULSEQLIB_SEQ_EVENT_ADC 2   /**< readout event                  */
 
-/**
- * @brief Single event in a per-TR event sequence.
- *
- * Interpretation of @p params depends on @p type:
- *
- *  WAIT:  params[0] = duration_us
- *
- *  RF:    params[0] = center_time_us  (TR-relative, us)
- *         params[1] = duration_us
- *         params[2] = flip_angle_deg
- *         params[3] = rf_shape_tuple_id   (index into seq_desc.rf_shape_tuples)
- *         params[4] = shim_def_id_local   (index into seq_desc.shim_defs; -1 if none)
- *         params[5] = slice_select_flag   (1.0 = slice-selective, 0.0 = non-selective)
- *         params[6] = reserved (0.0)
- *
- *  ADC:   params[0] = center_time_us  (TR-relative, us; kzero sample)
- *         params[1] = duration_us
- *         params[2] = num_samples
- *         params[3] = dwell_us
- *         params[4] = adc_role          (PULSEQLIB_ADC_ROLE_*)
- *         params[5] = reserved (0.0)
- *         params[6] = reserved (0.0)
- */
-typedef struct pulseqlib_seq_event {
-    int   type;       /**< PULSEQLIB_SEQ_EVENT_* */
-    float params[7];
-} pulseqlib_seq_event;
+/* Keep legacy alias so existing call-sites outside this repo still compile. */
+#define PULSEQLIB_SEQ_EVENT_WAIT PULSEQLIB_SEQ_EVENT_OTHER
 
+/* Number of float payload fields per row (same for all event types; unused
+ * fields are zero-padded).                                                */
 #define PULSEQLIB_SEQ_EVENT_PARAMS 7
 
 /**
- * @brief RF shape tuple shared across subsequences — the normalised waveform.
+ * @brief One row in the compact canonical-TR event table (Section 5).
  *
- * mag[i] ∈ [0,1], phase[i] in radians.
- * time[i] gives the sample timestamp (us) for non-uniform grids;
- * for uniform grids time == NULL and samples are spaced rf_raster_us apart.
+ * The table has one row per block in the average-expanded canonical TR
+ * (the full pass: prep + main + cooldown).  One row per block regardless
+ * of event type — blocks with both RF and ADC are represented by their RF
+ * row (RF takes priority).
+ *
+ * Timestamp semantics (pass-relative, us):
+ *   RF    — RF isocenter time
+ *   ADC   — k-space-zero sample time
+ *   OTHER — block start time
+ *
+ * Payload interpretation (params[] stored as float; integer IDs are cast):
+ *   RF:    [0] rf_def_id (int)        index into per-subseq RF definition table
+ *          [1] rf_use (int)           PULSEQLIB_RF_USE_* code
+ *          [2] act_amplitude_hz (f)   actual |gamma*B1| peak (Hz)
+ *          [3] phase_offset_rad (f)   per-instance phase incl. ppm (rad)
+ *          [4] freq_offset_hz (f)     per-instance freq incl. ppm (Hz)
+ *          [5] rf_shim_id (int)       shim definition index, -1 if none
+ *          [6] ss_grad_amp_hz_per_m (f) amplitude of slice-selection gradient
+ *                                       (Hz/m); 0.0 if absent, non-trap, or
+ *                                       more than one gradient axis is active
+ *
+ *   ADC:   [0] adc_role (int)         PULSEQLIB_ADC_ROLE_*
+ *          [1] phase_offset_rad (f)   per-instance ADC phase incl. ppm (rad)
+ *          [2..5] = 0
+ *
+ *   OTHER: [0..5] = 0
+ *
+ * The C++ reader (trajectory_cache_reader) dedups the
+ * (rf_def_id, rf_shim_id, ss_grad_amp_hz_per_m) triplets over all rows to
+ * form a unique-tuple library. For each unique tuple it computes
+ * slice_thickness_mm = bandwidth_hz / |ss_grad_amp_hz_per_m| * 1e3 and sets
+ * slice_selective = (slice_thickness_mm < 10.0). Both are packed into the
+ * per-subsequence RF waveform header streamed as an ISMRMRD Waveform.
  */
-typedef struct pulseqlib_rf_shape_tuple {
-    int   tuple_id;          /**< 0-based index within the seq_desc tuple library */
-    int   N_tx;              /**< number of transmit channels (1 = single-channel) */
-    int   N_samples;         /**< samples per channel                             */
-    float rf_raster_us;      /**< raster time (us)                                */
-    /* multiband annotation (from rf_stats) */
-    int   num_bands;
-    float band_freq_offsets_hz[PULSEQLIB_MAX_BANDS];
-    float band_bandwidth_hz;
-    float total_b1sq_power;
-    /* waveform data — heap-allocated, freed by pulseqlib_free_sequence_description */
-    float* mag;    /**< [N_tx * N_samples] magnitude (normalised to peak=1)      */
-    float* phase;  /**< [N_tx * N_samples] phase (rad); NULL if all-zero         */
-    float* time;   /**< [N_samples] sample times (us); NULL if uniform grid      */
-} pulseqlib_rf_shape_tuple;
+typedef struct pulseqlib_seq_event
+{
+    int type;           /**< PULSEQLIB_SEQ_EVENT_{OTHER,RF,ADC}    */
+    float timestamp_us; /**< anchor time (us, pass-relative)        */
+    float params[PULSEQLIB_SEQ_EVENT_PARAMS];
+} pulseqlib_seq_event;
 
-/**
- * @brief Local shim definition for a subsequence (pTx weights).
- *
- * shim_id_local is the same index as bte->rf_shim_id for this subsequence.
- */
-typedef struct pulseqlib_shim_def_local {
-    int   shim_id_local;
-    int   N_ch;
-    float magnitudes[PULSEQLIB_MAX_RF_SHIM_CHANNELS];
-    float phases[PULSEQLIB_MAX_RF_SHIM_CHANNELS];
-} pulseqlib_shim_def_local;
-
-/**
- * @brief Composite RF group — a contiguous run of RF events (no ADC between)
- *        with num_pulses >= 2 (e.g., inversion + excitation, multiband train).
- *
- * first_event_idx / last_event_idx are indices into seq_desc.events[].
- */
-typedef struct pulseqlib_composite_rf_group {
-    int   group_id;
-    int   first_event_idx;
-    int   last_event_idx;
-    int   num_pulses;
-    float eff_te_us;     /**< approximate TE contribution (us); 0 if unknown */
-} pulseqlib_composite_rf_group;
+#define PULSEQLIB_SEQ_EVENT_INIT {PULSEQLIB_SEQ_EVENT_OTHER, 0.0f, {0.0f}}
 
 /**
  * @brief Scan-global sequence parameters, aggregated across all subsequences.
  */
-typedef struct pulseqlib_sequence_parameters {
+typedef struct pulseqlib_sequence_parameters
+{
     float min_te_us;
     float min_tr_us;
     float max_tr_us;
     float max_flip_angle_deg;
-    float total_scan_time_us;   /**< estimated total scan duration (us) */
-    int   num_subseqs;
-    int   reserved[3];
+    float total_scan_time_us; /**< estimated total scan duration (us) */
+    int num_subseqs;
+    int reserved[3];
 } pulseqlib_sequence_parameters;
 
 /**
- * @brief Per-subsequence sequence description (event list + shape/shim libraries).
+ * @brief Per-subsequence sequence description — compact canonical-TR table.
  *
- * All pointer members are heap-allocated and freed by
- * pulseqlib_free_sequence_description().
+ * @c rows is heap-allocated; freed by pulseqlib_free_sequence_description().
+ * @c num_rows == number of blocks in the full pass (prep + main + cooldown).
  */
-typedef struct pulseqlib_sequence_description {
-    int   subseq_idx;
-    float tr_duration_us;
-
-    int                       num_tuples;
-    pulseqlib_rf_shape_tuple* rf_shape_tuples;
-
-    int                        num_shims;
-    pulseqlib_shim_def_local*  shim_defs;
-
-    int                      num_events;
-    pulseqlib_seq_event*     events;
-
-    int                             num_composite_rf_groups;
-    pulseqlib_composite_rf_group*   composite_rf_groups;
+typedef struct pulseqlib_sequence_description
+{
+    int subseq_idx;
+    float tr_duration_us; /**< full pass duration (us) */
+    int num_rows;
+    pulseqlib_seq_event *rows;
 } pulseqlib_sequence_description;
 
 #endif /* PULSEQLIB_TYPES_H */

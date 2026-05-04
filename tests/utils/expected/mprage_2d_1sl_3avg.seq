@@ -64,7 +64,7 @@ TotalDuration 0.0752
 # Field 'use' is the initial of: 
 #   excitation refocusing inversion saturation preparation other undefined
 [RF]
-1           25 1 2 3 10000 0 0 0 0 0 e
+1           25 1 2 3 10000 0 0 0 0 0 i
 2      54.8582 4 5 0 1000 60 0 0 0 0 e
 3      54.8582 4 5 0 1000 60 0 0 0 1.46608 e
 4      54.8582 4 5 0 1000 60 0 0 0 4.39823 e
@@ -1184,4 +1184,4 @@ num_samples 4
 # preceding [SIGNATURE] BELONGS to the signature (and needs to be sripped away
 # for recalculating/verification)
 Type md5
-Hash 2a3c05c35a1047fe0ed9f80c2039f50b
+Hash 2151dc944cc74ddef85111db72f39c1e

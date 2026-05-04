@@ -653,7 +653,7 @@ static int compute_rf_stats(
     kiss_fft_cpx* fft_out = NULL;
     int fft_ready = 0;
 
-    float rf_abs, sum_signed, sum_signed_re, sum_signed_im;
+    float rf_abs, sum_signed;
     float sum_abs, sum_sq, time_above_threshold, temp_pw, maxpw;
 
     if (!seq || !rf_defs || num_unique <= 0) return PULSEQLIB_SUCCESS;
@@ -890,8 +890,7 @@ static int compute_rf_stats(
                 }
             }
             sum_signed = (float)sqrt(dre * dre + dim * dim);
-            sum_signed_re = (float)dre;  /* unused below, but keep filled */
-            sum_signed_im = (float)dim;
+            /* Keep area as magnitude of the complex integral. */
         }
         /* width / power / duty stats still need the uniform grid */
         sum_abs = 0.0f; sum_sq = 0.0f;

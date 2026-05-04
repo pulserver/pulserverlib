@@ -1785,6 +1785,291 @@ classdef TruthBuilder < handle
             end
         end
 
+        function use = rfUseTag(~, rf)
+            use = '';
+            if ~isstruct(rf) || ~isfield(rf, 'use') || isempty(rf.use)
+                return;
+            end
+
+            if isstring(rf.use)
+                raw = char(rf.use);
+            else
+                raw = rf.use;
+            end
+            raw = lower(strtrim(raw));
+
+            switch raw
+                case {'e', 'excitation'}
+                    use = 'excitation';
+                case {'r', 'refocusing'}
+                    use = 'refocusing';
+                case {'i', 'inversion'}
+                    use = 'inversion';
+                case {'s', 'saturation'}
+                    use = 'saturation';
+                otherwise
+                    use = raw;
+            end
+        end
+
+        function adc_info = buildSubseqAdcTiming(obj, blk_first, blk_last)
+            ADC_ROLE_NON_ACQUIRED = 0;
+            ADC_ROLE_SINGLE = 1;
+            ADC_ROLE_ECHO_CENTER = 2;
+            ADC_ROLE_NON_CENTER = 3;
+
+            empty_info = struct('role', -1, 'event_time_us', -1, ...
+                'has_true_kzero', false, 'is_nav', false);
+            n_sub_blocks = blk_last - blk_first + 1;
+            if n_sub_blocks <= 0
+                adc_info = repmat(empty_info, 1, 0);
+                return;
+            end
+
+            adc_info = repmat(empty_info, 1, n_sub_blocks);
+            raster_dt = obj.seq.gradRasterTime;
+            if raster_dt <= 0
+                return;
+            end
+
+            obj.ensureLabelTimeline();
+            nav_col = obj.findLabelColumn('NAV');
+
+            t_all = [];
+            gx_all = [];
+            gy_all = [];
+            gz_all = [];
+            block_start_sample = zeros(1, n_sub_blocks);
+            block_start_s = zeros(1, n_sub_blocks);
+            excite_samples = [];
+            refocus_samples = [];
+            t_accum = 0.0;
+
+            for local_blk = 1:n_sub_blocks
+                ib = blk_first + local_blk - 1;
+                block = obj.seq.getBlock(ib);
+                block_start_s(local_blk) = t_accum;
+
+                if isempty(block)
+                    if isempty(t_all)
+                        block_start_sample(local_blk) = 1;
+                    else
+                        block_start_sample(local_blk) = length(t_all);
+                    end
+                    continue;
+                end
+
+                blk_dur = block.blockDuration;
+                local_t = 0:raster_dt:blk_dur;
+                if isempty(local_t) || abs(local_t(end) - blk_dur) > 1e-12
+                    local_t = [local_t, blk_dur]; %#ok<AGROW>
+                end
+
+                gx_blk = zeros(1, length(local_t));
+                gy_blk = zeros(1, length(local_t));
+                gz_blk = zeros(1, length(local_t));
+                if isfield(block, 'gx') && ~isempty(block.gx)
+                    gx_blk = testutils.TruthBuilder.sampleGradAtTimes(block.gx, local_t);
+                end
+                if isfield(block, 'gy') && ~isempty(block.gy)
+                    gy_blk = testutils.TruthBuilder.sampleGradAtTimes(block.gy, local_t);
+                end
+                if isfield(block, 'gz') && ~isempty(block.gz)
+                    gz_blk = testutils.TruthBuilder.sampleGradAtTimes(block.gz, local_t);
+                end
+
+                if isempty(t_all)
+                    block_start_sample(local_blk) = 1;
+                    t_all = local_t;
+                    gx_all = gx_blk;
+                    gy_all = gy_blk;
+                    gz_all = gz_blk;
+                else
+                    block_start_sample(local_blk) = length(t_all);
+                    t_all = [t_all, t_accum + local_t(2:end)]; %#ok<AGROW>
+                    gx_all = [gx_all, gx_blk(2:end)]; %#ok<AGROW>
+                    gy_all = [gy_all, gy_blk(2:end)]; %#ok<AGROW>
+                    gz_all = [gz_all, gz_blk(2:end)]; %#ok<AGROW>
+                end
+
+                if isfield(block, 'rf') && ~isempty(block.rf)
+                    rf_use = obj.rfUseTag(block.rf);
+                    rf_iso_s = block.rf.delay + mr.calcRfCenter(block.rf);
+                    rf_iso_idx = block_start_sample(local_blk) + round(rf_iso_s / raster_dt);
+                    rf_iso_idx = max(1, min(length(t_all), rf_iso_idx));
+                    if strcmp(rf_use, 'excitation')
+                        excite_samples(end+1) = rf_iso_idx; %#ok<AGROW>
+                    elseif strcmp(rf_use, 'refocusing')
+                        refocus_samples(end+1) = rf_iso_idx; %#ok<AGROW>
+                    end
+                end
+
+                t_accum = t_accum + blk_dur;
+            end
+
+            if length(t_all) < 2
+                return;
+            end
+
+            kx = zeros(1, length(t_all));
+            ky = zeros(1, length(t_all));
+            kz = zeros(1, length(t_all));
+            excite_cursor = 1;
+            refocus_cursor = 1;
+            for i = 2:length(t_all)
+                dt = t_all(i) - t_all(i - 1);
+                kx(i) = kx(i - 1) + 0.5 * (gx_all(i - 1) + gx_all(i)) * dt;
+                ky(i) = ky(i - 1) + 0.5 * (gy_all(i - 1) + gy_all(i)) * dt;
+                kz(i) = kz(i - 1) + 0.5 * (gz_all(i - 1) + gz_all(i)) * dt;
+
+                if excite_cursor <= length(excite_samples) && i == excite_samples(excite_cursor)
+                    kx(i) = 0.0;
+                    ky(i) = 0.0;
+                    kz(i) = 0.0;
+                    excite_cursor = excite_cursor + 1;
+                end
+                if refocus_cursor <= length(refocus_samples) && i == refocus_samples(refocus_cursor)
+                    kx(i) = -kx(i);
+                    ky(i) = -ky(i);
+                    kz(i) = -kz(i);
+                    refocus_cursor = refocus_cursor + 1;
+                end
+            end
+
+            krss = sqrt(kx.^2 + ky.^2 + kz.^2);
+            k_threshold = max(krss) * 0.01;
+            if k_threshold < 1e-10
+                k_threshold = 1e-10;
+            end
+            zero_samples = obj.findKspaceZeroCrossings(krss, k_threshold);
+
+            acquired_adc_blocks = [];
+            min_krss_vals = [];
+            n_center = 0;
+            for local_blk = 1:n_sub_blocks
+                ib = blk_first + local_blk - 1;
+                block = obj.seq.getBlock(ib);
+                if isempty(block) || ~isfield(block, 'adc') || isempty(block.adc)
+                    continue;
+                end
+
+                is_nav = false;
+                if nav_col > 0 && size(obj.label_states_per_block, 1) >= ib
+                    is_nav = obj.label_states_per_block(ib, nav_col) ~= 0;
+                end
+                adc_info(local_blk).is_nav = is_nav;
+                if is_nav
+                    adc_info(local_blk).role = ADC_ROLE_NON_ACQUIRED;
+                else
+                    adc_info(local_blk).role = ADC_ROLE_SINGLE;
+                end
+
+                adc_start_s = block_start_s(local_blk) + block.adc.delay;
+                adc_end_s = adc_start_s + block.adc.numSamples * block.adc.dwell;
+                adc_start_idx = block_start_sample(local_blk) + floor(block.adc.delay / raster_dt);
+                adc_end_idx = block_start_sample(local_blk) + floor((block.adc.delay + ...
+                    block.adc.numSamples * block.adc.dwell) / raster_dt);
+                adc_start_idx = max(1, min(length(krss), adc_start_idx));
+                adc_end_idx = max(adc_start_idx, min(length(krss), adc_end_idx));
+
+                [min_krss_val, rel_min_idx] = min(krss(adc_start_idx:adc_end_idx));
+                min_idx = adc_start_idx + rel_min_idx - 1;
+                adc_info(local_blk).event_time_us = t_all(min_idx) * 1e6;
+                adc_info(local_blk).has_true_kzero = any(zero_samples >= adc_start_idx & ...
+                    zero_samples <= adc_end_idx);
+
+                if ~is_nav
+                    acquired_adc_blocks(end+1) = local_blk; %#ok<AGROW>
+                    min_krss_vals(end+1) = min_krss_val;   %#ok<AGROW>
+                    if adc_info(local_blk).has_true_kzero
+                        n_center = n_center + 1;
+                    end
+                end
+            end
+
+            if length(acquired_adc_blocks) > 1
+                if n_center == 0
+                    % No true k=0 crossing in any ADC window.
+                    % Mark the ADC(s) closest to k=0 as TE-bearing:
+                    %   single minimum  -> ECHO_CENTER
+                    %   tied minimum    -> SINGLE (multiecho, all TE-bearing)
+                    %   others          -> NON_CENTER
+                    global_min_k = min(min_krss_vals);
+                    rel_tol = 1e-6 * max(1.0, global_min_k);
+                    n_at_min = sum(min_krss_vals <= global_min_k + rel_tol);
+                    for idx = 1:length(acquired_adc_blocks)
+                        local_blk = acquired_adc_blocks(idx);
+                        if min_krss_vals(idx) <= global_min_k + rel_tol
+                            if n_at_min == 1
+                                adc_info(local_blk).role = ADC_ROLE_ECHO_CENTER;
+                            else
+                                adc_info(local_blk).role = ADC_ROLE_SINGLE;
+                            end
+                        else
+                            adc_info(local_blk).role = ADC_ROLE_NON_CENTER;
+                        end
+                    end
+                else
+                    for idx = 1:length(acquired_adc_blocks)
+                        local_blk = acquired_adc_blocks(idx);
+                        has_true_kzero = adc_info(local_blk).has_true_kzero;
+                        if n_center == 1
+                            if has_true_kzero
+                                adc_info(local_blk).role = ADC_ROLE_ECHO_CENTER;
+                            else
+                                adc_info(local_blk).role = ADC_ROLE_NON_CENTER;
+                            end
+                        else  % n_center > 1
+                            if has_true_kzero
+                                adc_info(local_blk).role = ADC_ROLE_SINGLE;
+                            else
+                                adc_info(local_blk).role = ADC_ROLE_NON_CENTER;
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        function zero_indices = findKspaceZeroCrossings(~, krss, threshold)
+            zero_indices = [];
+            if isempty(krss)
+                return;
+            end
+
+            for i = 1:length(krss)
+                curr = krss(i);
+                if curr > threshold
+                    continue;
+                end
+
+                if i > 1
+                    prev = krss(i - 1);
+                else
+                    prev = curr + 1.0;
+                end
+                if i < length(krss)
+                    next = krss(i + 1);
+                else
+                    next = curr + 1.0;
+                end
+
+                if curr <= prev && curr <= next
+                    if i > 1 && krss(i - 1) == curr
+                        if i > 2
+                            pprev = krss(i - 2);
+                        else
+                            pprev = curr + 1.0;
+                        end
+                        if krss(i - 1) <= pprev
+                            continue;
+                        end
+                    end
+                    zero_indices(end+1) = i; %#ok<AGROW>
+                end
+            end
+        end
+
         % ---- helper: check if any gradient in block is nonzero in window ----
         function result = anyGradNonzeroInWindow(~, block, wstart, wend)
             result = false;
@@ -1961,7 +2246,7 @@ classdef TruthBuilder < handle
 
         % ---- export: sequence description binary (Section 5 payload) ----
         function exportSequenceDescription(obj, path)
-        % EXPORTSEQUENCEDESCRIPTION  Section 5 truth payload.
+        % EXPORTSEQUENCEDESCRIPTION  Section 5 truth payload (compact format).
         %
         %   Mirrors the wire format of pulseqlib_write_sequence_description_cache
         %   (csrc/pulseqlib_cache_seqdesc.c) but writes ONLY the raw section
@@ -1977,24 +2262,26 @@ classdef TruthBuilder < handle
         %     [per-subseq, num_subseqs times]
         %       int   subseq_idx
         %       float tr_duration_us
-        %       int   num_tuples
-        %       [rf shape tuples]
-        %         int   tuple_id, N_tx, N_samples
-        %         float rf_raster_us
-        %         int   num_bands
-        %         float band_freq_offsets_hz[8]
-        %         float band_bandwidth_hz, total_b1sq_power
-        %         float mag[N_tx*N_samples]
-        %         int   has_phase; (float phase[N_tx*N_samples] if 1)
-        %         int   has_time;  (float time[N_samples]      if 1)
-        %       int   num_shims  (= 0 here; single-channel fixtures)
-        %       int   num_events
-        %       [ev_list]   int type; float params[7]
-        %       int   num_composite_rf_groups
-        %       [groups]   int group_id, first_event_idx,
-        %                       last_event_idx, num_pulses; float eff_te_us
+        %       int   num_rows
+        %       [rows, one per pass block]
+        %         int   type          (0=OTHER, 1=RF, 2=ADC)
+        %         float timestamp_us  (pass-relative anchor time)
+        %         float params[6]
+        %           RF:  [0]=rf_def_id [1]=rf_use [2]=act_amplitude_hz
+        %                [3]=phase_offset_rad [4]=freq_offset_hz [5]=rf_shim_id
+        %           ADC: [0]=adc_role  [1]=phase_offset_rad [2..5]=0
+        %           OTHER: [0..5]=0
 
-            MAX_BANDS = 8;
+            RF_USE_UNKNOWN     = 0;
+            RF_USE_EXCITATION  = 1;
+            RF_USE_REFOCUSING  = 2;
+            RF_USE_INVERSION   = 3;
+            RF_USE_SATURATION  = 4;
+
+            ADC_ROLE_SINGLE       = 1;
+            ADC_ROLE_ECHO_CENTER  = 2;
+
+            ppm_to_hz = 1e-6 * obj.sys.gamma * obj.sys.B0;
 
             fid = fopen(path, 'wb');
             if fid < 0, error('Failed to open %s', path); end
@@ -2022,239 +2309,166 @@ classdef TruthBuilder < handle
                 blk_first = pass_starts(ss);
                 blk_last  = blk_first + pass_len - 1;
                 if blk_last > n_blocks, blk_last = n_blocks; end
+                n_pass = blk_last - blk_first + 1;
 
-                % Tuple library (per-subseq dedup).
-                tuple_keys = {};   % cell array of fingerprint vectors
-                tuples     = {};   % cell array of structs
+                adc_info = obj.buildSubseqAdcTiming(blk_first, blk_last);
 
-                ev_list     = {};   % cell array of {type, params} pairs
-                t_cursor_us = 0;
+                % RF definition dedup (first-encounter, 0-based IDs).
+                % Key: normalized magnitude + phase waveform fingerprint.
+                rf_def_keys = {};  % cell of fingerprint vectors
                 blk_cursor_us = 0;
-                first_acq_center_us = NaN;
+                last_exc_isocenter_us = -1e30;
+
+                % Pre-allocate row arrays.
+                row_type  = zeros(1, n_pass, 'int32');
+                row_ts    = zeros(1, n_pass, 'single');
+                row_p     = zeros(6, n_pass, 'single');
 
                 for ib = blk_first:blk_last
+                    ri = ib - blk_first + 1;  % 1-based row index
                     block = obj.seq.getBlock(ib);
-                    if isempty(block), continue; end
 
-                    blk_dur_s  = block.blockDuration;
-                    blk_dur_us = blk_dur_s * 1e6;
+                    blk_dur_us = block.blockDuration * 1e6;
                     blk_s_us   = blk_cursor_us;
 
-                    % Detect slice-select gradients in same block.
-                    has_grad = (isfield(block, 'gx') && ~isempty(block.gx)) || ...
-                               (isfield(block, 'gy') && ~isempty(block.gy)) || ...
-                               (isfield(block, 'gz') && ~isempty(block.gz));
-
                     if isfield(block, 'rf') && ~isempty(block.rf)
+                        % ---- RF row ----
                         rf = block.rf;
-                        signal = rf.signal(:);
-                        t_rel  = rf.t(:);
-                        N      = numel(signal);
+                        signal  = rf.signal(:);
+                        t_rel   = rf.t(:);
 
-                        rf_dur_s   = t_rel(end);
-                        rf_start_s = rf.delay;
-                        rf_iso_s   = mr.calcRfCenter(rf);  % relative to rf start
+                        % RF isocenter (relative to pass start)
+                        rf_iso_s     = mr.calcRfCenter(rf);  % relative to RF start
+                        rf_center_us = blk_s_us + rf.delay * 1e6 + rf_iso_s * 1e6;
 
-                        rf_start_us  = blk_s_us + rf_start_s * 1e6;
-                        rf_center_us = rf_start_us + rf_iso_s * 1e6;
-                        rf_end_us    = rf_start_us + rf_dur_s * 1e6;
-
-                        % Flip angle in degrees (Pulseq convention: signal
-                        % is B1 in Hz, flip_rad = 2*pi * |∫ B1 dt|).
+                        % Flip angle for global max tracking
                         flip_rad = 2 * pi * abs(trapz(t_rel, signal));
                         flip_deg = flip_rad * 180 / pi;
                         if flip_deg > global_max_flip_deg
                             global_max_flip_deg = flip_deg;
                         end
 
-                        % --- Tuple dedup ---
+                        % Track excitation isocenter for TE
+                        rf_use_str = obj.rfUseTag(rf);
+                        if strcmp(rf_use_str, 'excitation')
+                            last_exc_isocenter_us = rf_center_us;
+                        end
+
+                        % RF use code
+                        switch rf_use_str
+                            case 'excitation',  rf_use_code = RF_USE_EXCITATION;
+                            case 'refocusing',  rf_use_code = RF_USE_REFOCUSING;
+                            case 'inversion',   rf_use_code = RF_USE_INVERSION;
+                            case 'saturation',  rf_use_code = RF_USE_SATURATION;
+                            otherwise,          rf_use_code = RF_USE_UNKNOWN;
+                        end
+
+                        % RF def dedup (normalize by peak amplitude)
                         peak = max(abs(signal));
                         if peak <= 0, peak = 1; end
-                        mag = abs(signal) / peak;
-                        phase = angle(signal);
-                        has_phase = any(abs(phase) > 1e-12);
-
-                        dt_vec = diff(t_rel);
-                        if isempty(dt_vec)
-                            uniform = true;
-                        else
-                            uniform = (max(dt_vec) - min(dt_vec)) < 1e-12 && ...
-                                      abs(dt_vec(1) - obj.sys.rfRasterTime) < 1e-12;
-                        end
-                        has_time = ~uniform;
-
-                        % Fingerprint: stack waveform + time, scalar
-                        % fields, then linear isequal compare. Octave-safe
-                        % (no containers.Map).
-                        key = [N; double(has_phase); double(has_time); ...
-                               mag(:); phase(:); t_rel(:)];
-
-                        tuple_id = -1;
-                        for tk = 1:numel(tuple_keys)
-                            k_other = tuple_keys{tk};
+                        mag_norm   = abs(signal) / peak;
+                        phase_norm = angle(signal);
+                        key = [numel(signal); mag_norm(:); phase_norm(:); t_rel(:)];
+                        rf_def_id = -1;
+                        for dk = 1:numel(rf_def_keys)
+                            k_other = rf_def_keys{dk};
                             if numel(k_other) == numel(key) && ...
                                max(abs(k_other - key)) < 1e-12
-                                tuple_id = tk - 1;  % 0-based id
+                                rf_def_id = dk - 1;  % 0-based
                                 break;
                             end
                         end
-                        if tuple_id < 0
-                            tuple_id = numel(tuple_keys);
-                            tuple_keys{end+1} = key; %#ok<AGROW>
-                            tup = struct();
-                            tup.tuple_id     = tuple_id;
-                            tup.N_tx         = 1;
-                            tup.N_samples    = N;
-                            tup.rf_raster_us = obj.sys.rfRasterTime * 1e6;
-                            tup.num_bands    = 1;
-                            offs = zeros(1, MAX_BANDS);
-                            if isfield(rf, 'freqOffset') && ~isempty(rf.freqOffset)
-                                offs(1) = rf.freqOffset;
-                            end
-                            tup.band_freq_offsets_hz = offs;
-                            tup.band_bandwidth_hz    = 0;
-                            tup.total_b1sq_power     = sum(mag.^2) * obj.sys.rfRasterTime;
-                            tup.mag       = mag(:).';
-                            tup.has_phase = has_phase;
-                            tup.phase     = phase(:).';
-                            tup.has_time  = has_time;
-                            tup.time_us   = t_rel(:).' * 1e6;
-                            tuples{end+1} = tup; %#ok<AGROW>
+                        if rf_def_id < 0
+                            rf_def_id = numel(rf_def_keys);
+                            rf_def_keys{end+1} = key; %#ok<AGROW>
                         end
 
-                        % Emit WAIT to align cursor.
-                        if rf_start_us > t_cursor_us + 0.5
-                            ev_list{end+1} = {0, [rf_start_us - t_cursor_us, 0, 0, 0, 0, 0, 0]}; %#ok<AGROW>
-                            t_cursor_us = rf_start_us;
-                        end
+                        % act_amplitude_hz = peak |signal| (signal in Hz)
+                        act_amp_hz = peak;
 
-                        slice_select = double(has_grad);
-                        rf_params = [rf_center_us, rf_end_us - rf_start_us, ...
-                                     flip_deg, double(tuple_id), -1, ...
-                                     slice_select, 0];
-                        ev_list{end+1} = {1, rf_params}; %#ok<AGROW>
-                        t_cursor_us = rf_end_us;
-                    end
+                        % Per-instance phase / freq (ppm already folded in)
+                        if isfield(rf, 'phaseOffset'), ph = rf.phaseOffset; else, ph = 0; end
+                        if isfield(rf, 'phasePPM'),    ph = ph + ppm_to_hz * rf.phasePPM; end
+                        if isfield(rf, 'freqOffset'),  fq = rf.freqOffset;  else, fq = 0; end
+                        if isfield(rf, 'freqPPM'),     fq = fq + ppm_to_hz * rf.freqPPM;  end
 
-                    if isfield(block, 'adc') && ~isempty(block.adc)
-                        adc = block.adc;
-                        nS         = double(adc.numSamples);
-                        dwell_us   = adc.dwell * 1e6;
-                        adc_dur_us = nS * dwell_us;
-                        adc_start_us = blk_s_us + adc.delay * 1e6;
-                        adc_end_us   = adc_start_us + adc_dur_us;
+                        % rf_shim_id: -1 for single-channel fixtures
+                        rf_shim_id = -1;
 
-                        % kzero-aware ADC center: look up adc_id in
-                        % unique_adcs and apply the per-def anchor fraction
-                        % (matches segment_def truth and pulseqlib's
-                        % seg-anchor convention). Falls back to midpoint if
-                        % no unique-ADC match (defensive only).
-                        adc_anchor = 0.5;
-                        if ~isempty(obj.unique_adcs)
-                            match = find(obj.unique_adcs(:,1) == adc.numSamples & ...
-                                         abs(obj.unique_adcs(:,2) - adc.dwell) < 1e-15, 1);
-                            if ~isempty(match)
-                                adc_anchor = obj.getADCAnchorFraction(match - 1);
+                        row_type(ri)   = 1;  % RF
+                        row_ts(ri)     = single(rf_center_us);
+                        row_p(1, ri)   = single(rf_def_id);
+                        row_p(2, ri)   = single(rf_use_code);
+                        row_p(3, ri)   = single(act_amp_hz);
+                        row_p(4, ri)   = single(ph);
+                        row_p(5, ri)   = single(fq);
+                        row_p(6, ri)   = single(rf_shim_id);
+
+                    elseif isfield(block, 'adc') && ~isempty(block.adc)
+                        % ---- ADC row ----
+                        adc          = block.adc;
+                        adc_local_blk = ib - blk_first + 1;
+
+                        % Timestamp: pass-relative time of minimum |k| within
+                        % the ADC window, from gradient-trajectory integration
+                        % in buildSubseqAdcTiming. This mirrors the C library's
+                        % kzero_us anchor. No midpoint fallback.
+                        assert(adc_local_blk >= 1 && ...
+                               adc_local_blk <= length(adc_info) && ...
+                               adc_info(adc_local_blk).event_time_us >= 0, ...
+                               'Block %d: no valid event_time_us from buildSubseqAdcTiming', ib);
+                        adc_kzero_us = adc_info(adc_local_blk).event_time_us;
+                        adc_role     = adc_info(adc_local_blk).role;
+                        if adc_role < 0, adc_role = ADC_ROLE_SINGLE; end
+
+                        % TE tracking
+                        if last_exc_isocenter_us > -1e29 && adc_kzero_us > last_exc_isocenter_us && ...
+                                (adc_role == ADC_ROLE_SINGLE || adc_role == ADC_ROLE_ECHO_CENTER)
+                            te_us = adc_kzero_us - last_exc_isocenter_us;
+                            if te_us < global_min_te_us
+                                global_min_te_us = te_us;
                             end
                         end
-                        adc_center_us = adc_start_us + adc_anchor * adc_dur_us;
 
-                        if adc_start_us > t_cursor_us + 0.5
-                            ev_list{end+1} = {0, [adc_start_us - t_cursor_us, 0, 0, 0, 0, 0, 0]}; %#ok<AGROW>
-                            t_cursor_us = adc_start_us;
-                        end
+                        % Per-instance ADC phase (ppm already folded in)
+                        if isfield(adc, 'phaseOffset'), aph = adc.phaseOffset; else, aph = 0; end
+                        if isfield(adc, 'phasePPM'),    aph = aph + ppm_to_hz * adc.phasePPM; end
 
-                        adc_params = [adc_center_us, adc_dur_us, nS, dwell_us, 1, 0, 0];
-                        ev_list{end+1} = {2, adc_params}; %#ok<AGROW>
-                        t_cursor_us = adc_end_us;
+                        row_type(ri)   = 2;  % ADC
+                        row_ts(ri)     = single(adc_kzero_us);
+                        row_p(1, ri)   = single(adc_role);
+                        row_p(2, ri)   = single(aph);
+                        % row_p(3..6, ri) already zero
+
+                    else
+                        % ---- OTHER row ----
+                        row_type(ri) = 0;
+                        row_ts(ri)   = single(blk_s_us);
+                        % params already zero
                     end
 
                     blk_cursor_us = blk_cursor_us + blk_dur_us;
                 end
 
                 tr_dur_us = blk_cursor_us;
-
-                % Trailing WAIT to fill TR.
-                if tr_dur_us > t_cursor_us + 0.5
-                    ev_list{end+1} = {0, [tr_dur_us - t_cursor_us, 0, 0, 0, 0, 0, 0]}; %#ok<AGROW>
-                end
-
-                % --- Refine ADC roles ---
-                adc_idx = [];
-                for e = 1:numel(ev_list)
-                    if ev_list{e}{1} == 2
-                        adc_idx(end+1) = e; %#ok<AGROW>
-                    end
-                end
-                if numel(adc_idx) > 1
-                    p = ev_list{adc_idx(1)}{2}; p(5) = 2;
-                    ev_list{adc_idx(1)}{2} = p;
-                    for kk = 2:numel(adc_idx)
-                        p = ev_list{adc_idx(kk)}{2}; p(5) = 3;
-                        ev_list{adc_idx(kk)}{2} = p;
-                    end
-                end
-                if ~isempty(adc_idx)
-                    first_acq_center_us = ev_list{adc_idx(1)}{2}(1);
-                end
-
-                % --- Composite RF groups (cell array of structs) ---
-                groups = {};
-                run_first = -1;
-                run_last  = -1;
-                run_count = 0;
-                next_gid  = 0;
-                for e = 1:numel(ev_list)
-                    et = ev_list{e}{1};
-                    if et == 1  % RF
-                        if run_count == 0
-                            run_first = e - 1;  % 0-based event index
-                        end
-                        run_last = e - 1;
-                        run_count = run_count + 1;
-                    elseif et == 2  % ADC flushes
-                        if run_count >= 2
-                            groups{end+1} = struct('group_id', next_gid, ...
-                                'first_event_idx', run_first, ...
-                                'last_event_idx',  run_last, ...
-                                'num_pulses',      run_count, ...
-                                'eff_te_us',       0); %#ok<AGROW>
-                            next_gid = next_gid + 1;
-                        end
-                        run_count = 0;
-                    end
-                    % WAIT (type 0): transparent
-                end
-                if run_count >= 2
-                    groups{end+1} = struct('group_id', next_gid, ...
-                        'first_event_idx', run_first, ...
-                        'last_event_idx',  run_last, ...
-                        'num_pulses',      run_count, ...
-                        'eff_te_us',       0); %#ok<AGROW>
-                end
-
-                % Track globals.
-                if ~isnan(first_acq_center_us) && first_acq_center_us < global_min_te_us
-                    global_min_te_us = first_acq_center_us;
-                end
-                % per-subseq tr accounting only — full scan total is
-                % computed once from obj.seq.duration() below.
                 global_total_us = global_total_us + tr_dur_us;
 
                 sd = struct();
                 sd.subseq_idx     = ss - 1;
                 sd.tr_duration_us = tr_dur_us;
-                sd.tuples         = tuples;
-                sd.ev_list         = ev_list;
-                sd.groups         = groups;
+                sd.num_rows       = n_pass;
+                sd.row_type       = row_type;
+                sd.row_ts         = row_ts;
+                sd.row_p          = row_p;
                 subseq_data{ss}   = sd;
             end
 
-            if ~isfinite(global_min_te_us), global_min_te_us = 0; end
+            % Fallback: if no TE was computed, default to 0
+            if ~isfinite(global_min_te_us) || global_min_te_us > 1e20
+                global_min_te_us = 0;
+            end
 
             % Full scan total duration from the underlying Pulseq sequence
-            % (covers all averages and all canonical TRs); falls back to
-            % the per-subseq sum if seq.duration() is unavailable.
             try
                 global_total_us = obj.seq.duration() * 1e6;
             catch
@@ -2282,55 +2496,16 @@ classdef TruthBuilder < handle
             fwrite(fid, int32(num_subseqs),          'int32');
             fwrite(fid, int32([0 0 0]),              'int32');
 
-            % --- 4. Write per-subseq blocks ---------------------------
+            % --- 4. Write per-subseq compact row table ---------------
             for ss = 1:num_subseqs
                 sd = subseq_data{ss};
-
-                fwrite(fid, int32(sd.subseq_idx),         'int32');
-                fwrite(fid, single(sd.tr_duration_us),    'float32');
-
-                fwrite(fid, int32(numel(sd.tuples)),      'int32');
-                for tk = 1:numel(sd.tuples)
-                    t = sd.tuples{tk};
-                    fwrite(fid, int32(t.tuple_id),     'int32');
-                    fwrite(fid, int32(t.N_tx),         'int32');
-                    fwrite(fid, int32(t.N_samples),    'int32');
-                    fwrite(fid, single(t.rf_raster_us),'float32');
-                    fwrite(fid, int32(t.num_bands),    'int32');
-                    fwrite(fid, single(t.band_freq_offsets_hz), 'float32');
-                    fwrite(fid, single(t.band_bandwidth_hz), 'float32');
-                    fwrite(fid, single(t.total_b1sq_power),  'float32');
-                    if t.N_tx * t.N_samples > 0
-                        fwrite(fid, single(t.mag), 'float32');
-                    end
-                    fwrite(fid, int32(double(t.has_phase)), 'int32');
-                    if t.has_phase && t.N_tx * t.N_samples > 0
-                        fwrite(fid, single(t.phase), 'float32');
-                    end
-                    fwrite(fid, int32(double(t.has_time)),  'int32');
-                    if t.has_time && t.N_samples > 0
-                        fwrite(fid, single(t.time_us), 'float32');
-                    end
-                end
-
-                % num_shims = 0 (single-channel fixtures).
-                fwrite(fid, int32(0), 'int32');
-
-                fwrite(fid, int32(numel(sd.ev_list)), 'int32');
-                for e = 1:numel(sd.ev_list)
-                    ev = sd.ev_list{e};
-                    fwrite(fid, int32(ev{1}),         'int32');
-                    fwrite(fid, single(ev{2}(:).'),   'float32');
-                end
-
-                fwrite(fid, int32(numel(sd.groups)), 'int32');
-                for gi = 1:numel(sd.groups)
-                    g = sd.groups{gi};
-                    fwrite(fid, int32(g.group_id),        'int32');
-                    fwrite(fid, int32(g.first_event_idx), 'int32');
-                    fwrite(fid, int32(g.last_event_idx),  'int32');
-                    fwrite(fid, int32(g.num_pulses),      'int32');
-                    fwrite(fid, single(g.eff_te_us),      'float32');
+                fwrite(fid, int32(sd.subseq_idx),      'int32');
+                fwrite(fid, single(sd.tr_duration_us), 'float32');
+                fwrite(fid, int32(sd.num_rows),        'int32');
+                for ri = 1:sd.num_rows
+                    fwrite(fid, int32(sd.row_type(ri)),   'int32');
+                    fwrite(fid, single(sd.row_ts(ri)),    'float32');
+                    fwrite(fid, single(sd.row_p(:, ri)).','float32');
                 end
             end
 

@@ -43,8 +43,8 @@ static char* traj_make_cache_path(const char* seq_path)
     return out;
 }
 
-/* Linear interpolation: resample src[0..src_n-1] at uniform raster src_dt
- * to dst[0..dst_n-1] at uniform raster dst_dt, both starting at t=0. */
+/* NOTE: intentionally disabled legacy helpers that are no longer used. */
+#if 0
 static void linear_resample(const float* src, int src_n, float src_dt,
                             float* dst, int dst_n, float dst_dt)
 {
@@ -64,8 +64,6 @@ static void linear_resample(const float* src, int src_n, float src_dt,
     }
 }
 
-/* Check if an axis k-trajectory is trivial (constant, i.e. no readout
- * gradient activity during ADC window). */
 static int is_trivial_shot(const float* k, int n)
 {
     int i;
@@ -79,6 +77,7 @@ static int is_trivial_shot(const float* k, int n)
     }
     return 1;
 }
+#endif
 
 /* Compare two k-space shot shapes; returns 1 if identical within tolerance. */
 static int shots_equal(const float* a, const float* b, int n)
@@ -270,6 +269,7 @@ fail:
  * holds (shape_index + 1), with 0 meaning "no shape".
  *
  * Returns 0 on success; on failure leaves out_g zero-filled. */
+#if 0
 static int expand_block_axis_grad(
     const pulseqlib_sequence_descriptor* desc,
     int grad_event_id,
@@ -402,6 +402,7 @@ static int expand_block_axis_grad(
         return rc;
     }
 }
+#endif
 
 /*
  * For a single block with an ADC event:
@@ -432,13 +433,9 @@ static int compute_block_kspace(
     float adc_dwell_us;
     float grad_raster_us;
     int block_dur_us;
-    int n_grad;
     float dt_s;
     float *kx_full, *ky_full, *kz_full;
-    int i, adc_start_sample, adc_end_sample, adc_window_samples;
-    float* kx_window;
-    float* ky_window;
-    float* kz_window;
+    int i;
 
     kx_full = NULL; ky_full = NULL; kz_full = NULL;
     bte = &desc->block_table[block_table_idx];
@@ -487,7 +484,6 @@ static int compute_block_kspace(
      * decompress_block_arb already returns the correct (xp_us, fp_hzm)
      * pairs for both ARB modes; for TRAPs we synthesize the four edge
      * times here.  Output k_full[] is indexed by the merged grid. */
-    n_grad = 0; /* will be set after building merged grid */
     dt_s   = grad_raster_us * 1e-6f; /* (kept for potential future use) */
     (void)dt_s;
     {
@@ -509,9 +505,8 @@ static int compute_block_kspace(
 
         /* TRAP breakpoints (only when axis is TRAP, not ARB and not idle). */
         {
-            int axes[3]; int gid[3]; int t = 0;
+            int gid[3]; int t = 0;
             int *ntr[3]; float (*bp_arr[3])[4];
-            axes[0]=0; axes[1]=1; axes[2]=2;
             gid[0]=bte->gx_id; gid[1]=bte->gy_id; gid[2]=bte->gz_id;
             ntr[0]=&n_trap_x; ntr[1]=&n_trap_y; ntr[2]=&n_trap_z;
             bp_arr[0]=&trap_bp_x; bp_arr[1]=&trap_bp_y; bp_arr[2]=&trap_bp_z;
@@ -606,13 +601,14 @@ static int compute_block_kspace(
         if (!gx_full || !gy_full || !gz_full || !kx_full || !ky_full || !kz_full) {
             PULSEQLIB_FREE(t_grid);
             PULSEQLIB_FREE(gx_full); PULSEQLIB_FREE(gy_full); PULSEQLIB_FREE(gz_full);
-            if (bp_x) PULSEQLIB_FREE(bp_x); if (fpx) PULSEQLIB_FREE(fpx);
-            if (bp_y) PULSEQLIB_FREE(bp_y); if (fpy) PULSEQLIB_FREE(fpy);
-            if (bp_z) PULSEQLIB_FREE(bp_z); if (fpz) PULSEQLIB_FREE(fpz);
+            if (bp_x) PULSEQLIB_FREE(bp_x);
+            if (fpx) PULSEQLIB_FREE(fpx);
+            if (bp_y) PULSEQLIB_FREE(bp_y);
+            if (fpy) PULSEQLIB_FREE(fpy);
+            if (bp_z) PULSEQLIB_FREE(bp_z);
+            if (fpz) PULSEQLIB_FREE(fpz);
             goto alloc_fail;
         }
-        n_grad = n_steps;
-
         /* Sample g analytically at every breakpoint (sample_grad_axis_at
          * is exact for both TRAP and ARB; matches truth's
          * sampleGradAtTimes). */
@@ -709,15 +705,21 @@ static int compute_block_kspace(
 
         PULSEQLIB_FREE(t_grid);
         PULSEQLIB_FREE(gx_full); PULSEQLIB_FREE(gy_full); PULSEQLIB_FREE(gz_full);
-        if (bp_x) PULSEQLIB_FREE(bp_x); if (fpx) PULSEQLIB_FREE(fpx);
-        if (bp_y) PULSEQLIB_FREE(bp_y); if (fpy) PULSEQLIB_FREE(fpy);
-        if (bp_z) PULSEQLIB_FREE(bp_z); if (fpz) PULSEQLIB_FREE(fpz);
+        if (bp_x) PULSEQLIB_FREE(bp_x);
+        if (fpx) PULSEQLIB_FREE(fpx);
+        if (bp_y) PULSEQLIB_FREE(bp_y);
+        if (fpy) PULSEQLIB_FREE(fpy);
+        if (bp_z) PULSEQLIB_FREE(bp_z);
+        if (fpz) PULSEQLIB_FREE(fpz);
         goto post_resample;
 
     bp_alloc_fail:
-        if (bp_x) PULSEQLIB_FREE(bp_x); if (fpx) PULSEQLIB_FREE(fpx);
-        if (bp_y) PULSEQLIB_FREE(bp_y); if (fpy) PULSEQLIB_FREE(fpy);
-        if (bp_z) PULSEQLIB_FREE(bp_z); if (fpz) PULSEQLIB_FREE(fpz);
+        if (bp_x) PULSEQLIB_FREE(bp_x);
+        if (fpx) PULSEQLIB_FREE(fpx);
+        if (bp_y) PULSEQLIB_FREE(bp_y);
+        if (fpy) PULSEQLIB_FREE(fpy);
+        if (bp_z) PULSEQLIB_FREE(bp_z);
+        if (fpz) PULSEQLIB_FREE(fpz);
         goto alloc_fail;
     }
 

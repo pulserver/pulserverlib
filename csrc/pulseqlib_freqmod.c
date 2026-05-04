@@ -27,12 +27,12 @@
  * 4× oversampled DAC:
  *   dac_value = freq_hz / (4 * PULSEQLIB_FREQ_CONVERSION)
  * PULSEQLIB_WAVEFORM_END marks the last waveform sample. */
-#define PULSEQLIB_OMEGA_SCALE  (1.0f / (4.0f * PULSEQLIB_FREQ_CONVERSION))
+#define PULSEQLIB_OMEGA_SCALE (1.0f / (4.0f * PULSEQLIB_FREQ_CONVERSION))
 
 /* Forward declarations (used in error paths). */
-static void freq_mod_library_free(pulseqlib_freq_mod_library* lib);
-static void convert_plan_to_hw(pulseqlib_freq_mod_library* lib);
-void pulseqlib_freq_mod_collection_free(pulseqlib_freq_mod_collection* fmc);
+static void freq_mod_library_free(pulseqlib_freq_mod_library *lib);
+static void convert_plan_to_hw(pulseqlib_freq_mod_library *lib);
+void pulseqlib_freq_mod_collection_free(pulseqlib_freq_mod_collection *fmc);
 
 /* ================================================================== */
 /*  Helper: generic byte-key deduplication (O(n*u))                   */
@@ -45,23 +45,29 @@ void pulseqlib_freq_mod_collection_free(pulseqlib_freq_mod_collection* fmc);
  * map[n]          : unique index for event n.
  * Returns number of unique keys.
  */
-static int dedup_keys(int* unique_first, int* map,
-                      const char* keys, int nkeys, int key_bytes)
+static int dedup_keys(int *unique_first, int *map,
+                      const char *keys, int nkeys, int key_bytes)
 {
     int n, u, nu = 0;
-    for (n = 0; n < nkeys; ++n) {
+    for (n = 0; n < nkeys; ++n)
+    {
         int found = -1;
-        for (u = 0; u < nu; ++u) {
+        for (u = 0; u < nu; ++u)
+        {
             if (memcmp(keys + (size_t)n * key_bytes,
                        keys + (size_t)unique_first[u] * key_bytes,
-                       (size_t)key_bytes) == 0) {
+                       (size_t)key_bytes) == 0)
+            {
                 found = u;
                 break;
             }
         }
-        if (found >= 0) {
+        if (found >= 0)
+        {
             map[n] = found;
-        } else {
+        }
+        else
+        {
             unique_first[nu] = n;
             map[n] = nu;
             ++nu;
@@ -74,26 +80,25 @@ static int dedup_keys(int* unique_first, int* map,
 /*  Helper: 3x3 matrix multiply C = A^T @ B  (row-major)             */
 /* ================================================================== */
 
-static void matmul_AtB(float* C, const float* A, const float* B)
+static void matmul_AtB(float *C, const float *A, const float *B)
 {
     int i, j;
     for (i = 0; i < 3; ++i)
         for (j = 0; j < 3; ++j)
-            C[i * 3 + j] = A[0 * 3 + i] * B[0 * 3 + j]
-                          + A[1 * 3 + i] * B[1 * 3 + j]
-                          + A[2 * 3 + i] * B[2 * 3 + j];
+            C[i * 3 + j] = A[0 * 3 + i] * B[0 * 3 + j] + A[1 * 3 + i] * B[1 * 3 + j] + A[2 * 3 + i] * B[2 * 3 + j];
 }
 
 /* ================================================================== */
 /*  Helper: check if 3x3 matrix is identity                           */
 /* ================================================================== */
 
-static int is_identity3(const float* M)
+static int is_identity3(const float *M)
 {
-    static const float I[9] = {1,0,0, 0,1,0, 0,0,1};
+    static const float I[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
     int i;
     for (i = 0; i < 9; ++i)
-        if ((float)fabs(M[i] - I[i]) > 1e-7f) return 0;
+        if ((float)fabs(M[i] - I[i]) > 1e-7f)
+            return 0;
     return 1;
 }
 
@@ -101,11 +106,12 @@ static int is_identity3(const float* M)
 /*  Helper: compare two 3x3 matrices with tolerance                   */
 /* ================================================================== */
 
-static int rotmat_equal(const float* A, const float* B)
+static int rotmat_equal(const float *A, const float *B)
 {
     int i;
     for (i = 0; i < 9; ++i)
-        if ((float)fabs(A[i] - B[i]) > 1e-7f) return 0;
+        if ((float)fabs(A[i] - B[i]) > 1e-7f)
+            return 0;
     return 1;
 }
 
@@ -113,11 +119,12 @@ static int rotmat_equal(const float* A, const float* B)
 /*  Helper: check if waveform has any nonzero sample                  */
 /* ================================================================== */
 
-static int axis_is_active(const float* waveform, int num_samples)
+static int axis_is_active(const float *waveform, int num_samples)
 {
     int i;
     for (i = 0; i < num_samples; ++i)
-        if ((float)fabs(waveform[i]) > 1e-8f) return 1;
+        if ((float)fabs(waveform[i]) > 1e-8f)
+            return 1;
     return 0;
 }
 
@@ -129,26 +136,26 @@ static int axis_is_active(const float* waveform, int num_samples)
  * Caller must free fmod->waveform_gx/gy/gz.
  */
 static int build_freq_mod_for_block(
-    const pulseqlib_sequence_descriptor* desc,
-    const pulseqlib_block_table_element* bte,
+    const pulseqlib_sequence_descriptor *desc,
+    const pulseqlib_block_table_element *bte,
     int bdef_idx,
     float active_start_us, float active_end_us,
     float ref_time_us,
     float target_raster_us,
-    pulseqlib_freq_mod_definition* fmod)
+    pulseqlib_freq_mod_definition *fmod)
 {
     float grad_raster_us = desc->grad_raster_us;
-    const pulseqlib_block_definition* bdef = &desc->block_definitions[bdef_idx];
+    const pulseqlib_block_definition *bdef = &desc->block_definitions[bdef_idx];
     int grad_ids[3], axis;
-    const pulseqlib_grad_definition* gdef;
+    const pulseqlib_grad_definition *gdef;
     int shape_id, time_shape_id, num_samples, has_time_shape;
     pulseqlib_shape_arbitrary decomp_wave, decomp_time;
-    float* raw_time = NULL;
-    float* raw_wave = NULL;
+    float *raw_time = NULL;
+    float *raw_wave = NULL;
     int raw_n, idx, i, j;
     float delay_us, rise_us, flat_us, fall_us;
     float active_dur_us;
-    float* uniform_t = NULL;
+    float *uniform_t = NULL;
 
     active_dur_us = active_end_us - active_start_us;
     if (active_dur_us <= 0.0f || grad_raster_us <= 0.0f)
@@ -158,32 +165,36 @@ static int build_freq_mod_for_block(
     grad_ids[1] = bdef->gy_id;
     grad_ids[2] = bdef->gz_id;
 
-    fmod->raster_us   = grad_raster_us;
+    fmod->raster_us = grad_raster_us;
     fmod->duration_us = active_dur_us;
     fmod->num_samples = (int)(active_dur_us / grad_raster_us) + 1;
-    if (fmod->num_samples < 2) fmod->num_samples = 2;
+    if (fmod->num_samples < 2)
+        fmod->num_samples = 2;
 
-    fmod->waveform_gx = (float*)PULSEQLIB_ALLOC((size_t)fmod->num_samples * sizeof(float));
-    fmod->waveform_gy = (float*)PULSEQLIB_ALLOC((size_t)fmod->num_samples * sizeof(float));
-    fmod->waveform_gz = (float*)PULSEQLIB_ALLOC((size_t)fmod->num_samples * sizeof(float));
+    fmod->waveform_gx = (float *)PULSEQLIB_ALLOC((size_t)fmod->num_samples * sizeof(float));
+    fmod->waveform_gy = (float *)PULSEQLIB_ALLOC((size_t)fmod->num_samples * sizeof(float));
+    fmod->waveform_gz = (float *)PULSEQLIB_ALLOC((size_t)fmod->num_samples * sizeof(float));
     if (!fmod->waveform_gx || !fmod->waveform_gy || !fmod->waveform_gz)
         goto fmod_fail;
 
-    raw_time  = (float*)PULSEQLIB_ALLOC((size_t)(fmod->num_samples + 512) * sizeof(float));
-    raw_wave  = (float*)PULSEQLIB_ALLOC((size_t)(fmod->num_samples + 512) * sizeof(float));
-    uniform_t = (float*)PULSEQLIB_ALLOC((size_t)fmod->num_samples * sizeof(float));
+    raw_time = (float *)PULSEQLIB_ALLOC((size_t)(fmod->num_samples + 512) * sizeof(float));
+    raw_wave = (float *)PULSEQLIB_ALLOC((size_t)(fmod->num_samples + 512) * sizeof(float));
+    uniform_t = (float *)PULSEQLIB_ALLOC((size_t)fmod->num_samples * sizeof(float));
     if (!raw_time || !raw_wave || !uniform_t)
         goto fmod_fail;
 
     for (i = 0; i < fmod->num_samples; ++i)
         uniform_t[i] = (float)i * grad_raster_us;
 
-    for (axis = 0; axis < 3; ++axis) {
-        float* out_wave = (axis == 0) ? fmod->waveform_gx :
-                          (axis == 1) ? fmod->waveform_gy : fmod->waveform_gz;
+    for (axis = 0; axis < 3; ++axis)
+    {
+        float *out_wave = (axis == 0) ? fmod->waveform_gx : (axis == 1) ? fmod->waveform_gy
+                                                                        : fmod->waveform_gz;
 
-        if (grad_ids[axis] < 0 || grad_ids[axis] >= desc->num_unique_grads) {
-            for (i = 0; i < fmod->num_samples; ++i) out_wave[i] = 0.0f;
+        if (grad_ids[axis] < 0 || grad_ids[axis] >= desc->num_unique_grads)
+        {
+            for (i = 0; i < fmod->num_samples; ++i)
+                out_wave[i] = 0.0f;
             fmod->ref_integral[axis] = 0.0f;
             continue;
         }
@@ -194,51 +205,69 @@ static int build_freq_mod_for_block(
         idx = 0;
         delay_us = (float)gdef->delay;
 
-        if (gdef->type == 0) {
+        if (gdef->type == 0)
+        {
             rise_us = (float)gdef->rise_time_or_unused;
             flat_us = (float)gdef->flat_time_or_unused;
             fall_us = (float)gdef->fall_time_or_num_uncompressed_samples;
 
-            if (flat_us > 0.0f) {
+            if (flat_us > 0.0f)
+            {
                 raw_time[idx] = delay_us - active_start_us;
-                raw_wave[idx] = 0.0f; idx++;
+                raw_wave[idx] = 0.0f;
+                idx++;
                 raw_time[idx] = delay_us + rise_us - active_start_us;
-                raw_wave[idx] = 1.0f; idx++;
+                raw_wave[idx] = 1.0f;
+                idx++;
                 raw_time[idx] = delay_us + rise_us + flat_us - active_start_us;
-                raw_wave[idx] = 1.0f; idx++;
+                raw_wave[idx] = 1.0f;
+                idx++;
                 raw_time[idx] = delay_us + rise_us + flat_us + fall_us - active_start_us;
-                raw_wave[idx] = 0.0f; idx++;
-            } else {
-                raw_time[idx] = delay_us - active_start_us;
-                raw_wave[idx] = 0.0f; idx++;
-                raw_time[idx] = delay_us + rise_us - active_start_us;
-                raw_wave[idx] = 1.0f; idx++;
-                raw_time[idx] = delay_us + rise_us + fall_us - active_start_us;
-                raw_wave[idx] = 0.0f; idx++;
+                raw_wave[idx] = 0.0f;
+                idx++;
             }
-        } else {
+            else
+            {
+                raw_time[idx] = delay_us - active_start_us;
+                raw_wave[idx] = 0.0f;
+                idx++;
+                raw_time[idx] = delay_us + rise_us - active_start_us;
+                raw_wave[idx] = 1.0f;
+                idx++;
+                raw_time[idx] = delay_us + rise_us + fall_us - active_start_us;
+                raw_wave[idx] = 0.0f;
+                idx++;
+            }
+        }
+        else
+        {
             int grad_event_id;
             int shot_idx;
 
-            grad_event_id = (axis == 0) ? bte->gx_id :
-                            (axis == 1) ? bte->gy_id : bte->gz_id;
+            grad_event_id = (axis == 0) ? bte->gx_id : (axis == 1) ? bte->gy_id
+                                                                   : bte->gz_id;
             shot_idx = (grad_event_id >= 0 && grad_event_id < desc->grad_table_size)
-                ? desc->grad_table[grad_event_id].shot_index : 0;
+                           ? desc->grad_table[grad_event_id].shot_index
+                           : 0;
             if (shot_idx < 0 || shot_idx >= PULSEQLIB_MAX_GRAD_SHOTS)
                 shot_idx = 0;
 
             time_shape_id = gdef->unused_or_time_shape_id;
-            shape_id      = gdef->shot_shape_ids[shot_idx];
+            shape_id = gdef->shot_shape_ids[shot_idx];
 
-            if (shape_id <= 0 || shape_id > desc->num_shapes) {
-                for (i = 0; i < fmod->num_samples; ++i) out_wave[i] = 0.0f;
+            if (shape_id <= 0 || shape_id > desc->num_shapes)
+            {
+                for (i = 0; i < fmod->num_samples; ++i)
+                    out_wave[i] = 0.0f;
                 fmod->ref_integral[axis] = 0.0f;
                 continue;
             }
 
             if (!pulseqlib__decompress_shape(&decomp_wave,
-                    &desc->shapes[shape_id - 1], 1.0f)) {
-                for (i = 0; i < fmod->num_samples; ++i) out_wave[i] = 0.0f;
+                                             &desc->shapes[shape_id - 1], 1.0f))
+            {
+                for (i = 0; i < fmod->num_samples; ++i)
+                    out_wave[i] = 0.0f;
                 fmod->ref_integral[axis] = 0.0f;
                 continue;
             }
@@ -246,47 +275,59 @@ static int build_freq_mod_for_block(
             num_samples = decomp_wave.num_uncompressed_samples;
 
             has_time_shape = 0;
-            if (time_shape_id > 0 && time_shape_id <= desc->num_shapes) {
+            if (time_shape_id > 0 && time_shape_id <= desc->num_shapes)
+            {
                 if (pulseqlib__decompress_shape(&decomp_time,
-                        &desc->shapes[time_shape_id - 1], grad_raster_us))
+                                                &desc->shapes[time_shape_id - 1], grad_raster_us))
                     has_time_shape = 1;
             }
 
-            if (has_time_shape) {
-                for (i = 0; i < num_samples && i < decomp_wave.num_uncompressed_samples; ++i) {
+            if (has_time_shape)
+            {
+                for (i = 0; i < num_samples && i < decomp_wave.num_uncompressed_samples; ++i)
+                {
                     raw_time[idx] = delay_us + decomp_time.samples[i] - active_start_us;
                     raw_wave[idx] = decomp_wave.samples[i];
                     idx++;
                 }
-            } else {
-                for (i = 0; i < num_samples && i < decomp_wave.num_uncompressed_samples; ++i) {
-                    raw_time[idx] = delay_us + 0.5f * grad_raster_us +
-                                    (float)i * grad_raster_us - active_start_us;
+            }
+            else
+            {
+                for (i = 0; i < num_samples && i < decomp_wave.num_uncompressed_samples; ++i)
+                {
+                    raw_time[idx] = delay_us + 0.5f * grad_raster_us + (float)i * grad_raster_us - active_start_us;
                     raw_wave[idx] = decomp_wave.samples[i];
                     idx++;
                 }
             }
 
-            if (decomp_wave.samples) PULSEQLIB_FREE(decomp_wave.samples);
-            if (decomp_time.samples) PULSEQLIB_FREE(decomp_time.samples);
+            if (decomp_wave.samples)
+                PULSEQLIB_FREE(decomp_wave.samples);
+            if (decomp_time.samples)
+                PULSEQLIB_FREE(decomp_time.samples);
         }
 
         raw_n = idx;
 
-        if (raw_n > 0 && raw_time[0] > 0.0f) {
-            for (j = raw_n; j > 0; --j) {
+        if (raw_n > 0 && raw_time[0] > 0.0f)
+        {
+            for (j = raw_n; j > 0; --j)
+            {
                 raw_time[j] = raw_time[j - 1];
                 raw_wave[j] = raw_wave[j - 1];
             }
             raw_time[0] = 0.0f;
             raw_wave[0] = 0.0f;
             raw_n++;
-        } else if (raw_n == 0) {
+        }
+        else if (raw_n == 0)
+        {
             raw_time[0] = 0.0f;
             raw_wave[0] = 0.0f;
             raw_n = 1;
         }
-        if (raw_time[raw_n - 1] < active_dur_us) {
+        if (raw_time[raw_n - 1] < active_dur_us)
+        {
             raw_time[raw_n] = active_dur_us;
             raw_wave[raw_n] = 0.0f;
             raw_n++;
@@ -297,37 +338,47 @@ static int build_freq_mod_for_block(
 
         {
             int ref_sample = (int)(ref_time_us / grad_raster_us);
-            if (ref_sample < 0) ref_sample = 0;
-            if (ref_sample >= fmod->num_samples) ref_sample = fmod->num_samples - 1;
+            if (ref_sample < 0)
+                ref_sample = 0;
+            if (ref_sample >= fmod->num_samples)
+                ref_sample = fmod->num_samples - 1;
             fmod->ref_integral[axis] = (float)(PULSEQLIB__TWO_PI * 1e-6) *
-                pulseqlib__trapz_real_uniform(
-                out_wave, ref_sample + 1, grad_raster_us);
+                                       pulseqlib__trapz_real_uniform(
+                                           out_wave, ref_sample + 1, grad_raster_us);
         }
     }
 
     fmod->ref_time_us = ref_time_us;
 
     /* ZOH upsample from grad raster to target (RF/ADC) raster */
-    if (target_raster_us > 0.0f && target_raster_us < grad_raster_us - 0.001f) {
+    if (target_raster_us > 0.0f && target_raster_us < grad_raster_us - 0.001f)
+    {
         int fine_num;
         float *fine_gx, *fine_gy, *fine_gz;
 
         fine_num = (int)(active_dur_us / target_raster_us) + 1;
-        if (fine_num < 2) fine_num = 2;
+        if (fine_num < 2)
+            fine_num = 2;
 
-        fine_gx = (float*)PULSEQLIB_ALLOC((size_t)fine_num * sizeof(float));
-        fine_gy = (float*)PULSEQLIB_ALLOC((size_t)fine_num * sizeof(float));
-        fine_gz = (float*)PULSEQLIB_ALLOC((size_t)fine_num * sizeof(float));
-        if (!fine_gx || !fine_gy || !fine_gz) {
-            if (fine_gx) PULSEQLIB_FREE(fine_gx);
-            if (fine_gy) PULSEQLIB_FREE(fine_gy);
-            if (fine_gz) PULSEQLIB_FREE(fine_gz);
+        fine_gx = (float *)PULSEQLIB_ALLOC((size_t)fine_num * sizeof(float));
+        fine_gy = (float *)PULSEQLIB_ALLOC((size_t)fine_num * sizeof(float));
+        fine_gz = (float *)PULSEQLIB_ALLOC((size_t)fine_num * sizeof(float));
+        if (!fine_gx || !fine_gy || !fine_gz)
+        {
+            if (fine_gx)
+                PULSEQLIB_FREE(fine_gx);
+            if (fine_gy)
+                PULSEQLIB_FREE(fine_gy);
+            if (fine_gz)
+                PULSEQLIB_FREE(fine_gz);
             goto fmod_fail;
         }
 
-        for (i = 0; i < fine_num; ++i) {
+        for (i = 0; i < fine_num; ++i)
+        {
             int orig_idx = (int)((float)i * target_raster_us / grad_raster_us);
-            if (orig_idx >= fmod->num_samples) orig_idx = fmod->num_samples - 1;
+            if (orig_idx >= fmod->num_samples)
+                orig_idx = fmod->num_samples - 1;
             fine_gx[i] = fmod->waveform_gx[orig_idx];
             fine_gy[i] = fmod->waveform_gy[orig_idx];
             fine_gz[i] = fmod->waveform_gz[orig_idx];
@@ -340,19 +391,22 @@ static int build_freq_mod_for_block(
         fmod->waveform_gy = fine_gy;
         fmod->waveform_gz = fine_gz;
         fmod->num_samples = fine_num;
-        fmod->raster_us   = target_raster_us;
+        fmod->raster_us = target_raster_us;
 
         /* Recompute ref_integral on fine grid */
-        for (axis = 0; axis < 3; ++axis) {
-            float* w = (axis == 0) ? fmod->waveform_gx :
-                       (axis == 1) ? fmod->waveform_gy : fmod->waveform_gz;
+        for (axis = 0; axis < 3; ++axis)
+        {
+            float *w = (axis == 0) ? fmod->waveform_gx : (axis == 1) ? fmod->waveform_gy
+                                                                     : fmod->waveform_gz;
             int ref_sample = (int)(ref_time_us / target_raster_us);
-            if (ref_sample < 0) ref_sample = 0;
-            if (ref_sample >= fine_num) ref_sample = fine_num - 1;
+            if (ref_sample < 0)
+                ref_sample = 0;
+            if (ref_sample >= fine_num)
+                ref_sample = fine_num - 1;
             if (ref_sample > 0)
                 fmod->ref_integral[axis] = (float)(PULSEQLIB__TWO_PI * 1e-6) *
-                    pulseqlib__trapz_real_uniform(w, ref_sample + 1,
-                                                 target_raster_us);
+                                           pulseqlib__trapz_real_uniform(w, ref_sample + 1,
+                                                                         target_raster_us);
             else
                 fmod->ref_integral[axis] = 0.0f;
         }
@@ -364,12 +418,27 @@ static int build_freq_mod_for_block(
     return PULSEQLIB_SUCCESS;
 
 fmod_fail:
-    if (fmod->waveform_gx) { PULSEQLIB_FREE(fmod->waveform_gx); fmod->waveform_gx = NULL; }
-    if (fmod->waveform_gy) { PULSEQLIB_FREE(fmod->waveform_gy); fmod->waveform_gy = NULL; }
-    if (fmod->waveform_gz) { PULSEQLIB_FREE(fmod->waveform_gz); fmod->waveform_gz = NULL; }
-    if (raw_time)  PULSEQLIB_FREE(raw_time);
-    if (raw_wave)  PULSEQLIB_FREE(raw_wave);
-    if (uniform_t) PULSEQLIB_FREE(uniform_t);
+    if (fmod->waveform_gx)
+    {
+        PULSEQLIB_FREE(fmod->waveform_gx);
+        fmod->waveform_gx = NULL;
+    }
+    if (fmod->waveform_gy)
+    {
+        PULSEQLIB_FREE(fmod->waveform_gy);
+        fmod->waveform_gy = NULL;
+    }
+    if (fmod->waveform_gz)
+    {
+        PULSEQLIB_FREE(fmod->waveform_gz);
+        fmod->waveform_gz = NULL;
+    }
+    if (raw_time)
+        PULSEQLIB_FREE(raw_time);
+    if (raw_wave)
+        PULSEQLIB_FREE(raw_wave);
+    if (uniform_t)
+        PULSEQLIB_FREE(uniform_t);
     return PULSEQLIB_ERR_ALLOC_FAILED;
 }
 
@@ -389,32 +458,32 @@ fmod_fail:
  * and keeps only the rotation + shift in the per-call computation.
  */
 static void compute_plan_waveforms(
-    pulseqlib_freq_mod_library* lib,
-    const float* shift_m)
+    pulseqlib_freq_mod_library *lib,
+    const float *shift_m)
 {
     int p, s, ch;
-    float identity[9] = {1,0,0, 0,1,0, 0,0,1};
+    float identity[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
 
-    for (p = 0; p < lib->num_plan_instances; ++p) {
+    for (p = 0; p < lib->num_plan_instances; ++p)
+    {
         int eidx = lib->pi_entry_idx[p];
         int ridx = lib->pi_rotation_idx[p];
-        int ns   = lib->plan_num_samples[p];
-        float* row = lib->plan_waveforms[p];
-        const float* R;
-        float u[3];     /* u = R^T @ shift_m */
+        int ns = lib->plan_num_samples[p];
+        float *row = lib->plan_waveforms[p];
+        const float *R;
+        float u[3]; /* u = R^T @ shift_m */
 
         R = (ridx >= 0 && ridx < lib->num_rotations)
-            ? (const float*)lib->rotations[ridx] : identity;
-        pulseqlib__apply_rotation(u, R, shift_m, 1);   /* transpose */
+                ? (const float *)lib->rotations[ridx]
+                : identity;
+        pulseqlib__apply_rotation(u, R, shift_m, 1); /* transpose */
 
         /* freq[s] = sum_ch entry_3ch[ch][s] * u[ch] */
-        for (s = 0; s < ns; ++s) {
+        for (s = 0; s < ns; ++s)
+        {
             float val = 0.0f;
             for (ch = 0; ch < 3; ++ch)
-                val += lib->entry_waveform_3ch[
-                    (size_t)eidx * lib->max_samples * 3
-                    + (size_t)ch * lib->max_samples + s
-                ] * u[ch];
+                val += lib->entry_waveform_3ch[(size_t)eidx * lib->max_samples * 3 + (size_t)ch * lib->max_samples + s] * u[ch];
             row[s] = val;
         }
         /* zero-pad remainder */
@@ -433,17 +502,21 @@ static void compute_plan_waveforms(
 
 /* Convert plan_waveforms (float Hz) → plan_hw_waveforms (short DAC).
  * Sets WEOS_BIT on the last sample of each plan instance. */
-static void convert_plan_to_hw(pulseqlib_freq_mod_library* lib)
+static void convert_plan_to_hw(pulseqlib_freq_mod_library *lib)
 {
     int p, s;
-    for (p = 0; p < lib->num_plan_instances; ++p) {
+    for (p = 0; p < lib->num_plan_instances; ++p)
+    {
         int ns = lib->plan_num_samples[p];
-        const float* src = lib->plan_waveforms[p];
-        short* dst = lib->plan_hw_waveforms[p];
-        for (s = 0; s < ns; ++s) {
-            int v = (int)(src[s] * PULSEQLIB_OMEGA_SCALE + 0.5f);
-            if (v > 32767)  v = 32767;
-            if (v < -32767) v = -32767;
+        const float *src = lib->plan_waveforms[p];
+        short *dst = lib->plan_hw_waveforms[p];
+        for (s = 0; s < ns; ++s)
+        {
+            int v = (int)(src[s] * PULSEQLIB_OMEGA_SCALE);
+            if (v > 32767)
+                v = 32767;
+            if (v < -32767)
+                v = -32767;
             dst[s] = (short)(v & ~PULSEQLIB_WAVEFORM_END);
         }
         if (ns > 0)
@@ -456,28 +529,30 @@ static void convert_plan_to_hw(pulseqlib_freq_mod_library* lib)
 
 /* Recompute per-scan extra phase from inactive-axis areas. */
 static void compute_scan_phase_extra(
-    pulseqlib_freq_mod_library* lib,
-    const float* shift_m)
+    pulseqlib_freq_mod_library *lib,
+    const float *shift_m)
 {
     int pos;
-    float identity[9] = {1,0,0, 0,1,0, 0,0,1};
+    float identity[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
 
     if (!lib || !shift_m || !lib->scan_phase_extra || !lib->scan_inactive_area_3ch)
         return;
 
-    for (pos = 0; pos < lib->scan_table_len; ++pos) {
+    for (pos = 0; pos < lib->scan_table_len; ++pos)
+    {
         int pi = lib->scan_to_plan[pos];
         int ridx = -1;
-        const float* R;
+        const float *R;
         float u[3];
-        const float* ia = lib->scan_inactive_area_3ch + (size_t)pos * 3;
+        const float *ia = lib->scan_inactive_area_3ch + (size_t)pos * 3;
 
         if (pi >= 0 && pi < lib->num_plan_instances)
             ridx = lib->pi_rotation_idx[pi];
 
         R = (ridx >= 0 && ridx < lib->num_rotations)
-            ? (const float*)lib->rotations[ridx] : identity;
-        pulseqlib__apply_rotation(u, R, shift_m, 1);  /* R^T @ shift */
+                ? (const float *)lib->rotations[ridx]
+                : identity;
+        pulseqlib__apply_rotation(u, R, shift_m, 1); /* R^T @ shift */
 
         lib->scan_phase_extra[pos] = ia[0] * u[0] + ia[1] * u[1] + ia[2] * u[2];
     }
@@ -487,27 +562,28 @@ static void compute_scan_phase_extra(
 /*  Helper: allocate plan arrays                                      */
 /* ================================================================== */
 
-static int alloc_plan(pulseqlib_freq_mod_library* lib)
+static int alloc_plan(pulseqlib_freq_mod_library *lib)
 {
     size_t np = (size_t)lib->num_plan_instances;
     size_t ms = (size_t)lib->max_samples;
     int r;
 
-    lib->plan_waveform_data = (float*)PULSEQLIB_ALLOC(np * ms * sizeof(float));
-    lib->plan_waveforms     = (float**)PULSEQLIB_ALLOC(np * sizeof(float*));
-    lib->plan_hw_data       = (short*)PULSEQLIB_ALLOC(np * ms * sizeof(short));
-    lib->plan_hw_waveforms  = (short**)PULSEQLIB_ALLOC(np * sizeof(short*));
-    lib->plan_num_samples   = (int*)PULSEQLIB_ALLOC(np * sizeof(int));
-    lib->plan_phase         = (float*)PULSEQLIB_ALLOC(np * sizeof(float));
+    lib->plan_waveform_data = (float *)PULSEQLIB_ALLOC(np * ms * sizeof(float));
+    lib->plan_waveforms = (float **)PULSEQLIB_ALLOC(np * sizeof(float *));
+    lib->plan_hw_data = (short *)PULSEQLIB_ALLOC(np * ms * sizeof(short));
+    lib->plan_hw_waveforms = (short **)PULSEQLIB_ALLOC(np * sizeof(short *));
+    lib->plan_num_samples = (int *)PULSEQLIB_ALLOC(np * sizeof(int));
+    lib->plan_phase = (float *)PULSEQLIB_ALLOC(np * sizeof(float));
 
     if (!lib->plan_waveform_data || !lib->plan_waveforms ||
-        !lib->plan_hw_data       || !lib->plan_hw_waveforms ||
-        !lib->plan_num_samples   || !lib->plan_phase)
+        !lib->plan_hw_data || !lib->plan_hw_waveforms ||
+        !lib->plan_num_samples || !lib->plan_phase)
         return PULSEQLIB_ERR_ALLOC_FAILED;
 
-    for (r = 0; r < lib->num_plan_instances; ++r) {
-        lib->plan_waveforms[r]    = lib->plan_waveform_data + (size_t)r * ms;
-        lib->plan_hw_waveforms[r] = lib->plan_hw_data       + (size_t)r * ms;
+    for (r = 0; r < lib->num_plan_instances; ++r)
+    {
+        lib->plan_waveforms[r] = lib->plan_waveform_data + (size_t)r * ms;
+        lib->plan_hw_waveforms[r] = lib->plan_hw_data + (size_t)r * ms;
     }
 
     return PULSEQLIB_SUCCESS;
@@ -517,14 +593,19 @@ static int alloc_plan(pulseqlib_freq_mod_library* lib)
 /*  Helper: free base definitions array                               */
 /* ================================================================== */
 
-static void free_base_defs(pulseqlib_freq_mod_definition* defs, int n)
+static void free_base_defs(pulseqlib_freq_mod_definition *defs, int n)
 {
     int i;
-    if (!defs) return;
-    for (i = 0; i < n; ++i) {
-        if (defs[i].waveform_gx) PULSEQLIB_FREE(defs[i].waveform_gx);
-        if (defs[i].waveform_gy) PULSEQLIB_FREE(defs[i].waveform_gy);
-        if (defs[i].waveform_gz) PULSEQLIB_FREE(defs[i].waveform_gz);
+    if (!defs)
+        return;
+    for (i = 0; i < n; ++i)
+    {
+        if (defs[i].waveform_gx)
+            PULSEQLIB_FREE(defs[i].waveform_gx);
+        if (defs[i].waveform_gy)
+            PULSEQLIB_FREE(defs[i].waveform_gy);
+        if (defs[i].waveform_gz)
+            PULSEQLIB_FREE(defs[i].waveform_gz);
     }
     PULSEQLIB_FREE(defs);
 }
@@ -533,10 +614,15 @@ static void free_base_defs(pulseqlib_freq_mod_definition* defs, int n)
 /*  Dedup key types                                                   */
 /* ================================================================== */
 
-#define FREQ_MOD_BASE_COLS  7   /* freq_mod_id, active_start_us, active_dur_us, gx_def_shot, gy_def_shot, gz_def_shot, effective_duration_us */
+#define FREQ_MOD_BASE_COLS 7 /* freq_mod_id, active_start_us, active_dur_us, gx_def_shot, gy_def_shot, gz_def_shot, effective_duration_us */
 
-typedef struct { int base_idx; float amp[3]; } entry_key_t;
-typedef struct {
+typedef struct
+{
+    int base_idx;
+    float amp[3];
+} entry_key_t;
+typedef struct
+{
     int entry_idx;
     int rot_idx;
     int tr_scope_id;
@@ -548,38 +634,38 @@ typedef struct {
 /* ================================================================== */
 
 static int build_freq_mod_library(
-    pulseqlib_freq_mod_library** out_lib,
-    const pulseqlib_collection* coll,
+    pulseqlib_freq_mod_library **out_lib,
+    const pulseqlib_collection *coll,
     int subseq_idx,
-    const float* shift_m,
-    const float* fov_rotation)
+    const float *shift_m,
+    const float *fov_rotation)
 {
-    const pulseqlib_sequence_descriptor* desc;
-    pulseqlib_freq_mod_library* lib = NULL;
+    const pulseqlib_sequence_descriptor *desc;
+    pulseqlib_freq_mod_library *lib = NULL;
     int n, count, result;
 
     /* Per-event working arrays (sized to count) */
-    int* block_indices   = NULL;   /* [count] block_table indices            */
+    int *block_indices = NULL; /* [count] block_table indices            */
     int (*base_rows)[FREQ_MOD_BASE_COLS] = NULL;
-    int* base_unique     = NULL;
-    int* base_map        = NULL;   /* event -> base_idx                      */
-    int  num_base;
+    int *base_unique = NULL;
+    int *base_map = NULL; /* event -> base_idx                      */
+    int num_base;
 
-    entry_key_t* entry_keys  = NULL;
-    int* entry_unique        = NULL;
-    int* entry_map           = NULL;   /* event -> entry_idx              */
-    int  num_entries;
+    entry_key_t *entry_keys = NULL;
+    int *entry_unique = NULL;
+    int *entry_map = NULL; /* event -> entry_idx              */
+    int num_entries;
 
-    plan_key_t* plan_keys    = NULL;
-    int* plan_unique         = NULL;
-    int* plan_map            = NULL;   /* event -> plan_instance_idx      */
-    int  num_plan;
+    plan_key_t *plan_keys = NULL;
+    int *plan_unique = NULL;
+    int *plan_map = NULL; /* event -> plan_instance_idx      */
+    int num_plan;
 
-    int* block_rotation      = NULL;   /* [count] rotation_idx per event  */
-    int* block_norot         = NULL;   /* [count] norot flag per event    */
-    int* base_active_mask    = NULL;   /* [num_base * 3], allocated after dedup */
-    pulseqlib_freq_mod_definition* base_defs = NULL;  /* [num_base] temp */
-    int  max_samples;
+    int *block_rotation = NULL;                      /* [count] rotation_idx per event  */
+    int *block_norot = NULL;                         /* [count] norot flag per event    */
+    int *base_active_mask = NULL;                    /* [num_base * 3], allocated after dedup */
+    pulseqlib_freq_mod_definition *base_defs = NULL; /* [num_base] temp */
+    int max_samples;
 
     /* ---- Validate arguments ---- */
     if (!out_lib || !coll || !shift_m)
@@ -597,39 +683,43 @@ static int build_freq_mod_library(
             count++;
 
     /* ---- Allocate library shell ---- */
-    lib = (pulseqlib_freq_mod_library*)PULSEQLIB_ALLOC(sizeof(*lib));
-    if (!lib) return PULSEQLIB_ERR_ALLOC_FAILED;
+    lib = (pulseqlib_freq_mod_library *)PULSEQLIB_ALLOC(sizeof(*lib));
+    if (!lib)
+        return PULSEQLIB_ERR_ALLOC_FAILED;
     memset(lib, 0, sizeof(*lib));
 
     /* Build scan_to_plan (all -1 initially) */
     lib->scan_table_len = desc->scan_table_len;
-    if (lib->scan_table_len > 0) {
-        lib->scan_to_plan = (int*)PULSEQLIB_ALLOC(
+    if (lib->scan_table_len > 0)
+    {
+        lib->scan_to_plan = (int *)PULSEQLIB_ALLOC(
             (size_t)lib->scan_table_len * sizeof(int));
-        if (!lib->scan_to_plan) goto build_fail;
+        if (!lib->scan_to_plan)
+            goto build_fail;
         for (n = 0; n < lib->scan_table_len; ++n)
             lib->scan_to_plan[n] = -1;
     }
 
-    if (count == 0) {
+    if (count == 0)
+    {
         /* No freq-mod blocks: empty library */
         *out_lib = lib;
         return PULSEQLIB_SUCCESS;
     }
 
     /* ---- Allocate working arrays ---- */
-    block_indices  = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
-    base_rows      = PULSEQLIB_ALLOC((size_t)count * sizeof(*base_rows));
-    base_unique    = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
-    base_map       = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
-    entry_keys     = (entry_key_t*)PULSEQLIB_ALLOC((size_t)count * sizeof(entry_key_t));
-    entry_unique   = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
-    entry_map      = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
-    plan_keys      = (plan_key_t*)PULSEQLIB_ALLOC((size_t)count * sizeof(plan_key_t));
-    plan_unique    = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
-    plan_map       = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
-    block_rotation = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
-    block_norot    = (int*)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
+    block_indices = (int *)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
+    base_rows = PULSEQLIB_ALLOC((size_t)count * sizeof(*base_rows));
+    base_unique = (int *)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
+    base_map = (int *)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
+    entry_keys = (entry_key_t *)PULSEQLIB_ALLOC((size_t)count * sizeof(entry_key_t));
+    entry_unique = (int *)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
+    entry_map = (int *)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
+    plan_keys = (plan_key_t *)PULSEQLIB_ALLOC((size_t)count * sizeof(plan_key_t));
+    plan_unique = (int *)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
+    plan_map = (int *)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
+    block_rotation = (int *)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
+    block_norot = (int *)PULSEQLIB_ALLOC((size_t)count * sizeof(int));
 
     if (!block_indices || !base_rows || !base_unique || !base_map ||
         !entry_keys || !entry_unique || !entry_map ||
@@ -640,15 +730,17 @@ static int build_freq_mod_library(
     /* ==== Pass 1: gather per-event info ==== */
     {
         int idx = 0;
-        for (n = 0; n < desc->num_blocks; ++n) {
-            const pulseqlib_block_table_element* bte = &desc->block_table[n];
-            const pulseqlib_block_definition* bdef = &desc->block_definitions[bte->id];
+        for (n = 0; n < desc->num_blocks; ++n)
+        {
+            const pulseqlib_block_table_element *bte = &desc->block_table[n];
+            const pulseqlib_block_definition *bdef = &desc->block_definitions[bte->id];
             int has_rf, has_adc, adc_def_id_local;
             int effective_duration_us;
             int gx_key, gy_key, gz_key;
             int active_start_key, active_dur_key;
 
-            if (bte->freq_mod_id < 0) continue;
+            if (bte->freq_mod_id < 0)
+                continue;
 
             block_indices[idx] = n;
             effective_duration_us = bdef->duration_us;
@@ -657,42 +749,47 @@ static int build_freq_mod_library(
              * that use different RF definitions but have the same active
              * window and gradient shapes will produce identical base
              * waveforms and should share the same base index. */
-            has_rf  = (bdef->rf_id >= 0 && bdef->rf_id < desc->num_unique_rfs);
+            has_rf = (bdef->rf_id >= 0 && bdef->rf_id < desc->num_unique_rfs);
             has_adc = (bte->adc_id >= 0 && bte->adc_id < desc->adc_table_size);
             active_start_key = 0;
-            active_dur_key   = 0;
+            active_dur_key = 0;
 
-            if (has_rf) {
-                const pulseqlib_rf_definition* rdef =
+            if (has_rf)
+            {
+                const pulseqlib_rf_definition *rdef =
                     &desc->rf_definitions[bdef->rf_id];
                 float rf_end_us = (float)rdef->delay + rdef->stats.duration_us;
                 float a_start = (float)rdef->delay;
                 float a_end;
-                adc_def_id_local = has_adc
-                    ? desc->adc_table[bte->adc_id].id : -1;
+                adc_def_id_local = has_adc ? desc->adc_table[bte->adc_id].id : -1;
                 if (!has_adc && rf_end_us < 0.75f * (float)effective_duration_us)
                     a_end = (float)effective_duration_us;
                 else
                     a_end = rf_end_us;
-                if (a_start < 0.0f) a_start = 0.0f;
+                if (a_start < 0.0f)
+                    a_start = 0.0f;
                 if (a_end > (float)effective_duration_us)
                     a_end = (float)effective_duration_us;
-                active_start_key = (int)(a_start + 0.5f);
-                active_dur_key   = (int)(a_end - a_start + 0.5f);
-            } else if (has_adc) {
+                active_start_key = (int)(a_start);
+                active_dur_key = (int)(a_end - a_start);
+            }
+            else if (has_adc)
+            {
                 adc_def_id_local = desc->adc_table[bte->adc_id].id;
                 if (adc_def_id_local >= 0 &&
-                    adc_def_id_local < desc->num_unique_adcs) {
-                    const pulseqlib_adc_definition* adef =
+                    adc_def_id_local < desc->num_unique_adcs)
+                {
+                    const pulseqlib_adc_definition *adef =
                         &desc->adc_definitions[adc_def_id_local];
                     float a_start = (float)adef->delay;
                     float a_end = a_start +
-                        (float)adef->num_samples * (float)adef->dwell_time * 1e-3f;
-                    if (a_start < 0.0f) a_start = 0.0f;
+                                  (float)adef->num_samples * (float)adef->dwell_time * 1e-3f;
+                    if (a_start < 0.0f)
+                        a_start = 0.0f;
                     if (a_end > (float)effective_duration_us)
                         a_end = (float)effective_duration_us;
-                    active_start_key = (int)(a_start + 0.5f);
-                    active_dur_key   = (int)(a_end - a_start + 0.5f);
+                    active_start_key = (int)a_start;
+                    active_dur_key = (int)(a_end - a_start);
                 }
             }
 
@@ -707,12 +804,16 @@ static int build_freq_mod_library(
                 ax_id[0] = bte->gx_id;
                 ax_id[1] = bte->gy_id;
                 ax_id[2] = bte->gz_id;
-                for (a = 0; a < 3; ++a) {
-                    if (ax_id[a] >= 0 && ax_id[a] < desc->grad_table_size) {
+                for (a = 0; a < 3; ++a)
+                {
+                    if (ax_id[a] >= 0 && ax_id[a] < desc->grad_table_size)
+                    {
                         int g_def = desc->grad_table[ax_id[a]].id;
-                        int shot  = desc->grad_table[ax_id[a]].shot_index;
+                        int shot = desc->grad_table[ax_id[a]].shot_index;
                         ax_key[a] = g_def * PULSEQLIB_MAX_GRAD_SHOTS + shot;
-                    } else {
+                    }
+                    else
+                    {
                         ax_key[a] = -1;
                     }
                 }
@@ -734,7 +835,8 @@ static int build_freq_mod_library(
 
             /* Rotation: record both rotation_id and norot_flag */
             block_rotation[idx] = (bte->rotation_id >= 0)
-                ? bte->rotation_id : -1;
+                                      ? bte->rotation_id
+                                      : -1;
             block_norot[idx] = bte->norot_flag;
 
             idx++;
@@ -744,35 +846,39 @@ static int build_freq_mod_library(
     /* ==== Dedup base waveforms ==== */
     num_base = pulseqlib__deduplicate_int_rows(
         base_unique, base_map,
-        (const int*)base_rows, count, FREQ_MOD_BASE_COLS);
+        (const int *)base_rows, count, FREQ_MOD_BASE_COLS);
 
     /* ==== Build base definitions ==== */
-    base_defs = (pulseqlib_freq_mod_definition*)PULSEQLIB_ALLOC(
+    base_defs = (pulseqlib_freq_mod_definition *)PULSEQLIB_ALLOC(
         (size_t)num_base * sizeof(pulseqlib_freq_mod_definition));
-    base_active_mask = (int*)PULSEQLIB_ALLOC((size_t)num_base * 3 * sizeof(int));
-    if (!base_defs) goto build_fail;
+    base_active_mask = (int *)PULSEQLIB_ALLOC((size_t)num_base * 3 * sizeof(int));
+    if (!base_defs)
+        goto build_fail;
     memset(base_defs, 0, (size_t)num_base * sizeof(pulseqlib_freq_mod_definition));
-    if (!base_active_mask) goto build_fail;
+    if (!base_active_mask)
+        goto build_fail;
     memset(base_active_mask, 0, (size_t)num_base * 3 * sizeof(int));
 
     max_samples = 0;
-    for (n = 0; n < num_base; ++n) {
+    for (n = 0; n < num_base; ++n)
+    {
         int row_idx = base_unique[n];
         int blk_idx = block_indices[row_idx];
-        const pulseqlib_block_table_element* bte = &desc->block_table[blk_idx];
-        const pulseqlib_block_definition* bdef = &desc->block_definitions[bte->id];
+        const pulseqlib_block_table_element *bte = &desc->block_table[blk_idx];
+        const pulseqlib_block_definition *bdef = &desc->block_definitions[bte->id];
         int has_rf, has_adc, adc_def_id_local;
         float active_start_us, active_end_us, ref_time_us;
         float target_raster_us;
         int effective_duration_us;
 
-        has_rf  = (bdef->rf_id >= 0);
+        has_rf = (bdef->rf_id >= 0);
         has_adc = (bte->adc_id >= 0 && bte->adc_id < desc->adc_table_size);
         effective_duration_us = bdef->duration_us;
 
         /* ---- Determine active region ---- */
-        if (has_rf && bdef->rf_id < desc->num_unique_rfs) {
-            const pulseqlib_rf_definition* rdef = &desc->rf_definitions[bdef->rf_id];
+        if (has_rf && bdef->rf_id < desc->num_unique_rfs)
+        {
+            const pulseqlib_rf_definition *rdef = &desc->rf_definitions[bdef->rf_id];
             float rf_end_us;
             active_start_us = (float)rdef->delay;
             rf_end_us = active_start_us + rdef->stats.duration_us;
@@ -780,36 +886,48 @@ static int build_freq_mod_library(
             /* Navigator-like RF blocks can have gradients that extend far
                beyond the RF pulse; in that case use the full effective
                block duration for freq-mod synthesis. */
-            if (!has_adc && rf_end_us < 0.75f * (float)effective_duration_us) {
+            if (!has_adc && rf_end_us < 0.75f * (float)effective_duration_us)
+            {
                 active_end_us = (float)effective_duration_us;
-            } else {
+            }
+            else
+            {
                 active_end_us = rf_end_us;
             }
-            ref_time_us   = (float)rdef->stats.isodelay_us;
+            ref_time_us = (float)rdef->stats.isodelay_us;
 
             /* Prefer segment RF-anchor isocenter when available. */
             {
                 int scan_p;
-                for (scan_p = 0; scan_p < desc->scan_table_len; ++scan_p) {
-                    if (desc->scan_table_block_idx[scan_p] == blk_idx) {
+                for (scan_p = 0; scan_p < desc->scan_table_len; ++scan_p)
+                {
+                    if (desc->scan_table_block_idx[scan_p] == blk_idx)
+                    {
                         int seg_id = (desc->scan_table_seg_id) ? desc->scan_table_seg_id[scan_p] : -1;
-                        if (seg_id >= 0 && seg_id < desc->num_unique_segments) {
-                            const pulseqlib_tr_segment* seg = &desc->segment_definitions[seg_id];
+                        if (seg_id >= 0 && seg_id < desc->num_unique_segments)
+                        {
+                            const pulseqlib_tr_segment *seg = &desc->segment_definitions[seg_id];
                             int kb, ka, blk_offset = -1;
-                            for (kb = 0; kb < seg->num_blocks; ++kb) {
-                                if (seg->unique_block_indices[kb] == bte->id) {
+                            for (kb = 0; kb < seg->num_blocks; ++kb)
+                            {
+                                if (seg->unique_block_indices[kb] == bte->id)
+                                {
                                     blk_offset = kb;
                                     break;
                                 }
                             }
                             if (blk_offset >= 0 && seg->timing.rf_anchors &&
-                                seg->timing.num_rf_anchors > 0) {
-                                for (ka = 0; ka < seg->timing.num_rf_anchors; ++ka) {
-                                    if (seg->timing.rf_anchors[ka].block_offset == blk_offset) {
+                                seg->timing.num_rf_anchors > 0)
+                            {
+                                for (ka = 0; ka < seg->timing.num_rf_anchors; ++ka)
+                                {
+                                    if (seg->timing.rf_anchors[ka].block_offset == blk_offset)
+                                    {
                                         float iso = seg->timing.rf_anchors[ka].isocenter_us;
                                         float as = seg->timing.rf_anchors[ka].start_us;
                                         float iso_rel = iso - as;
-                                        if (iso_rel < 0.0f) iso_rel = 0.0f;
+                                        if (iso_rel < 0.0f)
+                                            iso_rel = 0.0f;
                                         if (iso_rel > (active_end_us - active_start_us))
                                             iso_rel = active_end_us - active_start_us;
                                         ref_time_us = iso_rel;
@@ -822,43 +940,56 @@ static int build_freq_mod_library(
                     }
                 }
             }
-        } else if (has_adc) {
+        }
+        else if (has_adc)
+        {
             adc_def_id_local = desc->adc_table[bte->adc_id].id;
-            if (adc_def_id_local >= 0 && adc_def_id_local < desc->num_unique_adcs) {
-                const pulseqlib_adc_definition* adef =
+            if (adc_def_id_local >= 0 && adc_def_id_local < desc->num_unique_adcs)
+            {
+                const pulseqlib_adc_definition *adef =
                     &desc->adc_definitions[adc_def_id_local];
                 float adc_dur_us = (float)adef->num_samples *
                                    (float)adef->dwell_time * 1e-3f;
                 active_start_us = (float)adef->delay;
-                active_end_us   = active_start_us + adc_dur_us;
-                ref_time_us     = adc_dur_us * 0.5f;   /* default: midpoint */
+                active_end_us = active_start_us + adc_dur_us;
+                ref_time_us = adc_dur_us * 0.5f; /* default: midpoint */
 
                 /* Override with accurate kzero from segment timing anchors. */
                 {
                     int scan_p;
-                    for (scan_p = 0; scan_p < desc->scan_table_len; ++scan_p) {
-                        if (desc->scan_table_block_idx[scan_p] == blk_idx) {
+                    for (scan_p = 0; scan_p < desc->scan_table_len; ++scan_p)
+                    {
+                        if (desc->scan_table_block_idx[scan_p] == blk_idx)
+                        {
                             int seg_id = desc->scan_table_seg_id[scan_p];
-                            if (seg_id >= 0 && seg_id < desc->num_unique_segments) {
-                                const pulseqlib_tr_segment* seg =
+                            if (seg_id >= 0 && seg_id < desc->num_unique_segments)
+                            {
+                                const pulseqlib_tr_segment *seg =
                                     &desc->segment_definitions[seg_id];
                                 int kb, ka, blk_offset = -1;
-                                for (kb = 0; kb < seg->num_blocks; ++kb) {
-                                    if (seg->unique_block_indices[kb] == bte->id) {
+                                for (kb = 0; kb < seg->num_blocks; ++kb)
+                                {
+                                    if (seg->unique_block_indices[kb] == bte->id)
+                                    {
                                         blk_offset = kb;
                                         break;
                                     }
                                 }
                                 if (blk_offset >= 0 &&
                                     seg->timing.adc_anchors &&
-                                    seg->timing.num_adc_anchors > 0) {
-                                    for (ka = 0; ka < seg->timing.num_adc_anchors; ++ka) {
-                                        if (seg->timing.adc_anchors[ka].block_offset == blk_offset) {
+                                    seg->timing.num_adc_anchors > 0)
+                                {
+                                    for (ka = 0; ka < seg->timing.num_adc_anchors; ++ka)
+                                    {
+                                        if (seg->timing.adc_anchors[ka].block_offset == blk_offset)
+                                        {
                                             float kz = seg->timing.adc_anchors[ka].kzero_us;
                                             float as = seg->timing.adc_anchors[ka].start_us;
                                             float kz_rel = kz - as;
-                                            if (kz_rel < 0.0f) kz_rel = 0.0f;
-                                            if (kz_rel > adc_dur_us) kz_rel = adc_dur_us;
+                                            if (kz_rel < 0.0f)
+                                                kz_rel = 0.0f;
+                                            if (kz_rel > adc_dur_us)
+                                                kz_rel = adc_dur_us;
                                             ref_time_us = kz_rel;
                                             break;
                                         }
@@ -869,28 +1000,36 @@ static int build_freq_mod_library(
                         }
                     }
                 }
-            } else {
+            }
+            else
+            {
                 continue;
             }
-        } else {
+        }
+        else
+        {
             continue;
         }
 
         /* Clamp */
-        if (active_start_us < 0.0f) active_start_us = 0.0f;
+        if (active_start_us < 0.0f)
+            active_start_us = 0.0f;
         if (active_end_us > (float)effective_duration_us)
             active_end_us = (float)effective_duration_us;
-        if (ref_time_us < 0.0f) ref_time_us = 0.0f;
+        if (ref_time_us < 0.0f)
+            ref_time_us = 0.0f;
         if (ref_time_us > (active_end_us - active_start_us))
             ref_time_us = active_end_us - active_start_us;
 
         target_raster_us = (has_rf && bdef->rf_id < desc->num_unique_rfs)
-                           ? desc->rf_raster_us : desc->adc_raster_us;
+                               ? desc->rf_raster_us
+                               : desc->adc_raster_us;
 
         result = build_freq_mod_for_block(desc, bte, bte->id,
-            active_start_us, active_end_us, ref_time_us,
-            target_raster_us, &base_defs[n]);
-        if (PULSEQLIB_FAILED(result)) {
+                                          active_start_us, active_end_us, ref_time_us,
+                                          target_raster_us, &base_defs[n]);
+        if (PULSEQLIB_FAILED(result))
+        {
             continue;
         }
 
@@ -910,43 +1049,68 @@ static int build_freq_mod_library(
      * event IDs for channels that are all-zero within the active window).
      * Remap base_map so that waveform-identical bases share one index.  */
     {
-        int* base_remap = (int*)PULSEQLIB_ALLOC((size_t)num_base * sizeof(int));
-        if (base_remap) {
+        int *base_remap = (int *)PULSEQLIB_ALLOC((size_t)num_base * sizeof(int));
+        if (base_remap)
+        {
             int b, b2, ch2, s2;
-            for (b = 0; b < num_base; ++b) base_remap[b] = b;
+            for (b = 0; b < num_base; ++b)
+                base_remap[b] = b;
 
-            for (b = 1; b < num_base; ++b) {
-                for (b2 = 0; b2 < b; ++b2) {
-                    const pulseqlib_freq_mod_definition* da = &base_defs[b];
-                    const pulseqlib_freq_mod_definition* db = &base_defs[b2];
+            for (b = 1; b < num_base; ++b)
+            {
+                for (b2 = 0; b2 < b; ++b2)
+                {
+                    const pulseqlib_freq_mod_definition *da = &base_defs[b];
+                    const pulseqlib_freq_mod_definition *db = &base_defs[b2];
                     int identical = 1;
                     if (da->num_samples != db->num_samples ||
-                        da->raster_us  != db->raster_us) {
+                        da->raster_us != db->raster_us)
+                    {
                         identical = 0;
-                    } else {
-                        const float* wa[3];
-                        const float* wb[3];
-                        wa[0] = da->waveform_gx; wa[1] = da->waveform_gy; wa[2] = da->waveform_gz;
-                        wb[0] = db->waveform_gx; wb[1] = db->waveform_gy; wb[2] = db->waveform_gz;
-                        for (ch2 = 0; ch2 < 3 && identical; ++ch2) {
-                            if (!wa[ch2] && !wb[ch2]) continue;
-                            if (!wa[ch2] || !wb[ch2]) { identical = 0; break; }
-                            for (s2 = 0; s2 < da->num_samples; ++s2) {
-                                if (wa[ch2][s2] != wb[ch2][s2]) {
-                                    identical = 0; break;
+                    }
+                    else
+                    {
+                        const float *wa[3];
+                        const float *wb[3];
+                        wa[0] = da->waveform_gx;
+                        wa[1] = da->waveform_gy;
+                        wa[2] = da->waveform_gz;
+                        wb[0] = db->waveform_gx;
+                        wb[1] = db->waveform_gy;
+                        wb[2] = db->waveform_gz;
+                        for (ch2 = 0; ch2 < 3 && identical; ++ch2)
+                        {
+                            if (!wa[ch2] && !wb[ch2])
+                                continue;
+                            if (!wa[ch2] || !wb[ch2])
+                            {
+                                identical = 0;
+                                break;
+                            }
+                            for (s2 = 0; s2 < da->num_samples; ++s2)
+                            {
+                                if (wa[ch2][s2] != wb[ch2][s2])
+                                {
+                                    identical = 0;
+                                    break;
                                 }
                             }
                         }
                         /* Also compare ref_integral and ref_time */
-                        if (identical) {
-                            for (ch2 = 0; ch2 < 3; ++ch2) {
-                                if (da->ref_integral[ch2] != db->ref_integral[ch2]) {
-                                    identical = 0; break;
+                        if (identical)
+                        {
+                            for (ch2 = 0; ch2 < 3; ++ch2)
+                            {
+                                if (da->ref_integral[ch2] != db->ref_integral[ch2])
+                                {
+                                    identical = 0;
+                                    break;
                                 }
                             }
                         }
                     }
-                    if (identical) {
+                    if (identical)
+                    {
                         base_remap[b] = base_remap[b2];
                         break;
                     }
@@ -962,50 +1126,60 @@ static int build_freq_mod_library(
     }
 
     /* ==== Pass 2: build entry dedup keys ==== */
-    for (n = 0; n < count; ++n) {
+    for (n = 0; n < count; ++n)
+    {
         int blk_idx = block_indices[n];
-        const pulseqlib_block_table_element* bte = &desc->block_table[blk_idx];
+        const pulseqlib_block_table_element *bte = &desc->block_table[blk_idx];
         int bi = base_map[n];
         float amp[3];
 
         amp[0] = (bte->gx_id >= 0 && bte->gx_id < desc->grad_table_size)
-                 ? desc->grad_table[bte->gx_id].amplitude : 0.0f;
+                     ? desc->grad_table[bte->gx_id].amplitude
+                     : 0.0f;
         amp[1] = (bte->gy_id >= 0 && bte->gy_id < desc->grad_table_size)
-                 ? desc->grad_table[bte->gy_id].amplitude : 0.0f;
+                     ? desc->grad_table[bte->gy_id].amplitude
+                     : 0.0f;
         amp[2] = (bte->gz_id >= 0 && bte->gz_id < desc->grad_table_size)
-                 ? desc->grad_table[bte->gz_id].amplitude : 0.0f;
+                     ? desc->grad_table[bte->gz_id].amplitude
+                     : 0.0f;
 
         /* Zero out amplitudes for channels inactive in the active window. */
-        if (bi >= 0 && bi < num_base) {
-            if (!base_active_mask[bi * 3 + 0]) amp[0] = 0.0f;
-            if (!base_active_mask[bi * 3 + 1]) amp[1] = 0.0f;
-            if (!base_active_mask[bi * 3 + 2]) amp[2] = 0.0f;
+        if (bi >= 0 && bi < num_base)
+        {
+            if (!base_active_mask[bi * 3 + 0])
+                amp[0] = 0.0f;
+            if (!base_active_mask[bi * 3 + 1])
+                amp[1] = 0.0f;
+            if (!base_active_mask[bi * 3 + 2])
+                amp[2] = 0.0f;
         }
 
         memset(&entry_keys[n], 0, sizeof(entry_keys[n]));
         entry_keys[n].base_idx = bi;
-        entry_keys[n].amp[0]   = amp[0];
-        entry_keys[n].amp[1]   = amp[1];
-        entry_keys[n].amp[2]   = amp[2];
+        entry_keys[n].amp[0] = amp[0];
+        entry_keys[n].amp[1] = amp[1];
+        entry_keys[n].amp[2] = amp[2];
     }
 
     /* ==== Dedup entries ==== */
     num_entries = dedup_keys(entry_unique, entry_map,
-        (const char*)entry_keys, count, (int)sizeof(entry_key_t));
+                             (const char *)entry_keys, count, (int)sizeof(entry_key_t));
 
     /* ==== Build amplitude-scaled 3-channel entries ==== */
-    if (max_samples <= 0) max_samples = 1;  /* safety */
+    if (max_samples <= 0)
+        max_samples = 1; /* safety */
 
     lib->num_entries = num_entries;
     lib->max_samples = max_samples;
-    lib->raster_us   = (num_base > 0 && base_defs[0].raster_us > 0.0f)
-                        ? base_defs[0].raster_us : desc->grad_raster_us;
+    lib->raster_us = (num_base > 0 && base_defs[0].raster_us > 0.0f)
+                         ? base_defs[0].raster_us
+                         : desc->grad_raster_us;
 
-    lib->entry_num_samples = (int*)PULSEQLIB_ALLOC(
+    lib->entry_num_samples = (int *)PULSEQLIB_ALLOC(
         (size_t)num_entries * sizeof(int));
-    lib->entry_waveform_3ch = (float*)PULSEQLIB_ALLOC(
+    lib->entry_waveform_3ch = (float *)PULSEQLIB_ALLOC(
         (size_t)num_entries * max_samples * 3 * sizeof(float));
-    lib->entry_ref_3ch = (float*)PULSEQLIB_ALLOC(
+    lib->entry_ref_3ch = (float *)PULSEQLIB_ALLOC(
         (size_t)num_entries * 3 * sizeof(float));
     if (!lib->entry_num_samples || !lib->entry_waveform_3ch || !lib->entry_ref_3ch)
         goto build_fail;
@@ -1013,10 +1187,11 @@ static int build_freq_mod_library(
     memset(lib->entry_waveform_3ch, 0,
            (size_t)num_entries * max_samples * 3 * sizeof(float));
 
-    for (n = 0; n < num_entries; ++n) {
-        int ev       = entry_unique[n];
-        int bi       = base_map[ev];
-        const pulseqlib_freq_mod_definition* bd = &base_defs[bi];
+    for (n = 0; n < num_entries; ++n)
+    {
+        int ev = entry_unique[n];
+        int bi = base_map[ev];
+        const pulseqlib_freq_mod_definition *bd = &base_defs[bi];
         float amp[3];
         int s, ch;
 
@@ -1029,15 +1204,15 @@ static int build_freq_mod_library(
 
         /* Scale base waveforms by amplitude: e_j(t) = A_j * g_j(t) */
         {
-            const float* src[3];
+            const float *src[3];
             src[0] = bd->waveform_gx;
             src[1] = bd->waveform_gy;
             src[2] = bd->waveform_gz;
-            for (ch = 0; ch < 3; ++ch) {
-                float* dst = lib->entry_waveform_3ch
-                    + (size_t)n * max_samples * 3
-                    + (size_t)ch * max_samples;
-                if (src[ch]) {
+            for (ch = 0; ch < 3; ++ch)
+            {
+                float *dst = lib->entry_waveform_3ch + (size_t)n * max_samples * 3 + (size_t)ch * max_samples;
+                if (src[ch])
+                {
                     for (s = 0; s < bd->num_samples; ++s)
                         dst[s] = src[ch][s] * amp[ch];
                 }
@@ -1051,10 +1226,12 @@ static int build_freq_mod_library(
 
     /* ==== Deep-copy rotations ==== */
     lib->num_rotations = desc->num_rotations;
-    if (desc->num_rotations > 0 && desc->rotation_matrices) {
+    if (desc->num_rotations > 0 && desc->rotation_matrices)
+    {
         lib->rotations = PULSEQLIB_ALLOC(
             (size_t)desc->num_rotations * sizeof(float[9]));
-        if (!lib->rotations) goto build_fail;
+        if (!lib->rotations)
+            goto build_fail;
         memcpy(lib->rotations, desc->rotation_matrices,
                (size_t)desc->num_rotations * sizeof(float[9]));
     }
@@ -1093,15 +1270,21 @@ static int build_freq_mod_library(
     {
         int has_norot = 0;
         for (n = 0; n < count; ++n)
-            if (block_norot[n]) { has_norot = 1; break; }
+            if (block_norot[n])
+            {
+                has_norot = 1;
+                break;
+            }
 
-        if (has_norot && fov_rotation && !is_identity3(fov_rotation)) {
+        if (has_norot && fov_rotation && !is_identity3(fov_rotation))
+        {
             /* Non-identity FOV rotation: compute R_eff for norot blocks */
-            int cap = lib->num_rotations + count;  /* upper bound */
+            int cap = lib->num_rotations + count; /* upper bound */
             float (*expanded)[9] = PULSEQLIB_ALLOC((size_t)cap * sizeof(float[9]));
             int num_exp;
 
-            if (!expanded) goto build_fail;
+            if (!expanded)
+                goto build_fail;
 
             /* Copy existing rotations */
             if (lib->num_rotations > 0 && lib->rotations)
@@ -1109,19 +1292,24 @@ static int build_freq_mod_library(
                        (size_t)lib->num_rotations * sizeof(float[9]));
             num_exp = lib->num_rotations;
 
-            for (n = 0; n < count; ++n) {
+            for (n = 0; n < count; ++n)
+            {
                 float R_eff[9];
                 int found, u;
 
-                if (!block_norot[n]) continue;
+                if (!block_norot[n])
+                    continue;
 
                 /* Compute R_eff = R_presc^T @ R_ext (or R_presc^T if no
                  * rotation event). */
                 if (block_rotation[n] >= 0 &&
-                    block_rotation[n] < desc->num_rotations) {
+                    block_rotation[n] < desc->num_rotations)
+                {
                     matmul_AtB(R_eff, fov_rotation,
                                desc->rotation_matrices[block_rotation[n]]);
-                } else {
+                }
+                else
+                {
                     /* No rotation event: R_eff = R_presc^T */
                     int i, j;
                     for (i = 0; i < 3; ++i)
@@ -1131,13 +1319,16 @@ static int build_freq_mod_library(
 
                 /* Dedup: search for R_eff among existing + new entries */
                 found = -1;
-                for (u = 0; u < num_exp; ++u) {
-                    if (rotmat_equal(R_eff, expanded[u])) {
+                for (u = 0; u < num_exp; ++u)
+                {
+                    if (rotmat_equal(R_eff, expanded[u]))
+                    {
                         found = u;
                         break;
                     }
                 }
-                if (found < 0) {
+                if (found < 0)
+                {
                     memcpy(expanded[num_exp], R_eff, sizeof(float[9]));
                     found = num_exp++;
                 }
@@ -1145,10 +1336,13 @@ static int build_freq_mod_library(
             }
 
             /* Replace rotation library with expanded version */
-            if (lib->rotations) PULSEQLIB_FREE(lib->rotations);
+            if (lib->rotations)
+                PULSEQLIB_FREE(lib->rotations);
             lib->rotations = expanded;
             lib->num_rotations = num_exp;
-        } else if (has_norot) {
+        }
+        else if (has_norot)
+        {
             /* FOV rotation is identity (or NULL): for norot blocks the
              * effective rotation equals the original rotation event
              * (which may be -1 = identity).  No expansion needed, but
@@ -1165,35 +1359,41 @@ static int build_freq_mod_library(
      */
     {
         int use_tr_scope = 0;
-        int* blk_to_entry = NULL;
-        int* blk_to_rotation_map = NULL;
-        int* blk_to_base = NULL;
-        int* blk_to_active_mask = NULL;
+        int *blk_to_entry = NULL;
+        int *blk_to_rotation_map = NULL;
+        int *blk_to_base = NULL;
+        int *blk_to_active_mask = NULL;
         int scan_count, sc, i;
-        plan_key_t* scan_plan_keys = NULL;
-        int* scan_plan_unique = NULL;
-        int* scan_plan_map = NULL;
+        plan_key_t *scan_plan_keys = NULL;
+        int *scan_plan_unique = NULL;
+        int *scan_plan_map = NULL;
         int tr_size = desc->tr_descriptor.tr_size;
         int tr_scope_scan_id = -1;
         int tr_start_scan_pos = -1;
 
         /* Build block -> entry/rotation maps (needed by both paths) */
-        blk_to_entry = (int*)PULSEQLIB_ALLOC(
+        blk_to_entry = (int *)PULSEQLIB_ALLOC(
             (size_t)desc->num_blocks * sizeof(int));
-        blk_to_rotation_map = (int*)PULSEQLIB_ALLOC(
+        blk_to_rotation_map = (int *)PULSEQLIB_ALLOC(
             (size_t)desc->num_blocks * sizeof(int));
-        blk_to_base = (int*)PULSEQLIB_ALLOC(
+        blk_to_base = (int *)PULSEQLIB_ALLOC(
             (size_t)desc->num_blocks * sizeof(int));
-        blk_to_active_mask = (int*)PULSEQLIB_ALLOC(
+        blk_to_active_mask = (int *)PULSEQLIB_ALLOC(
             (size_t)desc->num_blocks * 3 * sizeof(int));
-        if (!blk_to_entry || !blk_to_rotation_map || !blk_to_base || !blk_to_active_mask) {
-            if (blk_to_entry) PULSEQLIB_FREE(blk_to_entry);
-            if (blk_to_rotation_map) PULSEQLIB_FREE(blk_to_rotation_map);
-            if (blk_to_base) PULSEQLIB_FREE(blk_to_base);
-            if (blk_to_active_mask) PULSEQLIB_FREE(blk_to_active_mask);
+        if (!blk_to_entry || !blk_to_rotation_map || !blk_to_base || !blk_to_active_mask)
+        {
+            if (blk_to_entry)
+                PULSEQLIB_FREE(blk_to_entry);
+            if (blk_to_rotation_map)
+                PULSEQLIB_FREE(blk_to_rotation_map);
+            if (blk_to_base)
+                PULSEQLIB_FREE(blk_to_base);
+            if (blk_to_active_mask)
+                PULSEQLIB_FREE(blk_to_active_mask);
             goto build_fail;
         }
-        for (n = 0; n < desc->num_blocks; ++n) {
+        for (n = 0; n < desc->num_blocks; ++n)
+        {
             blk_to_entry[n] = -1;
             blk_to_rotation_map[n] = -1;
             blk_to_base[n] = -1;
@@ -1201,23 +1401,26 @@ static int build_freq_mod_library(
             blk_to_active_mask[n * 3 + 1] = 0;
             blk_to_active_mask[n * 3 + 2] = 0;
         }
-        for (n = 0; n < count; ++n) {
+        for (n = 0; n < count; ++n)
+        {
             int bi = base_map[n];
-            blk_to_entry[block_indices[n]]       = entry_map[n];
+            blk_to_entry[block_indices[n]] = entry_map[n];
             blk_to_rotation_map[block_indices[n]] = block_rotation[n];
             blk_to_base[block_indices[n]] = bi;
-            if (bi >= 0 && bi < num_base) {
+            if (bi >= 0 && bi < num_base)
+            {
                 blk_to_active_mask[block_indices[n] * 3 + 0] = base_active_mask[bi * 3 + 0];
                 blk_to_active_mask[block_indices[n] * 3 + 1] = base_active_mask[bi * 3 + 1];
                 blk_to_active_mask[block_indices[n] * 3 + 2] = base_active_mask[bi * 3 + 2];
             }
         }
 
-        lib->scan_inactive_area_3ch = (float*)PULSEQLIB_ALLOC(
+        lib->scan_inactive_area_3ch = (float *)PULSEQLIB_ALLOC(
             (size_t)lib->scan_table_len * 3 * sizeof(float));
-        lib->scan_phase_extra = (float*)PULSEQLIB_ALLOC(
+        lib->scan_phase_extra = (float *)PULSEQLIB_ALLOC(
             (size_t)lib->scan_table_len * sizeof(float));
-        if (!lib->scan_inactive_area_3ch || !lib->scan_phase_extra) {
+        if (!lib->scan_inactive_area_3ch || !lib->scan_phase_extra)
+        {
             PULSEQLIB_FREE(blk_to_entry);
             PULSEQLIB_FREE(blk_to_rotation_map);
             PULSEQLIB_FREE(blk_to_base);
@@ -1231,17 +1434,21 @@ static int build_freq_mod_library(
 
         /* Detect multi-segment freq_mod: check how many distinct segments
          * contain freq_mod blocks in the scan table. */
-        if (desc->scan_table_seg_id && desc->scan_table_len > 0) {
+        if (desc->scan_table_seg_id && desc->scan_table_len > 0)
+        {
             int first_seg = -1;
             int i;
-            for (i = 0; i < desc->scan_table_len; ++i) {
+            for (i = 0; i < desc->scan_table_len; ++i)
+            {
                 int bti = desc->scan_table_block_idx[i];
                 if (bti >= 0 && bti < desc->num_blocks &&
-                    blk_to_entry[bti] >= 0) {
+                    blk_to_entry[bti] >= 0)
+                {
                     int sid = desc->scan_table_seg_id[i];
                     if (first_seg < 0)
                         first_seg = sid;
-                    else if (sid != first_seg) {
+                    else if (sid != first_seg)
+                    {
                         use_tr_scope = 1;
                         break;
                     }
@@ -1250,19 +1457,24 @@ static int build_freq_mod_library(
         }
 
         scan_count = 0;
-        for (i = 0; i < desc->scan_table_len; ++i) {
+        for (i = 0; i < desc->scan_table_len; ++i)
+        {
             int bti = desc->scan_table_block_idx[i];
             if (bti >= 0 && bti < desc->num_blocks && blk_to_entry[bti] >= 0)
                 scan_count++;
         }
 
-        scan_plan_keys = (plan_key_t*)PULSEQLIB_ALLOC((size_t)scan_count * sizeof(plan_key_t));
-        scan_plan_unique = (int*)PULSEQLIB_ALLOC((size_t)scan_count * sizeof(int));
-        scan_plan_map = (int*)PULSEQLIB_ALLOC((size_t)scan_count * sizeof(int));
-        if (!scan_plan_keys || !scan_plan_unique || !scan_plan_map) {
-            if (scan_plan_keys) PULSEQLIB_FREE(scan_plan_keys);
-            if (scan_plan_unique) PULSEQLIB_FREE(scan_plan_unique);
-            if (scan_plan_map) PULSEQLIB_FREE(scan_plan_map);
+        scan_plan_keys = (plan_key_t *)PULSEQLIB_ALLOC((size_t)scan_count * sizeof(plan_key_t));
+        scan_plan_unique = (int *)PULSEQLIB_ALLOC((size_t)scan_count * sizeof(int));
+        scan_plan_map = (int *)PULSEQLIB_ALLOC((size_t)scan_count * sizeof(int));
+        if (!scan_plan_keys || !scan_plan_unique || !scan_plan_map)
+        {
+            if (scan_plan_keys)
+                PULSEQLIB_FREE(scan_plan_keys);
+            if (scan_plan_unique)
+                PULSEQLIB_FREE(scan_plan_unique);
+            if (scan_plan_map)
+                PULSEQLIB_FREE(scan_plan_map);
             PULSEQLIB_FREE(blk_to_entry);
             PULSEQLIB_FREE(blk_to_rotation_map);
             PULSEQLIB_FREE(blk_to_base);
@@ -1271,26 +1483,30 @@ static int build_freq_mod_library(
         }
 
         sc = 0;
-        for (i = 0; i < desc->scan_table_len; ++i) {
+        for (i = 0; i < desc->scan_table_len; ++i)
+        {
             int bti = desc->scan_table_block_idx[i];
 
-            if (desc->scan_table_tr_start && desc->scan_table_tr_start[i]) {
+            if (desc->scan_table_tr_start && desc->scan_table_tr_start[i])
+            {
                 tr_scope_scan_id++;
                 tr_start_scan_pos = i;
             }
-            if (tr_scope_scan_id < 0) {
+            if (tr_scope_scan_id < 0)
+            {
                 tr_scope_scan_id = 0;
                 tr_start_scan_pos = i;
             }
 
-            if (!(bti >= 0 && bti < desc->num_blocks && blk_to_entry[bti] >= 0)) {
+            if (!(bti >= 0 && bti < desc->num_blocks && blk_to_entry[bti] >= 0))
+            {
                 lib->scan_to_plan[i] = -1;
                 continue;
             }
 
             {
-                const pulseqlib_block_table_element* bte = &desc->block_table[bti];
-                const pulseqlib_block_definition* bdef = &desc->block_definitions[bte->id];
+                const pulseqlib_block_table_element *bte = &desc->block_table[bti];
+                const pulseqlib_block_definition *bdef = &desc->block_definitions[bte->id];
                 int has_rf = (bdef->rf_id >= 0 && bdef->rf_id < desc->num_unique_rfs);
                 int has_adc = (bte->adc_id >= 0 && bte->adc_id < desc->adc_table_size);
                 float ref_abs_us = 0.0f;
@@ -1303,37 +1519,47 @@ static int build_freq_mod_library(
                 scan_plan_keys[sc].rot_idx = blk_to_rotation_map[bti];
                 scan_plan_keys[sc].tr_scope_id = use_tr_scope ? tr_scope_scan_id : 0;
 
-                if (tr_start_scan_pos >= 0 && tr_start_scan_pos < desc->scan_table_len) {
+                if (tr_start_scan_pos >= 0 && tr_start_scan_pos < desc->scan_table_len)
+                {
                     tr_start_blk_local = desc->scan_table_block_idx[tr_start_scan_pos];
                 }
-                if (tr_start_blk_local < 0) {
+                if (tr_start_blk_local < 0)
+                {
                     tr_start_blk_local = (tr_size > 0) ? (bti / tr_size) * tr_size : bti;
                 }
 
-                if (has_rf) {
-                    const pulseqlib_rf_definition* rdef = &desc->rf_definitions[bdef->rf_id];
+                if (has_rf)
+                {
+                    const pulseqlib_rf_definition *rdef = &desc->rf_definitions[bdef->rf_id];
                     ref_abs_us = (float)rdef->delay + (float)rdef->stats.isodelay_us;
 
                     /* Prefer segment RF-anchor isocenter when available. */
                     {
                         int seg_id = (desc->scan_table_seg_id) ? desc->scan_table_seg_id[i] : -1;
-                        if (seg_id >= 0 && seg_id < desc->num_unique_segments) {
-                            const pulseqlib_tr_segment* seg = &desc->segment_definitions[seg_id];
+                        if (seg_id >= 0 && seg_id < desc->num_unique_segments)
+                        {
+                            const pulseqlib_tr_segment *seg = &desc->segment_definitions[seg_id];
                             int kb, ka, blk_offset = -1;
-                            for (kb = 0; kb < seg->num_blocks; ++kb) {
-                                if (seg->unique_block_indices[kb] == bte->id) {
+                            for (kb = 0; kb < seg->num_blocks; ++kb)
+                            {
+                                if (seg->unique_block_indices[kb] == bte->id)
+                                {
                                     blk_offset = kb;
                                     break;
                                 }
                             }
                             if (blk_offset >= 0 && seg->timing.rf_anchors &&
-                                seg->timing.num_rf_anchors > 0) {
-                                for (ka = 0; ka < seg->timing.num_rf_anchors; ++ka) {
-                                    if (seg->timing.rf_anchors[ka].block_offset == blk_offset) {
+                                seg->timing.num_rf_anchors > 0)
+                            {
+                                for (ka = 0; ka < seg->timing.num_rf_anchors; ++ka)
+                                {
+                                    if (seg->timing.rf_anchors[ka].block_offset == blk_offset)
+                                    {
                                         float iso = seg->timing.rf_anchors[ka].isocenter_us;
                                         float as = seg->timing.rf_anchors[ka].start_us;
                                         float iso_rel = iso - as;
-                                        if (iso_rel < 0.0f) iso_rel = 0.0f;
+                                        if (iso_rel < 0.0f)
+                                            iso_rel = 0.0f;
                                         ref_abs_us = (float)rdef->delay + iso_rel;
                                         break;
                                     }
@@ -1341,34 +1567,45 @@ static int build_freq_mod_library(
                             }
                         }
                     }
-                } else if (has_adc) {
+                }
+                else if (has_adc)
+                {
                     int adc_def_id_local = desc->adc_table[bte->adc_id].id;
-                    if (adc_def_id_local >= 0 && adc_def_id_local < desc->num_unique_adcs) {
-                        const pulseqlib_adc_definition* adef =
+                    if (adc_def_id_local >= 0 && adc_def_id_local < desc->num_unique_adcs)
+                    {
+                        const pulseqlib_adc_definition *adef =
                             &desc->adc_definitions[adc_def_id_local];
                         float adc_dur_us = (float)adef->num_samples *
                                            (float)adef->dwell_time * 1e-3f;
                         float ref_time_rel_us = adc_dur_us * 0.5f;
                         int seg_id = (desc->scan_table_seg_id) ? desc->scan_table_seg_id[i] : -1;
 
-                        if (seg_id >= 0 && seg_id < desc->num_unique_segments) {
-                            const pulseqlib_tr_segment* seg = &desc->segment_definitions[seg_id];
+                        if (seg_id >= 0 && seg_id < desc->num_unique_segments)
+                        {
+                            const pulseqlib_tr_segment *seg = &desc->segment_definitions[seg_id];
                             int kb, ka, blk_offset = -1;
-                            for (kb = 0; kb < seg->num_blocks; ++kb) {
-                                if (seg->unique_block_indices[kb] == bte->id) {
+                            for (kb = 0; kb < seg->num_blocks; ++kb)
+                            {
+                                if (seg->unique_block_indices[kb] == bte->id)
+                                {
                                     blk_offset = kb;
                                     break;
                                 }
                             }
                             if (blk_offset >= 0 && seg->timing.adc_anchors &&
-                                seg->timing.num_adc_anchors > 0) {
-                                for (ka = 0; ka < seg->timing.num_adc_anchors; ++ka) {
-                                    if (seg->timing.adc_anchors[ka].block_offset == blk_offset) {
+                                seg->timing.num_adc_anchors > 0)
+                            {
+                                for (ka = 0; ka < seg->timing.num_adc_anchors; ++ka)
+                                {
+                                    if (seg->timing.adc_anchors[ka].block_offset == blk_offset)
+                                    {
                                         float kz = seg->timing.adc_anchors[ka].kzero_us;
                                         float as = seg->timing.adc_anchors[ka].start_us;
                                         float kz_rel = kz - as;
-                                        if (kz_rel < 0.0f) kz_rel = 0.0f;
-                                        if (kz_rel > adc_dur_us) kz_rel = adc_dur_us;
+                                        if (kz_rel < 0.0f)
+                                            kz_rel = 0.0f;
+                                        if (kz_rel > adc_dur_us)
+                                            kz_rel = adc_dur_us;
                                         ref_time_rel_us = kz_rel;
                                         break;
                                     }
@@ -1380,34 +1617,44 @@ static int build_freq_mod_library(
                     }
                 }
 
-                if (ref_abs_us < 0.0f) ref_abs_us = 0.0f;
+                if (ref_abs_us < 0.0f)
+                    ref_abs_us = 0.0f;
                 if (ref_abs_us > (float)bdef->duration_us)
                     ref_abs_us = (float)bdef->duration_us;
 
-                if (tr_start_blk_local < 0) tr_start_blk_local = 0;
-                if (tr_start_blk_local > bti) tr_start_blk_local = bti;
+                if (tr_start_blk_local < 0)
+                    tr_start_blk_local = 0;
+                if (tr_start_blk_local > bti)
+                    tr_start_blk_local = bti;
 
-                for (ch = 0; ch < 3; ++ch) {
+                for (ch = 0; ch < 3; ++ch)
+                {
                     float area_sum = 0.0f;
                     int axis_active = 0;
 
-                    if (!use_tr_scope) {
+                    if (!use_tr_scope)
+                    {
                         scan_plan_keys[sc].inactive_ref_3ch[ch] = 0.0f;
                         continue;
                     }
 
-                    if (entry_idx_local >= 0 && entry_idx_local < lib->num_entries) {
+                    if (entry_idx_local >= 0 && entry_idx_local < lib->num_entries)
+                    {
                         int s;
-                        const float* ew = lib->entry_waveform_3ch
-                            + (size_t)entry_idx_local * lib->max_samples * 3
-                            + (size_t)ch * lib->max_samples;
+                        const float *ew = lib->entry_waveform_3ch + (size_t)entry_idx_local * lib->max_samples * 3 + (size_t)ch * lib->max_samples;
                         int ens = lib->entry_num_samples[entry_idx_local];
-                        for (s = 0; s < ens; ++s) {
-                            if ((float)fabs(ew[s]) > 1e-8f) { axis_active = 1; break; }
+                        for (s = 0; s < ens; ++s)
+                        {
+                            if ((float)fabs(ew[s]) > 1e-8f)
+                            {
+                                axis_active = 1;
+                                break;
+                            }
                         }
                     }
 
-                    if (axis_active) {
+                    if (axis_active)
+                    {
                         scan_plan_keys[sc].inactive_ref_3ch[ch] = 0.0f;
                         continue;
                     }
@@ -1417,9 +1664,12 @@ static int build_freq_mod_library(
                         int gt_id;
                         float amp = 0.0f;
 
-                        if (ch == 0)      gt_id = bte->gx_id;
-                        else if (ch == 1) gt_id = bte->gy_id;
-                        else              gt_id = bte->gz_id;
+                        if (ch == 0)
+                            gt_id = bte->gx_id;
+                        else if (ch == 1)
+                            gt_id = bte->gy_id;
+                        else
+                            gt_id = bte->gz_id;
 
                         if (gt_id >= 0 && gt_id < desc->grad_table_size)
                             amp = desc->grad_table[gt_id].amplitude;
@@ -1437,12 +1687,13 @@ static int build_freq_mod_library(
         }
 
         num_plan = dedup_keys(scan_plan_unique, scan_plan_map,
-            (const char*)scan_plan_keys, scan_count, (int)sizeof(plan_key_t));
+                              (const char *)scan_plan_keys, scan_count, (int)sizeof(plan_key_t));
 
         lib->num_plan_instances = num_plan;
-        lib->pi_entry_idx = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
-        lib->pi_rotation_idx = (int*)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
-        if (!lib->pi_entry_idx || !lib->pi_rotation_idx) {
+        lib->pi_entry_idx = (int *)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
+        lib->pi_rotation_idx = (int *)PULSEQLIB_ALLOC((size_t)num_plan * sizeof(int));
+        if (!lib->pi_entry_idx || !lib->pi_rotation_idx)
+        {
             PULSEQLIB_FREE(scan_plan_keys);
             PULSEQLIB_FREE(scan_plan_unique);
             PULSEQLIB_FREE(scan_plan_map);
@@ -1452,14 +1703,16 @@ static int build_freq_mod_library(
             PULSEQLIB_FREE(blk_to_active_mask);
             goto build_fail;
         }
-        for (n = 0; n < num_plan; ++n) {
+        for (n = 0; n < num_plan; ++n)
+        {
             int ev = scan_plan_unique[n];
             lib->pi_entry_idx[n] = scan_plan_keys[ev].entry_idx;
             lib->pi_rotation_idx[n] = scan_plan_keys[ev].rot_idx;
         }
 
         result = alloc_plan(lib);
-        if (PULSEQLIB_FAILED(result)) {
+        if (PULSEQLIB_FAILED(result))
+        {
             PULSEQLIB_FREE(scan_plan_keys);
             PULSEQLIB_FREE(scan_plan_unique);
             PULSEQLIB_FREE(scan_plan_map);
@@ -1474,12 +1727,16 @@ static int build_freq_mod_library(
                 lib->entry_num_samples[lib->pi_entry_idx[n]];
 
         sc = 0;
-        for (i = 0; i < desc->scan_table_len; ++i) {
+        for (i = 0; i < desc->scan_table_len; ++i)
+        {
             int bti = desc->scan_table_block_idx[i];
-            if (bti >= 0 && bti < desc->num_blocks && blk_to_entry[bti] >= 0) {
+            if (bti >= 0 && bti < desc->num_blocks && blk_to_entry[bti] >= 0)
+            {
                 lib->scan_to_plan[i] = scan_plan_map[sc];
                 sc++;
-            } else {
+            }
+            else
+            {
                 lib->scan_to_plan[i] = -1;
             }
         }
@@ -1522,20 +1779,36 @@ static int build_freq_mod_library(
 
 build_fail:
     free_base_defs(base_defs, num_base);
-    if (block_indices)  PULSEQLIB_FREE(block_indices);
-    if (base_rows)      PULSEQLIB_FREE(base_rows);
-    if (base_unique)    PULSEQLIB_FREE(base_unique);
-    if (base_map)       PULSEQLIB_FREE(base_map);
-    if (entry_keys)     PULSEQLIB_FREE(entry_keys);
-    if (entry_unique)   PULSEQLIB_FREE(entry_unique);
-    if (entry_map)      PULSEQLIB_FREE(entry_map);
-    if (plan_keys)      PULSEQLIB_FREE(plan_keys);
-    if (plan_unique)    PULSEQLIB_FREE(plan_unique);
-    if (plan_map)       PULSEQLIB_FREE(plan_map);
-    if (block_rotation) PULSEQLIB_FREE(block_rotation);
-    if (block_norot)    PULSEQLIB_FREE(block_norot);
-    if (base_active_mask) PULSEQLIB_FREE(base_active_mask);
-    if (lib)            { freq_mod_library_free(lib); }
+    if (block_indices)
+        PULSEQLIB_FREE(block_indices);
+    if (base_rows)
+        PULSEQLIB_FREE(base_rows);
+    if (base_unique)
+        PULSEQLIB_FREE(base_unique);
+    if (base_map)
+        PULSEQLIB_FREE(base_map);
+    if (entry_keys)
+        PULSEQLIB_FREE(entry_keys);
+    if (entry_unique)
+        PULSEQLIB_FREE(entry_unique);
+    if (entry_map)
+        PULSEQLIB_FREE(entry_map);
+    if (plan_keys)
+        PULSEQLIB_FREE(plan_keys);
+    if (plan_unique)
+        PULSEQLIB_FREE(plan_unique);
+    if (plan_map)
+        PULSEQLIB_FREE(plan_map);
+    if (block_rotation)
+        PULSEQLIB_FREE(block_rotation);
+    if (block_norot)
+        PULSEQLIB_FREE(block_norot);
+    if (base_active_mask)
+        PULSEQLIB_FREE(base_active_mask);
+    if (lib)
+    {
+        freq_mod_library_free(lib);
+    }
     return PULSEQLIB_ERR_ALLOC_FAILED;
 }
 
@@ -1544,13 +1817,13 @@ build_fail:
 /* ================================================================== */
 
 static int update_freq_mod_library(
-    pulseqlib_freq_mod_library* lib,
-    const float* shift_m)
+    pulseqlib_freq_mod_library *lib,
+    const float *shift_m)
 {
     if (!lib || !shift_m)
         return PULSEQLIB_ERR_NULL_POINTER;
     if (!lib->entry_waveform_3ch || !lib->entry_ref_3ch)
-        return PULSEQLIB_ERR_INVALID_ARGUMENT;  /* 3ch data already freed */
+        return PULSEQLIB_ERR_INVALID_ARGUMENT; /* 3ch data already freed */
     if (lib->num_plan_instances == 0)
         return PULSEQLIB_SUCCESS;
 
@@ -1564,11 +1837,11 @@ static int update_freq_mod_library(
 /* ================================================================== */
 
 static int freq_mod_library_get(
-    const pulseqlib_freq_mod_library* lib,
+    const pulseqlib_freq_mod_library *lib,
     int scan_table_pos,
-    const short** out_hw_waveform,
-    int* out_num_samples,
-    float* out_phase_rad)
+    const short **out_hw_waveform,
+    int *out_num_samples,
+    float *out_phase_rad)
 {
     int pi;
     if (!lib || !out_hw_waveform || !out_num_samples || !out_phase_rad)
@@ -1580,9 +1853,9 @@ static int freq_mod_library_get(
         return 0;
     *out_hw_waveform = lib->plan_hw_waveforms[pi];
     *out_num_samples = lib->plan_num_samples[pi];
-    *out_phase_rad   = lib->plan_phase[pi]
-        + ((lib->scan_phase_extra && scan_table_pos < lib->scan_table_len)
-            ? lib->scan_phase_extra[scan_table_pos] : 0.0f);
+    *out_phase_rad = lib->plan_phase[pi] + ((lib->scan_phase_extra && scan_table_pos < lib->scan_table_len)
+                                                ? lib->scan_phase_extra[scan_table_pos]
+                                                : 0.0f);
     return 1;
 }
 
@@ -1591,81 +1864,95 @@ static int freq_mod_library_get(
 /* ================================================================== */
 
 static int freq_mod_library_write_cache(
-    const pulseqlib_freq_mod_library* lib,
-    FILE* f)
+    const pulseqlib_freq_mod_library *lib,
+    FILE *f)
 {
     if (!lib || !f)
         return PULSEQLIB_ERR_NULL_POINTER;
 
     /* Entry metadata */
-    if (fwrite(&lib->num_entries,  sizeof(int),   1, f) != 1) goto write_fail;
-    if (fwrite(&lib->max_samples,  sizeof(int),   1, f) != 1) goto write_fail;
-    if (fwrite(&lib->raster_us,    sizeof(float), 1, f) != 1) goto write_fail;
+    if (fwrite(&lib->num_entries, sizeof(int), 1, f) != 1)
+        goto write_fail;
+    if (fwrite(&lib->max_samples, sizeof(int), 1, f) != 1)
+        goto write_fail;
+    if (fwrite(&lib->raster_us, sizeof(float), 1, f) != 1)
+        goto write_fail;
 
-    if (lib->num_entries > 0) {
+    if (lib->num_entries > 0)
+    {
         if (fwrite(lib->entry_num_samples,
-                   sizeof(int), (size_t)lib->num_entries, f)
-            != (size_t)lib->num_entries) goto write_fail;
+                   sizeof(int), (size_t)lib->num_entries, f) != (size_t)lib->num_entries)
+            goto write_fail;
     }
 
     /* 3-channel waveforms (always present) */
-    if (lib->num_entries > 0 && lib->max_samples > 0) {
+    if (lib->num_entries > 0 && lib->max_samples > 0)
+    {
         size_t total = (size_t)lib->num_entries * lib->max_samples * 3;
         if (fwrite(lib->entry_waveform_3ch, sizeof(float), total, f) != total)
             goto write_fail;
 
         if (fwrite(lib->entry_ref_3ch, sizeof(float),
-                   (size_t)lib->num_entries * 3, f)
-            != (size_t)lib->num_entries * 3) goto write_fail;
+                   (size_t)lib->num_entries * 3, f) != (size_t)lib->num_entries * 3)
+            goto write_fail;
     }
 
     /* Rotations */
-    if (fwrite(&lib->num_rotations, sizeof(int), 1, f) != 1) goto write_fail;
-    if (lib->num_rotations > 0) {
+    if (fwrite(&lib->num_rotations, sizeof(int), 1, f) != 1)
+        goto write_fail;
+    if (lib->num_rotations > 0)
+    {
         if (fwrite(lib->rotations, sizeof(float) * 9,
-                   (size_t)lib->num_rotations, f)
-            != (size_t)lib->num_rotations) goto write_fail;
+                   (size_t)lib->num_rotations, f) != (size_t)lib->num_rotations)
+            goto write_fail;
     }
 
     /* Plan instance metadata */
-    if (fwrite(&lib->num_plan_instances, sizeof(int), 1, f) != 1) goto write_fail;
-    if (lib->num_plan_instances > 0) {
+    if (fwrite(&lib->num_plan_instances, sizeof(int), 1, f) != 1)
+        goto write_fail;
+    if (lib->num_plan_instances > 0)
+    {
         if (fwrite(lib->pi_entry_idx, sizeof(int),
-                   (size_t)lib->num_plan_instances, f)
-            != (size_t)lib->num_plan_instances) goto write_fail;
+                   (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
+            goto write_fail;
         if (fwrite(lib->pi_rotation_idx, sizeof(int),
-                   (size_t)lib->num_plan_instances, f)
-            != (size_t)lib->num_plan_instances) goto write_fail;
+                   (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
+            goto write_fail;
         if (fwrite(lib->plan_num_samples, sizeof(int),
-                   (size_t)lib->num_plan_instances, f)
-            != (size_t)lib->num_plan_instances) goto write_fail;
+                   (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
+            goto write_fail;
 
         /* Pre-computed plan waveforms (shift-dependent) */
         {
             size_t total = (size_t)lib->num_plan_instances * lib->max_samples;
-            if (fwrite(lib->plan_waveform_data, sizeof(float), total, f)
-                != total) goto write_fail;
+            if (fwrite(lib->plan_waveform_data, sizeof(float), total, f) != total)
+                goto write_fail;
         }
         if (fwrite(lib->plan_phase, sizeof(float),
-                   (size_t)lib->num_plan_instances, f)
-            != (size_t)lib->num_plan_instances) goto write_fail;
+                   (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
+            goto write_fail;
     }
 
     /* Scan-table mapping */
-    if (fwrite(&lib->scan_table_len, sizeof(int), 1, f) != 1) goto write_fail;
-    if (lib->scan_table_len > 0) {
+    if (fwrite(&lib->scan_table_len, sizeof(int), 1, f) != 1)
+        goto write_fail;
+    if (lib->scan_table_len > 0)
+    {
         if (fwrite(lib->scan_to_plan, sizeof(int),
-                   (size_t)lib->scan_table_len, f)
-            != (size_t)lib->scan_table_len) goto write_fail;
+                   (size_t)lib->scan_table_len, f) != (size_t)lib->scan_table_len)
+            goto write_fail;
 
         /* Inactive-axis gradient areas for phase tracking */
         {
             int has_ia = (lib->scan_inactive_area_3ch != NULL);
-            if (fwrite(&has_ia, sizeof(int), 1, f) != 1) goto write_fail;
-            if (has_ia) {
+            if (fwrite(&has_ia, sizeof(int), 1, f) != 1)
+                goto write_fail;
+            if (has_ia)
+            {
                 size_t ia_total = (size_t)lib->scan_table_len * 3;
                 if (fwrite(lib->scan_inactive_area_3ch, sizeof(float),
-                           ia_total, f) != ia_total) goto write_fail;
+                           ia_total, f) != ia_total)
+                    goto write_fail;
             }
         }
     }
@@ -1681,131 +1968,154 @@ write_fail:
 /* ================================================================== */
 
 static int freq_mod_library_read_cache(
-    pulseqlib_freq_mod_library** out_lib,
-    FILE* f,
-    const float* shift_m)
+    pulseqlib_freq_mod_library **out_lib,
+    FILE *f,
+    const float *shift_m)
 {
-    pulseqlib_freq_mod_library* lib = NULL;
+    pulseqlib_freq_mod_library *lib = NULL;
     int result;
 
     if (!out_lib || !f || !shift_m)
         return PULSEQLIB_ERR_NULL_POINTER;
     *out_lib = NULL;
 
-    lib = (pulseqlib_freq_mod_library*)PULSEQLIB_ALLOC(sizeof(*lib));
-    if (!lib) return PULSEQLIB_ERR_ALLOC_FAILED;
+    lib = (pulseqlib_freq_mod_library *)PULSEQLIB_ALLOC(sizeof(*lib));
+    if (!lib)
+        return PULSEQLIB_ERR_ALLOC_FAILED;
     memset(lib, 0, sizeof(*lib));
 
     /* Entry metadata */
-    if (fread(&lib->num_entries,  sizeof(int),   1, f) != 1) goto read_fail;
-    if (fread(&lib->max_samples,  sizeof(int),   1, f) != 1) goto read_fail;
-    if (fread(&lib->raster_us,    sizeof(float), 1, f) != 1) goto read_fail;
+    if (fread(&lib->num_entries, sizeof(int), 1, f) != 1)
+        goto read_fail;
+    if (fread(&lib->max_samples, sizeof(int), 1, f) != 1)
+        goto read_fail;
+    if (fread(&lib->raster_us, sizeof(float), 1, f) != 1)
+        goto read_fail;
 
-    if (lib->num_entries > 0) {
-        lib->entry_num_samples = (int*)PULSEQLIB_ALLOC(
+    if (lib->num_entries > 0)
+    {
+        lib->entry_num_samples = (int *)PULSEQLIB_ALLOC(
             (size_t)lib->num_entries * sizeof(int));
-        if (!lib->entry_num_samples) goto read_fail;
+        if (!lib->entry_num_samples)
+            goto read_fail;
         if (fread(lib->entry_num_samples, sizeof(int),
-                  (size_t)lib->num_entries, f)
-            != (size_t)lib->num_entries) goto read_fail;
+                  (size_t)lib->num_entries, f) != (size_t)lib->num_entries)
+            goto read_fail;
     }
 
     /* 3-channel waveforms (always present) */
-    if (lib->num_entries > 0 && lib->max_samples > 0) {
+    if (lib->num_entries > 0 && lib->max_samples > 0)
+    {
         size_t total = (size_t)lib->num_entries * lib->max_samples * 3;
-        lib->entry_waveform_3ch = (float*)PULSEQLIB_ALLOC(
+        lib->entry_waveform_3ch = (float *)PULSEQLIB_ALLOC(
             total * sizeof(float));
-        if (!lib->entry_waveform_3ch) goto read_fail;
+        if (!lib->entry_waveform_3ch)
+            goto read_fail;
         if (fread(lib->entry_waveform_3ch, sizeof(float), total, f) != total)
             goto read_fail;
 
         {
             size_t reftotal = (size_t)lib->num_entries * 3;
-            lib->entry_ref_3ch = (float*)PULSEQLIB_ALLOC(
+            lib->entry_ref_3ch = (float *)PULSEQLIB_ALLOC(
                 reftotal * sizeof(float));
-            if (!lib->entry_ref_3ch) goto read_fail;
-            if (fread(lib->entry_ref_3ch, sizeof(float), reftotal, f)
-                != reftotal) goto read_fail;
+            if (!lib->entry_ref_3ch)
+                goto read_fail;
+            if (fread(lib->entry_ref_3ch, sizeof(float), reftotal, f) != reftotal)
+                goto read_fail;
         }
     }
 
     /* Rotations */
-    if (fread(&lib->num_rotations, sizeof(int), 1, f) != 1) goto read_fail;
-    if (lib->num_rotations > 0) {
+    if (fread(&lib->num_rotations, sizeof(int), 1, f) != 1)
+        goto read_fail;
+    if (lib->num_rotations > 0)
+    {
         lib->rotations = PULSEQLIB_ALLOC(
             (size_t)lib->num_rotations * sizeof(float[9]));
-        if (!lib->rotations) goto read_fail;
+        if (!lib->rotations)
+            goto read_fail;
         if (fread(lib->rotations, sizeof(float) * 9,
-                  (size_t)lib->num_rotations, f)
-            != (size_t)lib->num_rotations) goto read_fail;
+                  (size_t)lib->num_rotations, f) != (size_t)lib->num_rotations)
+            goto read_fail;
     }
 
     /* Plan instance metadata */
-    if (fread(&lib->num_plan_instances, sizeof(int), 1, f) != 1) goto read_fail;
-    if (lib->num_plan_instances > 0) {
-        lib->pi_entry_idx    = (int*)PULSEQLIB_ALLOC(
+    if (fread(&lib->num_plan_instances, sizeof(int), 1, f) != 1)
+        goto read_fail;
+    if (lib->num_plan_instances > 0)
+    {
+        lib->pi_entry_idx = (int *)PULSEQLIB_ALLOC(
             (size_t)lib->num_plan_instances * sizeof(int));
-        lib->pi_rotation_idx = (int*)PULSEQLIB_ALLOC(
+        lib->pi_rotation_idx = (int *)PULSEQLIB_ALLOC(
             (size_t)lib->num_plan_instances * sizeof(int));
-        if (!lib->pi_entry_idx || !lib->pi_rotation_idx) goto read_fail;
+        if (!lib->pi_entry_idx || !lib->pi_rotation_idx)
+            goto read_fail;
 
         if (fread(lib->pi_entry_idx, sizeof(int),
-                  (size_t)lib->num_plan_instances, f)
-            != (size_t)lib->num_plan_instances) goto read_fail;
+                  (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
+            goto read_fail;
         if (fread(lib->pi_rotation_idx, sizeof(int),
-                  (size_t)lib->num_plan_instances, f)
-            != (size_t)lib->num_plan_instances) goto read_fail;
+                  (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
+            goto read_fail;
 
         /* Allocate plan arrays */
         result = alloc_plan(lib);
-        if (PULSEQLIB_FAILED(result)) goto read_fail;
+        if (PULSEQLIB_FAILED(result))
+            goto read_fail;
         if (fread(lib->plan_num_samples, sizeof(int),
-                  (size_t)lib->num_plan_instances, f)
-            != (size_t)lib->num_plan_instances) goto read_fail;
+                  (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
+            goto read_fail;
 
         /* Pre-computed plan waveforms */
         {
             size_t total = (size_t)lib->num_plan_instances * lib->max_samples;
-            if (fread(lib->plan_waveform_data, sizeof(float), total, f)
-                != total) goto read_fail;
+            if (fread(lib->plan_waveform_data, sizeof(float), total, f) != total)
+                goto read_fail;
         }
         if (fread(lib->plan_phase, sizeof(float),
-                  (size_t)lib->num_plan_instances, f)
-            != (size_t)lib->num_plan_instances) goto read_fail;
+                  (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
+            goto read_fail;
 
         /* Set up row pointers */
         {
             int n;
             for (n = 0; n < lib->num_plan_instances; ++n)
-                lib->plan_waveforms[n] = lib->plan_waveform_data
-                    + (size_t)n * lib->max_samples;
+                lib->plan_waveforms[n] = lib->plan_waveform_data + (size_t)n * lib->max_samples;
         }
     }
 
     /* Scan-table mapping */
-    if (fread(&lib->scan_table_len, sizeof(int), 1, f) != 1) goto read_fail;
-    if (lib->scan_table_len > 0) {
-        lib->scan_to_plan = (int*)PULSEQLIB_ALLOC(
+    if (fread(&lib->scan_table_len, sizeof(int), 1, f) != 1)
+        goto read_fail;
+    if (lib->scan_table_len > 0)
+    {
+        lib->scan_to_plan = (int *)PULSEQLIB_ALLOC(
             (size_t)lib->scan_table_len * sizeof(int));
-        if (!lib->scan_to_plan) goto read_fail;
+        if (!lib->scan_to_plan)
+            goto read_fail;
         if (fread(lib->scan_to_plan, sizeof(int),
-                  (size_t)lib->scan_table_len, f)
-            != (size_t)lib->scan_table_len) goto read_fail;
+                  (size_t)lib->scan_table_len, f) != (size_t)lib->scan_table_len)
+            goto read_fail;
 
         /* Inactive-axis gradient areas */
         {
             int has_ia = 0;
-            if (fread(&has_ia, sizeof(int), 1, f) != 1) goto read_fail;
-            if (has_ia) {
+            if (fread(&has_ia, sizeof(int), 1, f) != 1)
+                goto read_fail;
+            if (has_ia)
+            {
                 size_t ia_total = (size_t)lib->scan_table_len * 3;
-                lib->scan_inactive_area_3ch = (float*)PULSEQLIB_ALLOC(
+                lib->scan_inactive_area_3ch = (float *)PULSEQLIB_ALLOC(
                     ia_total * sizeof(float));
-                if (!lib->scan_inactive_area_3ch) goto read_fail;
+                if (!lib->scan_inactive_area_3ch)
+                    goto read_fail;
                 if (fread(lib->scan_inactive_area_3ch, sizeof(float),
-                          ia_total, f) != ia_total) goto read_fail;
-                lib->scan_phase_extra = (float*)PULSEQLIB_ALLOC(
+                          ia_total, f) != ia_total)
+                    goto read_fail;
+                lib->scan_phase_extra = (float *)PULSEQLIB_ALLOC(
                     (size_t)lib->scan_table_len * sizeof(float));
-                if (!lib->scan_phase_extra) goto read_fail;
+                if (!lib->scan_phase_extra)
+                    goto read_fail;
                 memset(lib->scan_phase_extra, 0,
                        (size_t)lib->scan_table_len * sizeof(float));
             }
@@ -1820,7 +2130,8 @@ static int freq_mod_library_read_cache(
     return PULSEQLIB_SUCCESS;
 
 read_fail:
-    if (lib) freq_mod_library_free(lib);
+    if (lib)
+        freq_mod_library_free(lib);
     return PULSEQLIB_ERR_FILE_READ_FAILED;
 }
 
@@ -1828,27 +2139,43 @@ read_fail:
 /*  Free                                                              */
 /* ================================================================== */
 
-static void freq_mod_library_free(pulseqlib_freq_mod_library* lib)
+static void freq_mod_library_free(pulseqlib_freq_mod_library *lib)
 {
-    if (!lib) return;
+    if (!lib)
+        return;
 
-    if (lib->entry_num_samples)   PULSEQLIB_FREE(lib->entry_num_samples);
-    if (lib->entry_waveform_3ch)  PULSEQLIB_FREE(lib->entry_waveform_3ch);
-    if (lib->entry_ref_3ch)       PULSEQLIB_FREE(lib->entry_ref_3ch);
-    if (lib->rotations)           PULSEQLIB_FREE(lib->rotations);
+    if (lib->entry_num_samples)
+        PULSEQLIB_FREE(lib->entry_num_samples);
+    if (lib->entry_waveform_3ch)
+        PULSEQLIB_FREE(lib->entry_waveform_3ch);
+    if (lib->entry_ref_3ch)
+        PULSEQLIB_FREE(lib->entry_ref_3ch);
+    if (lib->rotations)
+        PULSEQLIB_FREE(lib->rotations);
 
-    if (lib->pi_entry_idx)        PULSEQLIB_FREE(lib->pi_entry_idx);
-    if (lib->pi_rotation_idx)     PULSEQLIB_FREE(lib->pi_rotation_idx);
-    if (lib->plan_waveform_data)  PULSEQLIB_FREE(lib->plan_waveform_data);
-    if (lib->plan_waveforms)      PULSEQLIB_FREE(lib->plan_waveforms);
-    if (lib->plan_hw_data)        PULSEQLIB_FREE(lib->plan_hw_data);
-    if (lib->plan_hw_waveforms)   PULSEQLIB_FREE(lib->plan_hw_waveforms);
-    if (lib->plan_num_samples)    PULSEQLIB_FREE(lib->plan_num_samples);
-    if (lib->plan_phase)          PULSEQLIB_FREE(lib->plan_phase);
+    if (lib->pi_entry_idx)
+        PULSEQLIB_FREE(lib->pi_entry_idx);
+    if (lib->pi_rotation_idx)
+        PULSEQLIB_FREE(lib->pi_rotation_idx);
+    if (lib->plan_waveform_data)
+        PULSEQLIB_FREE(lib->plan_waveform_data);
+    if (lib->plan_waveforms)
+        PULSEQLIB_FREE(lib->plan_waveforms);
+    if (lib->plan_hw_data)
+        PULSEQLIB_FREE(lib->plan_hw_data);
+    if (lib->plan_hw_waveforms)
+        PULSEQLIB_FREE(lib->plan_hw_waveforms);
+    if (lib->plan_num_samples)
+        PULSEQLIB_FREE(lib->plan_num_samples);
+    if (lib->plan_phase)
+        PULSEQLIB_FREE(lib->plan_phase);
 
-    if (lib->scan_to_plan)            PULSEQLIB_FREE(lib->scan_to_plan);
-    if (lib->scan_inactive_area_3ch)  PULSEQLIB_FREE(lib->scan_inactive_area_3ch);
-    if (lib->scan_phase_extra)        PULSEQLIB_FREE(lib->scan_phase_extra);
+    if (lib->scan_to_plan)
+        PULSEQLIB_FREE(lib->scan_to_plan);
+    if (lib->scan_inactive_area_3ch)
+        PULSEQLIB_FREE(lib->scan_inactive_area_3ch);
+    if (lib->scan_phase_extra)
+        PULSEQLIB_FREE(lib->scan_phase_extra);
 
     PULSEQLIB_FREE(lib);
 }
@@ -1858,12 +2185,12 @@ static void freq_mod_library_free(pulseqlib_freq_mod_library* lib)
 /* ================================================================== */
 
 int pulseqlib_build_freq_mod_collection(
-    pulseqlib_freq_mod_collection** out_fmc,
-    const pulseqlib_collection* coll,
-    const float* shift_m,
-    const float* fov_rotation)
+    pulseqlib_freq_mod_collection **out_fmc,
+    const pulseqlib_collection *coll,
+    const float *shift_m,
+    const float *fov_rotation)
 {
-    pulseqlib_freq_mod_collection* fmc = NULL;
+    pulseqlib_freq_mod_collection *fmc = NULL;
     int s, nsub;
 
     if (!out_fmc || !coll || !shift_m)
@@ -1872,23 +2199,27 @@ int pulseqlib_build_freq_mod_collection(
 
     nsub = coll->num_subsequences;
 
-    fmc = (pulseqlib_freq_mod_collection*)PULSEQLIB_ALLOC(sizeof(*fmc));
-    if (!fmc) return PULSEQLIB_ERR_ALLOC_FAILED;
+    fmc = (pulseqlib_freq_mod_collection *)PULSEQLIB_ALLOC(sizeof(*fmc));
+    if (!fmc)
+        return PULSEQLIB_ERR_ALLOC_FAILED;
     memset(fmc, 0, sizeof(*fmc));
 
     fmc->num_subsequences = nsub;
-    fmc->libs = (pulseqlib_freq_mod_library**)PULSEQLIB_ALLOC(
+    fmc->libs = (pulseqlib_freq_mod_library **)PULSEQLIB_ALLOC(
         (size_t)nsub * sizeof(*fmc->libs));
-    if (!fmc->libs) {
+    if (!fmc->libs)
+    {
         PULSEQLIB_FREE(fmc);
         return PULSEQLIB_ERR_ALLOC_FAILED;
     }
     memset(fmc->libs, 0, (size_t)nsub * sizeof(*fmc->libs));
 
-    for (s = 0; s < nsub; ++s) {
+    for (s = 0; s < nsub; ++s)
+    {
         int rc = build_freq_mod_library(&fmc->libs[s], coll, s, shift_m,
                                         fov_rotation);
-        if (PULSEQLIB_FAILED(rc)) {
+        if (PULSEQLIB_FAILED(rc))
+        {
             pulseqlib_freq_mod_collection_free(fmc);
             return rc;
         }
@@ -1903,9 +2234,9 @@ int pulseqlib_build_freq_mod_collection(
 /* ================================================================== */
 
 int pulseqlib_update_freq_mod_collection(
-    pulseqlib_freq_mod_collection* fmc,
+    pulseqlib_freq_mod_collection *fmc,
     int subseq_idx,
-    const float* shift_m)
+    const float *shift_m)
 {
     if (!fmc || !shift_m)
         return PULSEQLIB_ERR_NULL_POINTER;
@@ -1918,12 +2249,12 @@ int pulseqlib_update_freq_mod_collection(
 /*  Public: collection accessor                                       */
 /* ================================================================== */
 
-int pulseqlib_freq_mod_collection_get(const pulseqlib_freq_mod_collection* fmc,
-    const short** out_hw_waveform,
-    int* out_num_samples,
-    float* out_phase_rad,
-    int subseq_idx,
-    int scan_table_pos)
+int pulseqlib_freq_mod_collection_get(const pulseqlib_freq_mod_collection *fmc,
+                                      const short **out_hw_waveform,
+                                      int *out_num_samples,
+                                      float *out_phase_rad,
+                                      int subseq_idx,
+                                      int scan_table_pos)
 {
     if (!fmc || subseq_idx < 0 || subseq_idx >= fmc->num_subsequences)
         return 0;
@@ -1936,8 +2267,8 @@ int pulseqlib_freq_mod_collection_get(const pulseqlib_freq_mod_collection* fmc,
 /* ================================================================== */
 
 int pulseqlib_freq_mod_collection_write_cache_f(
-    const pulseqlib_freq_mod_collection* fmc,
-    FILE* f)
+    const pulseqlib_freq_mod_collection *fmc,
+    FILE *f)
 {
     int s;
 
@@ -1947,9 +2278,11 @@ int pulseqlib_freq_mod_collection_write_cache_f(
     if (fwrite(&fmc->num_subsequences, sizeof(int), 1, f) != 1)
         return PULSEQLIB_ERR_FILE_READ_FAILED;
 
-    for (s = 0; s < fmc->num_subsequences; ++s) {
+    for (s = 0; s < fmc->num_subsequences; ++s)
+    {
         int rc = freq_mod_library_write_cache(fmc->libs[s], f);
-        if (PULSEQLIB_FAILED(rc)) return rc;
+        if (PULSEQLIB_FAILED(rc))
+            return rc;
     }
 
     return PULSEQLIB_SUCCESS;
@@ -1960,17 +2293,18 @@ int pulseqlib_freq_mod_collection_write_cache_f(
 /* ================================================================== */
 
 int pulseqlib_freq_mod_collection_write_cache(
-    const pulseqlib_freq_mod_collection* fmc,
-    const char* path)
+    const pulseqlib_freq_mod_collection *fmc,
+    const char *path)
 {
-    FILE* f;
+    FILE *f;
     int rc;
 
     if (!fmc || !path)
         return PULSEQLIB_ERR_NULL_POINTER;
 
     f = fopen(path, "wb");
-    if (!f) return PULSEQLIB_ERR_FILE_READ_FAILED;
+    if (!f)
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
 
     rc = pulseqlib_freq_mod_collection_write_cache_f(fmc, f);
     fclose(f);
@@ -1982,12 +2316,12 @@ int pulseqlib_freq_mod_collection_write_cache(
 /* ================================================================== */
 
 int pulseqlib_freq_mod_collection_read_cache_f(
-    pulseqlib_freq_mod_collection** out_fmc,
-    FILE* f,
-    const pulseqlib_collection* coll,
-    const float* shift_m)
+    pulseqlib_freq_mod_collection **out_fmc,
+    FILE *f,
+    const pulseqlib_collection *coll,
+    const float *shift_m)
 {
-    pulseqlib_freq_mod_collection* fmc = NULL;
+    pulseqlib_freq_mod_collection *fmc = NULL;
     int nsub, s;
 
     if (!out_fmc || !f || !coll || !shift_m)
@@ -1997,22 +2331,26 @@ int pulseqlib_freq_mod_collection_read_cache_f(
     if (fread(&nsub, sizeof(int), 1, f) != 1 || nsub != coll->num_subsequences)
         return PULSEQLIB_ERR_FILE_READ_FAILED;
 
-    fmc = (pulseqlib_freq_mod_collection*)PULSEQLIB_ALLOC(sizeof(*fmc));
-    if (!fmc) return PULSEQLIB_ERR_ALLOC_FAILED;
+    fmc = (pulseqlib_freq_mod_collection *)PULSEQLIB_ALLOC(sizeof(*fmc));
+    if (!fmc)
+        return PULSEQLIB_ERR_ALLOC_FAILED;
     memset(fmc, 0, sizeof(*fmc));
 
     fmc->num_subsequences = nsub;
-    fmc->libs = (pulseqlib_freq_mod_library**)PULSEQLIB_ALLOC(
+    fmc->libs = (pulseqlib_freq_mod_library **)PULSEQLIB_ALLOC(
         (size_t)nsub * sizeof(*fmc->libs));
-    if (!fmc->libs) {
+    if (!fmc->libs)
+    {
         PULSEQLIB_FREE(fmc);
         return PULSEQLIB_ERR_ALLOC_FAILED;
     }
     memset(fmc->libs, 0, (size_t)nsub * sizeof(*fmc->libs));
 
-    for (s = 0; s < nsub; ++s) {
+    for (s = 0; s < nsub; ++s)
+    {
         int rc = freq_mod_library_read_cache(&fmc->libs[s], f, shift_m);
-        if (PULSEQLIB_FAILED(rc)) {
+        if (PULSEQLIB_FAILED(rc))
+        {
             pulseqlib_freq_mod_collection_free(fmc);
             return rc;
         }
@@ -2027,23 +2365,25 @@ int pulseqlib_freq_mod_collection_read_cache_f(
 /* ================================================================== */
 
 int pulseqlib_freq_mod_collection_read_cache(
-    pulseqlib_freq_mod_collection** out_fmc,
-    const char* path,
-    const pulseqlib_collection* coll,
-    const float* shift_m)
+    pulseqlib_freq_mod_collection **out_fmc,
+    const char *path,
+    const pulseqlib_collection *coll,
+    const float *shift_m)
 {
-    FILE* f;
+    FILE *f;
     int rc;
 
     if (!out_fmc || !path || !coll || !shift_m)
         return PULSEQLIB_ERR_NULL_POINTER;
 
     f = fopen(path, "rb");
-    if (!f) return PULSEQLIB_ERR_FILE_READ_FAILED;
+    if (!f)
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
 
     rc = pulseqlib_freq_mod_collection_read_cache_f(out_fmc, f, coll, shift_m);
     fclose(f);
-    if (PULSEQLIB_FAILED(rc)) *out_fmc = NULL;
+    if (PULSEQLIB_FAILED(rc))
+        *out_fmc = NULL;
     return rc;
 }
 
@@ -2051,13 +2391,16 @@ int pulseqlib_freq_mod_collection_read_cache(
 /*  Public: collection free                                           */
 /* ================================================================== */
 
-void pulseqlib_freq_mod_collection_free(pulseqlib_freq_mod_collection* fmc)
+void pulseqlib_freq_mod_collection_free(pulseqlib_freq_mod_collection *fmc)
 {
-    if (!fmc) return;
-    if (fmc->libs) {
+    if (!fmc)
+        return;
+    if (fmc->libs)
+    {
         int s;
         for (s = 0; s < fmc->num_subsequences; ++s)
-            if (fmc->libs[s]) freq_mod_library_free(fmc->libs[s]);
+            if (fmc->libs[s])
+                freq_mod_library_free(fmc->libs[s]);
         PULSEQLIB_FREE(fmc->libs);
     }
     PULSEQLIB_FREE(fmc);
@@ -2068,12 +2411,14 @@ void pulseqlib_freq_mod_collection_free(pulseqlib_freq_mod_collection* fmc)
 /* ================================================================== */
 
 int pulseqlib_build_freq_mod(
-    pulseqlib_collection* coll,
-    const float* shift_m,
-    const float* fov_rotation)
+    pulseqlib_collection *coll,
+    const float *shift_m,
+    const float *fov_rotation)
 {
-    if (!coll) return PULSEQLIB_ERR_NULL_POINTER;
-    if (coll->freq_mod) {
+    if (!coll)
+        return PULSEQLIB_ERR_NULL_POINTER;
+    if (coll->freq_mod)
+    {
         pulseqlib_freq_mod_collection_free(coll->freq_mod);
         coll->freq_mod = NULL;
     }
@@ -2082,30 +2427,32 @@ int pulseqlib_build_freq_mod(
 }
 
 int pulseqlib_update_freq_mod(
-    pulseqlib_collection* coll,
+    pulseqlib_collection *coll,
     int subseq_idx,
-    const float* shift_m)
+    const float *shift_m)
 {
-    if (!coll || !coll->freq_mod) return PULSEQLIB_ERR_NULL_POINTER;
+    if (!coll || !coll->freq_mod)
+        return PULSEQLIB_ERR_NULL_POINTER;
     return pulseqlib_update_freq_mod_collection(
         coll->freq_mod, subseq_idx, shift_m);
 }
 
 int pulseqlib_get_freq_mod(
-    const pulseqlib_collection* coll,
+    const pulseqlib_collection *coll,
     int subseq_idx,
     int scan_table_pos,
-    const short** out_hw_waveform,
-    int* out_num_samples,
-    float* out_phase_rad)
+    const short **out_hw_waveform,
+    int *out_num_samples,
+    float *out_phase_rad)
 {
-    if (!coll || !coll->freq_mod) return 0;
+    if (!coll || !coll->freq_mod)
+        return 0;
     return pulseqlib_freq_mod_collection_get(coll->freq_mod,
-        out_hw_waveform,
-        out_num_samples,
-        out_phase_rad,
-        subseq_idx,
-        scan_table_pos);
+                                             out_hw_waveform,
+                                             out_num_samples,
+                                             out_phase_rad,
+                                             subseq_idx,
+                                             scan_table_pos);
 }
 
 /* ================================================================== */
@@ -2117,16 +2464,16 @@ int pulseqlib_get_freq_mod(
 /* ================================================================== */
 
 int pulseqlib_update_freq_mod_for_tr(
-    pulseqlib_collection* coll,
+    pulseqlib_collection *coll,
     int subseq_idx,
     int current_scan_pos,
-    const float* shift_m)
+    const float *shift_m)
 {
-    pulseqlib_freq_mod_library* lib;
+    pulseqlib_freq_mod_library *lib;
     int tr_scan_start, tr_scan_count;
     int pos, pi, p, s, ch, ns;
-    int* dirty;  /* boolean flag per plan instance */
-    float identity[9] = {1,0,0, 0,1,0, 0,0,1};
+    int *dirty; /* boolean flag per plan instance */
+    float identity[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
 
     if (!coll || !coll->freq_mod || !shift_m)
         return PULSEQLIB_ERR_NULL_POINTER;
@@ -2136,58 +2483,65 @@ int pulseqlib_update_freq_mod_for_tr(
     /* Derive TR scan-table range from current position + TR size */
     {
         int tr_size = coll->descriptors[subseq_idx].tr_descriptor.tr_size;
-        if (tr_size <= 0) return PULSEQLIB_ERR_INVALID_ARGUMENT;
+        if (tr_size <= 0)
+            return PULSEQLIB_ERR_INVALID_ARGUMENT;
         tr_scan_start = (current_scan_pos / tr_size) * tr_size;
         tr_scan_count = tr_size;
     }
 
     lib = coll->freq_mod->libs[subseq_idx];
-    if (!lib) return PULSEQLIB_ERR_NULL_POINTER;
+    if (!lib)
+        return PULSEQLIB_ERR_NULL_POINTER;
     if (!lib->entry_waveform_3ch || !lib->entry_ref_3ch)
-        return PULSEQLIB_ERR_INVALID_ARGUMENT;  /* 3ch data not retained */
+        return PULSEQLIB_ERR_INVALID_ARGUMENT; /* 3ch data not retained */
     if (lib->num_plan_instances == 0)
         return PULSEQLIB_SUCCESS;
 
     /* Mark which plan instances are used by the current TR */
-    dirty = (int*)PULSEQLIB_ALLOC(
+    dirty = (int *)PULSEQLIB_ALLOC(
         (size_t)lib->num_plan_instances * sizeof(int));
-    if (!dirty) return PULSEQLIB_ERR_ALLOC_FAILED;
-    for (p = 0; p < lib->num_plan_instances; ++p) dirty[p] = 0;
+    if (!dirty)
+        return PULSEQLIB_ERR_ALLOC_FAILED;
+    for (p = 0; p < lib->num_plan_instances; ++p)
+        dirty[p] = 0;
 
     for (pos = tr_scan_start;
          pos < tr_scan_start + tr_scan_count && pos < lib->scan_table_len;
-         ++pos) {
-        if (pos < 0) continue;
+         ++pos)
+    {
+        if (pos < 0)
+            continue;
         pi = lib->scan_to_plan[pos];
         if (pi >= 0 && pi < lib->num_plan_instances)
             dirty[pi] = 1;
     }
 
     /* Recompute only dirty plan waveforms */
-    for (p = 0; p < lib->num_plan_instances; ++p) {
+    for (p = 0; p < lib->num_plan_instances; ++p)
+    {
         int eidx, ridx;
-        float* row;
-        const float* R;
+        float *row;
+        const float *R;
         float u[3];
 
-        if (!dirty[p]) continue;
+        if (!dirty[p])
+            continue;
 
         eidx = lib->pi_entry_idx[p];
         ridx = lib->pi_rotation_idx[p];
-        ns   = lib->plan_num_samples[p];
-        row  = lib->plan_waveforms[p];
+        ns = lib->plan_num_samples[p];
+        row = lib->plan_waveforms[p];
 
         R = (ridx >= 0 && ridx < lib->num_rotations)
-            ? (const float*)lib->rotations[ridx] : identity;
+                ? (const float *)lib->rotations[ridx]
+                : identity;
         pulseqlib__apply_rotation(u, R, shift_m, 1);
 
-        for (s = 0; s < ns; ++s) {
+        for (s = 0; s < ns; ++s)
+        {
             float val = 0.0f;
             for (ch = 0; ch < 3; ++ch)
-                val += lib->entry_waveform_3ch[
-                    (size_t)eidx * lib->max_samples * 3
-                    + (size_t)ch * lib->max_samples + s
-                ] * u[ch];
+                val += lib->entry_waveform_3ch[(size_t)eidx * lib->max_samples * 3 + (size_t)ch * lib->max_samples + s] * u[ch];
             row[s] = val;
         }
         for (s = ns; s < lib->max_samples; ++s)
@@ -2199,11 +2553,14 @@ int pulseqlib_update_freq_mod_for_tr(
 
         /* Convert this dirty plan instance to hw format */
         {
-            short* hw = lib->plan_hw_waveforms[p];
-            for (s = 0; s < ns; ++s) {
-                int v = (int)(row[s] * PULSEQLIB_OMEGA_SCALE + 0.5f);
-                if (v > 32767)  v = 32767;
-                if (v < -32767) v = -32767;
+            short *hw = lib->plan_hw_waveforms[p];
+            for (s = 0; s < ns; ++s)
+            {
+                int v = (int)(row[s] * PULSEQLIB_OMEGA_SCALE);
+                if (v > 32767)
+                    v = 32767;
+                if (v < -32767)
+                    v = -32767;
                 hw[s] = (short)(v & ~PULSEQLIB_WAVEFORM_END);
             }
             if (ns > 0)
@@ -2214,23 +2571,27 @@ int pulseqlib_update_freq_mod_for_tr(
     }
 
     /* Recompute scan_phase_extra only for the TR range */
-    if (lib->scan_phase_extra && lib->scan_inactive_area_3ch) {
+    if (lib->scan_phase_extra && lib->scan_inactive_area_3ch)
+    {
         for (pos = tr_scan_start;
              pos < tr_scan_start + tr_scan_count && pos < lib->scan_table_len;
-             ++pos) {
+             ++pos)
+        {
             int ridx = -1;
-            const float* R;
+            const float *R;
             float u[3];
-            const float* ia;
-            if (pos < 0) continue;
+            const float *ia;
+            if (pos < 0)
+                continue;
             pi = lib->scan_to_plan[pos];
             if (pi >= 0 && pi < lib->num_plan_instances)
                 ridx = lib->pi_rotation_idx[pi];
             R = (ridx >= 0 && ridx < lib->num_rotations)
-                ? (const float*)lib->rotations[ridx] : identity;
+                    ? (const float *)lib->rotations[ridx]
+                    : identity;
             pulseqlib__apply_rotation(u, R, shift_m, 1);
             ia = lib->scan_inactive_area_3ch + (size_t)pos * 3;
-            lib->scan_phase_extra[pos] = ia[0]*u[0] + ia[1]*u[1] + ia[2]*u[2];
+            lib->scan_phase_extra[pos] = ia[0] * u[0] + ia[1] * u[1] + ia[2] * u[2];
         }
     }
 

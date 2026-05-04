@@ -735,11 +735,10 @@ class SequenceCollection(pp.Sequence):
         for sd in si.subseqs:
             lines.append(f'  --- Subsequence {sd.subseq_idx} ---')
             lines.append(f'    TR duration:      {sd.tr_duration_us * 1e-3:.3f} ms')
-            lines.append(f'    Events:           {len(sd.events)} total '
-                         f'({sd.num_rf_events} RF, {sd.num_adc_events} ADC)')
-            lines.append(f'    RF shape tuples:  {len(sd.rf_shape_tuples)}')
-            lines.append(f'    Shim defs:        {len(sd.shim_defs)}')
-            lines.append(f'    Composite RF grps:{len(sd.composite_rf_groups)}')
+            num_rf  = sum(1 for r in sd.rows if r.type == 1)
+            num_adc = sum(1 for r in sd.rows if r.type == 2)
+            lines.append(f'    Rows:             {len(sd.rows)} total '
+                         f'({num_rf} RF, {num_adc} ADC)')
             if sd.flip_angles_deg:
                 fa_str = ', '.join(f'{f:.1f}' for f in sd.flip_angles_deg[:6])
                 suffix = ', ...' if len(sd.flip_angles_deg) > 6 else ''

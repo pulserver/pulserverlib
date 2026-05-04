@@ -153,7 +153,7 @@ function seq = write_bssfp(write, num_slices, num_averages)
     for z = 1:num_slices
         rf05.freqOffset = gz.amplitude * slice_thickness * (z - 1 - (num_slices-1)/2);
         rf.freqOffset = gz.amplitude * slice_thickness * (z - 1 - (num_slices-1)/2);
-        
+
         % --- alpha/2 prep (ONCE=1) ---
         seq.addBlock(rf05, gz_1, lblOnce1);
         seq.addBlock(prep_delay, gz_2, gy_pre_2, gx_1_1);
@@ -489,7 +489,7 @@ function seq = write_fse(write, num_slices, num_averages)
     % --- labels ---
     lblOnce1 = mr.makeLabel('SET', 'ONCE', 1);
     lblOnce0 = mr.makeLabel('SET', 'ONCE', 0);
-    
+
     seq = mr.Sequence(sys);
 
     % --- main imaging loop ---
@@ -666,7 +666,7 @@ function seq = write_epi(write, num_slices, num_averages)
     NDummyVolumes = 1; % in fMRI, dummy scans to reach steady state
     NVolumes = 1; % number of volumes to sample hemodynamics
     NSlices = num_slices; % number of slices per volume
-    
+
     seq = mr.Sequence(sys);
 
     % --- prep (ONCE=1): one dummy volume ---
@@ -685,7 +685,7 @@ function seq = write_epi(write, num_slices, num_averages)
                 seq.addBlock(rf_fs, gz_fs, lblNoPos1, lblNoRot1);
             end
             rf.freqOffset  = gz.amplitude * slicePositions(s);
-            
+
             % Excitation
             seq.addBlock(rf, gz, trig, lblNoPos0, lblNoRot0);
 
@@ -891,12 +891,12 @@ function seq = write_mprage(write, num_slices, num_averages)
 
     alpha = 10 * pi / 180;
     rf_spoil_inc = 84.0; % degrees
-    
+
     % Inversion
     % RF and slice-select
     rf180 = mr.makeBlockPulse(pi, sys, ...
         'Duration', 20.0e-3, ...
-        'use', 'excitation'); % should be 'inversion', but this way we get timing
+        'use', 'inversion');
     delayTI = mr.makeDelay(0.1e-3);
 
     % RF and slice-select
@@ -937,18 +937,18 @@ function seq = write_mprage(write, num_slices, num_averages)
     % Main imaging loop: PE -> slices (slice is inner loop).
     for sl = 1:num_slices
         slc_shift = (sl - 1 - (num_slices - 1) / 2);
-        
+
         seq.addBlock(rf180);
         seq.addBlock(gz_spoil);
         seq.addBlock(delayTI);
-        
+
         for pe = 1:Ny
             if max_pe_area > 0
                 yscale = pe_areas(pe) / max_pe_area;
             else
                 yscale = 0;
             end
-        
+
             rf_phase = mod(rf_phase + rf_inc, 360.0);
 
             rf_curr = rf;
@@ -1009,12 +1009,12 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
 
     alpha = 10 * pi / 180;
     rf_spoil_inc = 84.0; % degrees
-    
+
     % Inversion
     % RF and slice-select
     rf180 = mr.makeBlockPulse(pi, sys, ...
         'Duration', 20.0e-3, ...
-        'use', 'excitation'); % should be 'inversion', but this way we get timing
+        'use', 'inversion');
     delayTI = mr.makeDelay(0.1e-3);
 
     % RF and slice-select
@@ -1039,7 +1039,7 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
     Nx_nav = 16;
     nav_slice_thickness = 10e-3;
     [gx_nav_cells, gy_nav_cells, adc_nav] = testutils.makeTestSpiral(sys, 1, Nx_nav, 10.0*fov);
-    
+
     gx_nav_ax = gx_nav_cells{1}; gx_nav_rew_ax = testutils.makeExtendedTrapezoidArea('x', gx_nav_ax.last, 0.0, -gx_nav_ax.area, sys);
     gy_nav_ax = gy_nav_cells{1}; gy_nav_rew_ax = testutils.makeExtendedTrapezoidArea('y', gy_nav_ax.last, 0.0, -gy_nav_ax.area, sys);
     gz_nav_spoil_ax = mr.makeTrapezoid('z', sys, 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3);
@@ -1047,7 +1047,7 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
     gx_nav_cor = gx_nav_ax; gx_nav_cor.channel = 'x'; gx_nav_rew_cor = testutils.makeExtendedTrapezoidArea('x', gx_nav_cor.last, 0.0, -gx_nav_cor.area, sys);
     gz_nav_cor = gy_nav_ax; gz_nav_cor.channel = 'z'; gz_nav_rew_cor = testutils.makeExtendedTrapezoidArea('z', gz_nav_cor.last, 0.0, -gz_nav_cor.area, sys);
     gy_nav_spoil_cor = mr.makeTrapezoid('y', sys, 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3);
-    
+
     gy_nav_sag = gx_nav_ax; gy_nav_sag.channel = 'y'; gy_nav_rew_sag = testutils.makeExtendedTrapezoidArea('y', gy_nav_sag.last, 0.0, -gy_nav_sag.area, sys);
     gz_nav_sag = gy_nav_ax; gz_nav_sag.channel = 'z'; gz_nav_rew_sag = testutils.makeExtendedTrapezoidArea('z', gz_nav_sag.last, 0.0, -gz_nav_sag.area, sys);
     gx_nav_spoil_sag = mr.makeTrapezoid('x', sys, 'Area', 4 / nav_slice_thickness, 'Duration', 1.0e-3);
@@ -1059,11 +1059,11 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
         'timeBwProduct', 4, ...
         'apodization', 0.5, ...
         'use', 'excitation');
-    
+
     % Coronal nav: slice-select on y
     gy_nav_ss = gz_nav_ss; gy_nav_ss.channel = 'y';
     rf_nav_cor = rf_nav_ax;
-    
+
     % Sagittal nav: slice-select on x
     gx_nav_ss = gz_nav_ss; gx_nav_ss.channel = 'x';
     rf_nav_sag = rf_nav_ax;
@@ -1091,18 +1091,18 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
     % Main imaging loop: PE -> slices (slice is inner loop).
     for sl = 1:num_slices
         slc_shift = (sl - 1 - (num_slices - 1) / 2);
-        
+
         seq.addBlock(rf180);
         seq.addBlock(gz_spoil);
         seq.addBlock(delayTI);
-        
+
         for pe = 1:Ny
             if max_pe_area > 0
                 yscale = pe_areas(pe) / max_pe_area;
             else
                 yscale = 0;
             end
-        
+
             rf_phase = mod(rf_phase + rf_inc, 360.0);
 
             rf_curr = rf;
@@ -1127,17 +1127,17 @@ function seq = write_mprage_nav(write, num_slices, num_averages)
         seq.addBlock(rf_nav_ax, gz_nav_ss, lblNav);
         seq.addBlock(gx_nav_ax, gy_nav_ax, adc_nav);
         seq.addBlock(gx_nav_rew_ax, gy_nav_rew_ax, gz_nav_spoil_ax);
-        
+
         % Coronal (xz plane): slice-select on y
         seq.addBlock(rf_nav_cor, gy_nav_ss, lblNav);
         seq.addBlock(gx_nav_cor, gz_nav_cor, adc_nav);
         seq.addBlock(gx_nav_rew_cor, gy_nav_spoil_cor, gz_nav_rew_cor);
-        
+
         % Sagittal (yz plane): slice-select on x
         seq.addBlock(rf_nav_sag, gx_nav_ss, lblNav);
         seq.addBlock(gy_nav_sag, gz_nav_sag, adc_nav);
         seq.addBlock(gx_nav_spoil_sag, gy_nav_rew_sag, gz_nav_rew_sag);
- 
+
         seq.addBlock(delayTR);
     end
 
@@ -1184,7 +1184,7 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
     % Inversion
     rf180 = mr.makeBlockPulse(pi, sys, ...
         'Duration', 20.0e-3, ...
-        'use', 'excitation');
+        'use', 'inversion');
     delayTI = mr.makeDelay(0.1e-3);
 
     % Excitation
@@ -1214,7 +1214,7 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
             gy_rews{ii} = testutils.makeExtendedTrapezoidArea('y', gy_shots{ii}.last, 0.0, -gy_shots{ii}.area, sys);
         end
     end
-    
+
     % Partition encoding (along z)
     gz_phase = mr.makeTrapezoid('z', sys, 'Area', -Nz / fov / 2);
 
@@ -1246,7 +1246,7 @@ function seq = write_mprage_noncart(write, Nz, num_averages, use_rotext)
         seq.addBlock(rf180);
         seq.addBlock(gz_spoil);
         seq.addBlock(delayTI);
-        
+
         for i = 1:num_shots
             rf_phase = mod(rf_phase + rf_inc, 360.0);
             spoke_idx = spoke_idx + 1;
@@ -1318,17 +1318,22 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
     % T2-prep
     rf90 = mr.makeBlockPulse(pi/2, sys, ...
         'Duration', 10.0e-3, ...
-        'use', 'excitation');
-     rf90_inv = mr.makeBlockPulse(pi/2, sys, ...
+        'use', 'preparation');
+    rf90_inv = mr.makeBlockPulse(pi/2, sys, ...
         'Duration', 10.0e-3, ...
-        'use', 'excitation', ...
-        'phaseOffset', pi); % 180 degree phase shift for inversion
+        'use', 'preparation', ...
+        'phaseOffset', pi); % 180 degree phase shift for preparation closeout
     t2prep_delay = mr.makeDelay(50e-3);
-    
-    % Inversion
-    rf180 = mr.makeBlockPulse(pi, sys, ...
+
+    % T2-prep refocusing pulse
+    rf180_t2prep = mr.makeBlockPulse(pi, sys, ...
         'Duration', 20.0e-3, ...
-        'use', 'excitation');
+        'use', 'refocusing');
+
+    % Inversion
+    rf180_inv = mr.makeBlockPulse(pi, sys, ...
+        'Duration', 20.0e-3, ...
+        'use', 'inversion');
     delayTI = mr.makeDelay(0.1e-3);
 
     % Excitation
@@ -1358,7 +1363,7 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
             gy_rews{ii} = testutils.makeExtendedTrapezoidArea('y', gy_shots{ii}.last, 0.0, -gy_shots{ii}.area, sys);
         end
     end
-    
+
     % Partition encoding (along z)
     gz_phase = mr.makeTrapezoid('z', sys, 'Area', -Nz / fov / 2);
 
@@ -1390,7 +1395,7 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
         % T2-prep module
         seq.addBlock(rf90);
         seq.addBlock(t2prep_delay);
-        seq.addBlock(rf180);
+        seq.addBlock(rf180_t2prep);
         seq.addBlock(t2prep_delay);
         seq.addBlock(rf90_inv);
         seq.addBlock(gz_spoil);
@@ -1421,10 +1426,10 @@ function seq = write_qalas_noncart(write, Nz, num_averages, use_rotext)
         rf_inc = mod(rf_inc + rf_spoil_inc, 360.0);
 
         %  Inversion module
-        seq.addBlock(rf180);
+        seq.addBlock(rf180_inv);
         seq.addBlock(gz_spoil);
         seq.addBlock(delayTI);
-        
+
         % Multiple spiral FLASH shots
         for i = 1:num_shots
             rf_phase = mod(rf_phase + rf_inc, 360.0);
