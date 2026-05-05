@@ -14,20 +14,20 @@ Public API:
 """
 
 __all__ = [
-    'GEOpts',
-    'Opts',
-    'SequenceCollection',
-    'deserialize',
-    'serialize',
     # ── sequence description ──────────────────────────────────
     'EncodingSpace',
+    'GEOpts',
     'LabelLimits',
+    'Opts',
     'SeqRow',
+    'SequenceCollection',
     'SequenceDescription',
     'SequenceDescriptionInfo',
     'SequenceParameters',
     'TrajTableEntry',
     'TrajectoryInfo',
+    'deserialize',
+    'serialize',
 ]
 
 from .core import (
@@ -37,7 +37,6 @@ from .core import (
     deserialize,
     serialize,
 )
-
 from .core._cache_sections import (
     EncodingSpace,
     LabelLimits,
@@ -45,6 +44,6 @@ from .core._cache_sections import (
     SequenceDescription,
     SequenceDescriptionInfo,
     SequenceParameters,
-    TrajTableEntry,
     TrajectoryInfo,
+    TrajTableEntry,
 )

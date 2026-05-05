@@ -2,7 +2,6 @@
 
 __all__ = ['validate']
 
-from pathlib import Path
 
 
 # Fallback stub for _validate_tr if not imported
@@ -706,7 +705,6 @@ def validate(
     *,
     subsequence_idx: int | None = None,
     tr_instance: int | None = None,
-    xml_path: str | Path | None = None,
     do_plot: bool = False,
     grad_atol: float | None = None,
     rf_rms_percent: float = 10.0,
@@ -742,9 +740,6 @@ def validate(
         - With ``do_plot=True``: auto-select 0 if exactly one addressable TR exists,
           else raise.
 
-    xml_path : str, Path, or None, optional
-        Path to an XML truth file with ``<gx>``, ``<gy>``, ``<gz>``, ``<rf>`` elements
-        containing reference waveforms. If ``None``, uses pypulseq as reference.
     do_plot : bool, default False
         If ``True``, visually compare selected waveforms (enforces explicit targeting).
     grad_atol : float, optional
@@ -784,10 +779,6 @@ def validate(
     Validate with visual plot for a specific TR:
 
     >>> result = validate(sc, subsequence_idx=0, tr_instance=5, do_plot=True)
-
-    Validate against an XML truth file:
-
-    >>> result = validate(sc, xml_path='path/to/truth.xml')
 
     See Also
     --------
@@ -891,187 +882,184 @@ def validate(
                 num_averages=num_averages,
             )
             # Reference extraction
-            if xml_path is None:
-                ref = _pypulseq_reference(
-                    seq,
-                    ss_idx,
-                    tr_idx,
-                    tr_info,
-                    num_averages,
-                    duration_us=wf.total_duration_us,
-                )
-            else:
-                ref = _xml_reference(xml_path)
-            # Sort every (t, a) entry so time axes are monotone.
-            for _k in list(ref.keys()):
-                if isinstance(ref[_k], tuple):
-                    _t, _a = np.asarray(ref[_k][0]), np.asarray(ref[_k][1])
-                    if _t.ndim == 1 and len(_t) > 1:
-                        _ord = np.argsort(_t)
-                        ref[_k] = (_t[_ord], _a[_ord])
-            ref_t, ref_a = ref['rf_mag']
+        ref = _pypulseq_reference(
+            seq,
+            ss_idx,
+            tr_idx,
+            tr_info,
+            num_averages,
+            duration_us=wf.total_duration_us,
+        )
+        # Sort every (t, a) entry so time axes are monotone.
+        for _k in list(ref.keys()):
+            if isinstance(ref[_k], tuple):
+                _t, _a = np.asarray(ref[_k][0]), np.asarray(ref[_k][1])
+                if _t.ndim == 1 and len(_t) > 1:
+                    _ord = np.argsort(_t)
+                    ref[_k] = (_t[_ord], _a[_ord])
+        ref_t, ref_a = ref['rf_mag']
 
-            # Compare gradients
-            for ch in ('gx', 'gy', 'gz'):
-                ref_t_ch, ref_a_ch = ref[ch]
-                test_ch = getattr(wf, ch)
-                r, t = _interp_to_ref(
-                    ref_t_ch, ref_a_ch, test_ch.time_us, test_ch.amplitude
-                )
-                err = float(np.max(np.abs(r - t))) if len(r) > 0 else 0.0
-                if err > grad_atol:
-                    pfx = f'TR {tr_idx}: ' if multi_tr else ''
-                    messages.append(
-                        f'{pfx}{ch} mismatch: max diff {err:.4f} mT/m '
-                        f'(tol {grad_atol:.4f} mT/m)'
-                    )
-
-            # RF envelope (magnitude)
-            ref_t_real = np.real(ref_t)
-            ref_a_real = np.real(ref_a)
-            test_t = wf.rf_mag.time_us
-            test_a = wf.rf_mag.amplitude
-            t_min = (
-                max(ref_t_real[0], test_t[0])
-                if len(ref_t_real) and len(test_t)
-                else 0.0
+        # Compare gradients
+        for ch in ('gx', 'gy', 'gz'):
+            ref_t_ch, ref_a_ch = ref[ch]
+            test_ch = getattr(wf, ch)
+            r, t = _interp_to_ref(
+                ref_t_ch, ref_a_ch, test_ch.time_us, test_ch.amplitude
             )
-            t_max = (
-                min(ref_t_real[-1], test_t[-1])
-                if len(ref_t_real) and len(test_t)
-                else 0.0
-            )
-            if t_max <= t_min:
+            err = float(np.max(np.abs(r - t))) if len(r) > 0 else 0.0
+            if err > grad_atol:
+                pfx = f'TR {tr_idx}: ' if multi_tr else ''
                 messages.append(
-                    f"RF time overlap is empty: ref=[{ref_t_real[0] if len(ref_t_real) else 'NA'}, {ref_t_real[-1] if len(ref_t_real) else 'NA'}], test=[{test_t[0] if len(test_t) else 'NA'}, {test_t[-1] if len(test_t) else 'NA'}]"
+                    f'{pfx}{ch} mismatch: max diff {err:.4f} mT/m '
+                    f'(tol {grad_atol:.4f} mT/m)'
+                )
+
+        # RF envelope (magnitude)
+        ref_t_real = np.real(ref_t)
+        ref_a_real = np.real(ref_a)
+        test_t = wf.rf_mag.time_us
+        test_a = wf.rf_mag.amplitude
+        t_min = (
+            max(ref_t_real[0], test_t[0])
+            if len(ref_t_real) and len(test_t)
+            else 0.0
+        )
+        t_max = (
+            min(ref_t_real[-1], test_t[-1])
+            if len(ref_t_real) and len(test_t)
+            else 0.0
+        )
+        if t_max <= t_min:
+            messages.append(
+                f"RF time overlap is empty: ref=[{ref_t_real[0] if len(ref_t_real) else 'NA'}, {ref_t_real[-1] if len(ref_t_real) else 'NA'}], test=[{test_t[0] if len(test_t) else 'NA'}, {test_t[-1] if len(test_t) else 'NA'}]"
+            )
+        else:
+            t_common = np.arange(np.ceil(t_min), np.floor(t_max) + 1)
+            if len(t_common) < 3:
+                messages.append(
+                    f'RF overlap region too small for robust comparison (len={len(t_common)})'
                 )
             else:
-                t_common = np.arange(np.ceil(t_min), np.floor(t_max) + 1)
-                if len(t_common) < 3:
+                t_common = t_common[1:-1]
+                if len(t_common) == 0:
                     messages.append(
-                        f'RF overlap region too small for robust comparison (len={len(t_common)})'
+                        'RF overlap region empty after ignoring endpoints.'
                     )
                 else:
-                    t_common = t_common[1:-1]
-                    if len(t_common) == 0:
-                        messages.append(
-                            'RF overlap region empty after ignoring endpoints.'
+                    ref_interp = np.abs(
+                        np.interp(
+                            t_common, ref_t_real, ref_a_real, left=0.0, right=0.0
                         )
-                    else:
-                        ref_interp = np.abs(
-                            np.interp(
-                                t_common, ref_t_real, ref_a_real, left=0.0, right=0.0
-                            )
-                        )
-                        test_interp = np.abs(
-                            np.interp(t_common, test_t, test_a, left=0.0, right=0.0)
-                        )
-                        rf_err = _rms_error(ref_interp, test_interp)
-                        if rf_err > rf_rms_percent:
-                            pfx = f'TR {tr_idx}: ' if multi_tr else ''
-                            messages.append(
-                                f'{pfx}RF mismatch: {rf_err:.1f}% RMS (tol {rf_rms_percent:.1f}%)'
-                            )
-
-            # RF phase validation — use complex RF comparison so that
-            # sign-convention differences (π phase flip at RF edges) are
-            # handled naturally instead of inflating the phase RMS.
-            test_phase_t = np.real(wf.rf_phase.time_us)
-            test_phase_a = np.real(np.copy(wf.rf_phase.amplitude))
-            if 'rf_phase' in ref and len(test_phase_t) > 0:
-                ref_phase_t, ref_phase_a = ref['rf_phase']
-                ref_phase_t = np.real(ref_phase_t)
-                ref_phase_a = np.real(ref_phase_a)
-                t_min_p = (
-                    max(ref_phase_t[0], test_phase_t[0])
-                    if len(ref_phase_t) and len(test_phase_t)
-                    else 0.0
-                )
-                t_max_p = (
-                    min(ref_phase_t[-1], test_phase_t[-1])
-                    if len(ref_phase_t) and len(test_phase_t)
-                    else 0.0
-                )
-                if t_max_p > t_min_p:
-                    t_common_p = np.arange(np.ceil(t_min_p), np.floor(t_max_p) + 1)
-                    t_common_p = t_common_p[1:-1] if len(t_common_p) > 2 else t_common_p
-                    if len(t_common_p) > 0:
-                        ref_interp_p = np.interp(
-                            t_common_p, ref_phase_t, ref_phase_a, left=0.0, right=0.0
-                        )
-                        test_interp_p = np.interp(
-                            t_common_p, test_phase_t, test_phase_a, left=0.0, right=0.0
-                        )
-                        ref_mag_t, ref_mag_a = ref['rf_mag']
-                        ref_mag_interp = np.interp(
-                            t_common_p,
-                            np.real(ref_mag_t),
-                            ref_mag_a,
-                            left=0.0,
-                            right=0.0,
-                        )
-                        test_mag_interp = np.interp(
-                            t_common_p,
-                            np.real(wf.rf_mag.time_us),
-                            wf.rf_mag.amplitude,
-                            left=0.0,
-                            right=0.0,
-                        )
-                        mag_peak = max(
-                            ref_mag_interp.max(), test_mag_interp.max(), 1e-30
-                        )
-                        active = (
-                            np.maximum(ref_mag_interp, test_mag_interp)
-                            > 0.05 * mag_peak
-                        )
-                        if active.sum() > 0:
-                            ref_c = ref_mag_interp[active] * np.exp(
-                                1j * ref_interp_p[active]
-                            )
-                            test_c = test_mag_interp[active] * np.exp(
-                                1j * test_interp_p[active]
-                            )
-                            phase_err = (
-                                float(np.sqrt(np.mean(np.abs(ref_c - test_c) ** 2)))
-                                / mag_peak
-                            )
-                            phase_tol = 0.1  # fractional complex RF tolerance
-                            if phase_err > phase_tol:
-                                pfx = f'TR {tr_idx}: ' if multi_tr else ''
-                                messages.append(
-                                    f'{pfx}RF phase mismatch: {phase_err:.3f} (tol {phase_tol:.3f})'
-                                )
-
-            # ADC phase validation — event-level comparison of freq/phase
-            # offsets rather than interpolated waveform comparison (avoids
-            # cross-gap interpolation artifacts for multi-event passes).
-            if 'adc_events' in ref and len(ref['adc_events']) > 0:
-                ref_adc_list = ref['adc_events']
-                for adc in wf.adc_events:
-                    if adc.num_samples <= 0 or adc.duration_us <= 0:
-                        continue
-                    # Find closest reference event by onset time
-                    best = min(ref_adc_list, key=lambda ev: abs(ev[0] - adc.onset_us))
-                    if abs(best[0] - adc.onset_us) > 100.0:
-                        continue  # no matching ref event within 100 µs
-                    freq_err = abs(adc.freq_offset_hz - best[1])
-                    phase_err = abs(
-                        np.angle(np.exp(1j * (adc.phase_offset_rad - best[2])))
                     )
-                    adc_tol_freq = 1.0  # Hz
-                    adc_tol_phase = 0.01  # rad
-                    if freq_err > adc_tol_freq or phase_err > adc_tol_phase:
+                    test_interp = np.abs(
+                        np.interp(t_common, test_t, test_a, left=0.0, right=0.0)
+                    )
+                    rf_err = _rms_error(ref_interp, test_interp)
+                    if rf_err > rf_rms_percent:
                         pfx = f'TR {tr_idx}: ' if multi_tr else ''
                         messages.append(
-                            f'{pfx}ADC offset mismatch: freq_err={freq_err:.2f} Hz, '
-                            f'phase_err={phase_err:.4f} rad'
+                            f'{pfx}RF mismatch: {rf_err:.1f}% RMS (tol {rf_rms_percent:.1f}%)'
                         )
-            if messages:
-                fail = True
-                fail_msg = messages
-                fail_subseq_idx = ss_idx
-                fail_tr_idx = tr_idx
-                break
+
+        # RF phase validation — use complex RF comparison so that
+        # sign-convention differences (π phase flip at RF edges) are
+        # handled naturally instead of inflating the phase RMS.
+        test_phase_t = np.real(wf.rf_phase.time_us)
+        test_phase_a = np.real(np.copy(wf.rf_phase.amplitude))
+        if 'rf_phase' in ref and len(test_phase_t) > 0:
+            ref_phase_t, ref_phase_a = ref['rf_phase']
+            ref_phase_t = np.real(ref_phase_t)
+            ref_phase_a = np.real(ref_phase_a)
+            t_min_p = (
+                max(ref_phase_t[0], test_phase_t[0])
+                if len(ref_phase_t) and len(test_phase_t)
+                else 0.0
+            )
+            t_max_p = (
+                min(ref_phase_t[-1], test_phase_t[-1])
+                if len(ref_phase_t) and len(test_phase_t)
+                else 0.0
+            )
+            if t_max_p > t_min_p:
+                t_common_p = np.arange(np.ceil(t_min_p), np.floor(t_max_p) + 1)
+                t_common_p = t_common_p[1:-1] if len(t_common_p) > 2 else t_common_p
+                if len(t_common_p) > 0:
+                    ref_interp_p = np.interp(
+                        t_common_p, ref_phase_t, ref_phase_a, left=0.0, right=0.0
+                    )
+                    test_interp_p = np.interp(
+                        t_common_p, test_phase_t, test_phase_a, left=0.0, right=0.0
+                    )
+                    ref_mag_t, ref_mag_a = ref['rf_mag']
+                    ref_mag_interp = np.interp(
+                        t_common_p,
+                        np.real(ref_mag_t),
+                        ref_mag_a,
+                        left=0.0,
+                        right=0.0,
+                    )
+                    test_mag_interp = np.interp(
+                        t_common_p,
+                        np.real(wf.rf_mag.time_us),
+                        wf.rf_mag.amplitude,
+                        left=0.0,
+                        right=0.0,
+                    )
+                    mag_peak = max(
+                        ref_mag_interp.max(), test_mag_interp.max(), 1e-30
+                    )
+                    active = (
+                        np.maximum(ref_mag_interp, test_mag_interp)
+                        > 0.05 * mag_peak
+                    )
+                    if active.sum() > 0:
+                        ref_c = ref_mag_interp[active] * np.exp(
+                            1j * ref_interp_p[active]
+                        )
+                        test_c = test_mag_interp[active] * np.exp(
+                            1j * test_interp_p[active]
+                        )
+                        phase_err = (
+                            float(np.sqrt(np.mean(np.abs(ref_c - test_c) ** 2)))
+                            / mag_peak
+                        )
+                        phase_tol = 0.1  # fractional complex RF tolerance
+                        if phase_err > phase_tol:
+                            pfx = f'TR {tr_idx}: ' if multi_tr else ''
+                            messages.append(
+                                f'{pfx}RF phase mismatch: {phase_err:.3f} (tol {phase_tol:.3f})'
+                            )
+
+        # ADC phase validation — event-level comparison of freq/phase
+        # offsets rather than interpolated waveform comparison (avoids
+        # cross-gap interpolation artifacts for multi-event passes).
+        if 'adc_events' in ref and len(ref['adc_events']) > 0:
+            ref_adc_list = ref['adc_events']
+            for adc in wf.adc_events:
+                if adc.num_samples <= 0 or adc.duration_us <= 0:
+                    continue
+                # Find closest reference event by onset time
+                best = min(ref_adc_list, key=lambda ev: abs(ev[0] - adc.onset_us))
+                if abs(best[0] - adc.onset_us) > 100.0:
+                    continue  # no matching ref event within 100 µs
+                freq_err = abs(adc.freq_offset_hz - best[1])
+                phase_err = abs(
+                    np.angle(np.exp(1j * (adc.phase_offset_rad - best[2])))
+                )
+                adc_tol_freq = 1.0  # Hz
+                adc_tol_phase = 0.01  # rad
+                if freq_err > adc_tol_freq or phase_err > adc_tol_phase:
+                    pfx = f'TR {tr_idx}: ' if multi_tr else ''
+                    messages.append(
+                        f'{pfx}ADC offset mismatch: freq_err={freq_err:.2f} Hz, '
+                        f'phase_err={phase_err:.4f} rad'
+                    )
+        if messages:
+            fail = True
+            fail_msg = messages
+            fail_subseq_idx = ss_idx
+            fail_tr_idx = tr_idx
+            break
         if fail:
             break
 
@@ -1085,7 +1073,6 @@ def validate(
             _validation_plot(
                 seq,
                 sequence_idx=fail_subseq_idx,
-                xml_path=xml_path,
                 tr_idx=fail_tr_idx,
                 max_grad_mT_per_m=_max_grad_plot,
                 ok=False,
@@ -1100,13 +1087,13 @@ def validate(
         _validation_plot(
             seq,
             sequence_idx=subsequence_idx,
-            xml_path=xml_path,
             tr_idx=tr_instance,
             max_grad_mT_per_m=_max_grad_plot,
             ok=True,
             messages=[],
             num_averages=num_averages,
         )
+    return True
 
 
 # ── validation plot (private) ────────────────────────────────────────
@@ -1116,7 +1103,6 @@ def _validation_plot(
     seq,
     *,
     sequence_idx,
-    xml_path,
     tr_idx,
     max_grad_mT_per_m,
     ok,
@@ -1133,22 +1119,20 @@ def _validation_plot(
     Parameters
     ----------
     seq : SequenceCollection
-        The sequence to plot.
+    The sequence to plot.
     sequence_idx : int
-        Subsequence index (0-based).
-    xml_path : str, Path, or None
-        Path to XML truth file. If ``None``, uses pypulseq reference.
+    Subsequence index (0-based).
     tr_idx : int
-        TR index to plot.
+    TR index to plot.
     max_grad_mT_per_m : float
-        Gradient axis limit (mT/m) for display.
+    Gradient axis limit (mT/m) for display.
     ok : bool
-        If ``True``, validation passed; ``False`` indicates failure.
-        Color-codes the figure title and message display accordingly.
+    If ``True``, validation passed; ``False`` indicates failure.
+    Color-codes the figure title and message display accordingly.
     messages : list of str
-        Error messages from validation (if ``ok=False``).
+    Error messages from validation (if ``ok=False``).
     num_averages : int, default 0
-        Number of averages (for reference extraction context).
+    Number of averages (for reference extraction context).
 
     Notes
     -----
@@ -1159,62 +1143,47 @@ def _validation_plot(
     """
     _ = messages
     from ._plot import (
-        _MATLAB_LINES,
-        _OVERLAY_LINEWIDTH,
-        _overlay_xml,
-        _wrap_phase,
+    _MATLAB_LINES,
+    _OVERLAY_LINEWIDTH,
+    _wrap_phase,
     )
     from ._plot import (
-        plot as _plot_impl,
+    plot as _plot_impl,
     )
 
     # C-backend base figure
     t_scale = 1e-3  # ms
     handle = _plot_impl(
-        seq,
-        subsequence_idx=sequence_idx,
-        tr_instance=tr_idx,
-        collapse_delays=False,
-        show_segments=False,
-        show_blocks=False,
-        show_slew=False,
-        show_rf_centers=False,
-        show_echoes=False,
-        max_grad_mT_per_m=max_grad_mT_per_m,
-        max_slew_T_per_m_per_s=None,
+    seq,
+    subsequence_idx=sequence_idx,
+    tr_instance=tr_idx,
+    collapse_delays=False,
+    show_segments=False,
+    show_blocks=False,
+    show_slew=False,
+    show_rf_centers=False,
+    show_echoes=False,
+    max_grad_mT_per_m=max_grad_mT_per_m,
+    max_slew_T_per_m_per_s=None,
     )
 
-    # Overlay reference waveforms
-    if xml_path is not None:
-        _overlay_xml(handle, xml_path, t_scale=t_scale, label='XML')
-    else:
-        # pypulseq overlay: extract reference and draw directly on handle.axes
-        from ._extension._pulseqlib_wrapper import _find_tr
+    # Overlay reference waveforms (pypulseq)
+    # pypulseq overlay: extract reference and draw directly on handle.axes
+    from ._extension._pulseqlib_wrapper import _find_tr
 
-        tr_info = _find_tr(seq._cseq, subsequence_idx=sequence_idx)
-        ref = _pypulseq_reference(
-            seq,
-            sequence_idx,
-            handle._tr_index,
-            tr_info,
-            num_averages if num_averages else 1,
-        )
-        alpha = 1.0
-        for ch_name in ('gx', 'gy', 'gz'):
-            t_us, amp = ref[ch_name]
-            if len(t_us) > 0:
-                handle.axes[ch_name].plot(
-                    t_us * t_scale,
-                    amp,
-                    linewidth=_OVERLAY_LINEWIDTH,
-                    alpha=alpha,
-                    color='black',
-                    linestyle='--',
-                    label='pypulseq',
-                )
-        t_us, amp = ref.get('rf_mag', ([], []))
+    tr_info = _find_tr(seq._cseq, subsequence_idx=sequence_idx)
+    ref = _pypulseq_reference(
+        seq,
+        sequence_idx,
+        handle._tr_index,
+        tr_info,
+        num_averages if num_averages else 1,
+    )
+    alpha = 1.0
+    for ch_name in ('gx', 'gy', 'gz'):
+        t_us, amp = ref[ch_name]
         if len(t_us) > 0:
-            handle.axes['rf_mag'].plot(
+            handle.axes[ch_name].plot(
                 t_us * t_scale,
                 amp,
                 linewidth=_OVERLAY_LINEWIDTH,
@@ -1223,32 +1192,21 @@ def _validation_plot(
                 linestyle='--',
                 label='pypulseq',
             )
-        if 'rf_phase' in ref:
-            t_us, amp = ref['rf_phase']
-            if len(t_us) > 0:
-                handle.axes['rf_phase'].plot(
-                    t_us * t_scale,
-                    _wrap_phase(amp),
-                    linewidth=_OVERLAY_LINEWIDTH,
-                    alpha=alpha,
-                    color='black',
-                    linestyle='--',
-                    label='pypulseq',
-                )
-        for cidx, (t_c, amp_c) in enumerate(ref.get('rf_mag_channels', [])):
-            if len(t_c) > 0:
-                handle.axes['rf_mag'].plot(
-                    t_c * t_scale,
-                    amp_c,
-                    linewidth=_OVERLAY_LINEWIDTH,
-                    alpha=0.75,
-                    color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
-                    linestyle='--',
-                    label=f'ch{cidx}',
-                )
-        t_us, amp = ref.get('adc_phase', ([], []))
+    t_us, amp = ref.get('rf_mag', ([], []))
+    if len(t_us) > 0:
+        handle.axes['rf_mag'].plot(
+            t_us * t_scale,
+            amp,
+            linewidth=_OVERLAY_LINEWIDTH,
+            alpha=alpha,
+            color='black',
+            linestyle='--',
+            label='pypulseq',
+        )
+    if 'rf_phase' in ref:
+        t_us, amp = ref['rf_phase']
         if len(t_us) > 0:
-            handle.axes['adc'].plot(
+            handle.axes['rf_phase'].plot(
                 t_us * t_scale,
                 _wrap_phase(amp),
                 linewidth=_OVERLAY_LINEWIDTH,
@@ -1257,6 +1215,28 @@ def _validation_plot(
                 linestyle='--',
                 label='pypulseq',
             )
+    for cidx, (t_c, amp_c) in enumerate(ref.get('rf_mag_channels', [])):
+        if len(t_c) > 0:
+            handle.axes['rf_mag'].plot(
+                t_c * t_scale,
+                amp_c,
+                linewidth=_OVERLAY_LINEWIDTH,
+                alpha=0.75,
+                color=_MATLAB_LINES[cidx % len(_MATLAB_LINES)],
+                linestyle='--',
+                label=f'ch{cidx}',
+            )
+    t_us, amp = ref.get('adc_phase', ([], []))
+    if len(t_us) > 0:
+        handle.axes['adc'].plot(
+            t_us * t_scale,
+            _wrap_phase(amp),
+            linewidth=_OVERLAY_LINEWIDTH,
+            alpha=alpha,
+            color='black',
+            linestyle='--',
+            label='pypulseq',
+        )
 
     # Annotate pass / fail
     status = 'PASS' if ok else 'FAIL'

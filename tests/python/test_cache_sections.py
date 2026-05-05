@@ -13,13 +13,12 @@ from pge import (
 )
 from pge.core._cache_sections import build_sequence_description_info
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────
 
 EXPECTED_DIR = Path(__file__).resolve().parents[1] / "utils" / "expected"
 
 CANONICAL_SEQ = "gre_2d_1sl_1avg.seq"
-NONCART_SEQ   = "mprage_noncart_3d_1sl_1avg_userotext0.seq"
+NONCART_SEQ = "mprage_noncart_3d_1sl_1avg_userotext0.seq"
 MULTISUBSEQ_SEQ = "gre_epi_collection_2d_1sl_1avg.seq"
 
 
@@ -39,6 +38,7 @@ def sc_collection() -> SequenceCollection:
 
 
 # ── info() — always available ─────────────────────────────────────────
+
 
 class TestInfo:
     def test_returns_sequence_description_info(self, sc_gre):
@@ -93,6 +93,7 @@ class TestInfo:
 
 # ── trajectory_info() — None for Cartesian (no .bin) ─────────────────
 
+
 class TestTrajectoryInfo:
     def test_cartesian_returns_info(self, sc_gre):
         # gre_2d now has a .bin cache file alongside the fixture (Phase A wiring)
@@ -123,6 +124,7 @@ class TestTrajectoryInfo:
 
 # ── describe() ────────────────────────────────────────────────────────
 
+
 class TestDescribe:
     def test_returns_nonempty_string(self, sc_gre):
         text = sc_gre.describe(do_print=False)
@@ -145,15 +147,18 @@ class TestDescribe:
         assert "Subsequence 0" in text
         assert "Subsequence 1" in text
 
-    @pytest.mark.parametrize("seq_name", [
-        "gre_2d_1sl_1avg.seq",
-        "epi_2d_1sl_1avg.seq",
-        "fse_2d_1sl_1avg.seq",
-        "bssfp_2d_1sl_1avg.seq",
-        "mprage_2d_1sl_1avg.seq",
-        "mprage_nav_2d_1sl_1avg.seq",
-        "mprage_noncart_3d_1sl_1avg_userotext0.seq",
-    ])
+    @pytest.mark.parametrize(
+        "seq_name",
+        [
+            "gre_2d_1sl_1avg.seq",
+            "epi_2d_1sl_1avg.seq",
+            "fse_2d_1sl_1avg.seq",
+            "bssfp_2d_1sl_1avg.seq",
+            "mprage_2d_1sl_1avg.seq",
+            "mprage_nav_2d_1sl_1avg.seq",
+            "mprage_noncart_3d_1sl_1avg_userotext0.seq",
+        ],
+    )
     def test_describe_runs_on_all_representative(self, seq_name):
         sc = SequenceCollection(EXPECTED_DIR / seq_name)
         text = sc.describe(do_print=False)
@@ -162,9 +167,11 @@ class TestDescribe:
 
 # ── report() — extended with section-6 summary ───────────────────────
 
+
 class TestReportExtended:
     def test_report_returns_list_of_namespaces(self, sc_gre):
         import types
+
         result = sc_gre.report(do_print=False)
         assert isinstance(result, list)
         assert len(result) >= 1
@@ -180,16 +187,24 @@ class TestReportExtended:
 
 # ── build_sequence_description_info standalone ───────────────────────
 
+
 class TestBuildSeqDescInfo:
     def test_from_raw_dicts(self):
         params = {
-            'min_te_us': 5000.0, 'min_tr_us': 7000.0, 'max_tr_us': 7000.0,
-            'max_flip_angle_deg': 30.0, 'total_scan_time_us': 1e8, 'num_subseqs': 1,
+            "min_te_us": 5000.0,
+            "min_tr_us": 7000.0,
+            "max_tr_us": 7000.0,
+            "max_flip_angle_deg": 30.0,
+            "total_scan_time_us": 1e8,
+            "num_subseqs": 1,
         }
         desc = {
-            'subseq_idx': 0, 'tr_duration_us': 7000.0,
-            'rf_shape_tuples': [], 'shim_defs': [], 'events': [],
-            'composite_rf_groups': [],
+            "subseq_idx": 0,
+            "tr_duration_us": 7000.0,
+            "rf_shape_tuples": [],
+            "shim_defs": [],
+            "events": [],
+            "composite_rf_groups": [],
         }
         si = build_sequence_description_info(params, [desc])
         assert si.seq_params.num_subseqs == 1

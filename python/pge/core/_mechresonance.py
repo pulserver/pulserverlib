@@ -206,7 +206,8 @@ def _plot_grad_spectrum_for_subsequence(
             in_any_band: set = set()
             for blo, bhi, _blim, _ in plot_bands:
                 in_band = [
-                    c for c in range(len(cf_arr))
+                    c
+                    for c in range(len(cf_arr))
                     if blo <= float(cf_arr[c]) <= bhi
                     and c < len(grad_amp_per_ax[ax_name])
                     and float(grad_amp_per_ax[ax_name][c]) > 0.0

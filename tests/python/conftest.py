@@ -7,6 +7,8 @@ import numpy as np
 import pypulseq as pp
 import pytest
 
+from pge import Opts
+
 matplotlib.use("Agg")
 
 
@@ -80,6 +82,25 @@ def num_averages(request) -> int:
 @pytest.fixture(params=REPRESENTATIVE_SEQUENCE_FILES, ids=_id_seq_name)
 def representative_generated_seq_path(expected_data_dir: Path, request) -> Path:
     return expected_data_dir / request.param
+
+
+@pytest.fixture(scope="session")
+def relaxed_check_opts() -> Opts:
+    """System Opts whose limits all fixture sequences satisfy.
+
+    Uses ``max_grad=50 mT/m`` and ``max_slew=350 T/m/s`` (well above the
+    effective peak values in the fixture files, accounting for the
+    vectorial safety factor applied by the C-backend) and raster times
+    matching the MATLAB ``make_system()`` used in
+    ``generate_test_sequences.m``.
+    """
+    return Opts(
+        max_grad=50.0,  # mT/m  — fixture peak ~35 mT/m
+        max_slew=350.0,  # T/m/s — effective fixture peak ~270 T/m/s after sqrt(3) factor
+        B0=3.0,
+        grad_raster_time=20e-6,  # matches make_system() in generate_test_sequences.m
+        block_duration_raster=20e-6,  # matches make_system()
+    )
 
 
 @pytest.fixture

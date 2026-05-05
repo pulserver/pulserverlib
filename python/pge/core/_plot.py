@@ -360,11 +360,11 @@ def plot(
 
     source = seq
 
-    # plot() only accepts SequenceCollection.  XML overlays belong in validate().
+    # plot() only accepts SequenceCollection.  Validation overlays belong in validate().
     if not isinstance(source, SequenceCollection):
         raise TypeError(
             f'plot() expects a SequenceCollection; got {type(source).__name__}. '
-            'For XML overlays use validate(do_plot=True, xml_path=...).'
+            'For reference overlays use validate(do_plot=True).'
         )
 
     # Auto-resolve subsequence_idx: None -> 0 if only one subsequence

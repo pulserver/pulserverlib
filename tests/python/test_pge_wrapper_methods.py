@@ -257,7 +257,7 @@ def test_validate_handles_unsorted_reference_times(simple_gre_seq, monkeypatch):
 
     result = sc.validate(subsequence_idx=0, do_plot=False)
 
-    assert result is None
+    assert result is True
 
 
 def test_validate_passes_for_supported_generated_sequences(
@@ -268,7 +268,7 @@ def test_validate_passes_for_supported_generated_sequences(
     result = sc.validate()
 
     captured = capsys.readouterr()
-    assert result is None
+    assert result is True
     assert "Validation passed." in captured.out
 
 
@@ -281,7 +281,7 @@ def test_validate_defaults_iterate_full_scope_for_multisubsequence(
     result = sc.validate(do_plot=False)
 
     captured = capsys.readouterr()
-    assert result is None
+    assert result is True
     assert "Validation passed." in captured.out
 
 
@@ -306,7 +306,7 @@ def test_validate_plot_autoselects_single_subsequence(simple_gre_seq, capsys):
     result = sc.validate(do_plot=True, tr_instance=0)
 
     captured = capsys.readouterr()
-    assert result is None
+    assert result is True
     assert "Validation passed." in captured.out
     fig = plt.gcf()
     assert fig is not None
@@ -338,7 +338,7 @@ def test_validate_plot_autoselects_single_tr_for_selected_subsequence(
     result = sc.validate(do_plot=True, subsequence_idx=0)
 
     captured = capsys.readouterr()
-    assert result is None
+    assert result is True
     assert "Validation passed." in captured.out
     fig = plt.gcf()
     assert fig is not None

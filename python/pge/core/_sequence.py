@@ -106,9 +106,18 @@ class SequenceCollection(pp.Sequence):
 
         # ── Normalise input to list[pp.Sequence] ────────────────
         seq_path: Path | None = None
+        raw_blobs: list[bytes] | None = None
         if isinstance(seq, (str, Path)):
             seq_path = Path(seq)
             seqs = deserialize(seq)
+            # Collect the file paths in chain order so we can read raw bytes.
+            # This avoids a lossy pypulseq round-trip for MATLAB-generated files.
+            chain: list[Path] = [seq_path]
+            for s in seqs[:-1]:
+                next_name = s.definitions.get('NextSequence') or s.definitions.get('next')
+                if next_name:
+                    chain.append(chain[-1].parent / str(next_name))
+            raw_blobs = [p.read_bytes() for p in chain]
         elif isinstance(seq, pp.Sequence):
             seqs = [seq]
         elif isinstance(seq, list):
@@ -129,7 +138,8 @@ class SequenceCollection(pp.Sequence):
 
         # ── Build the C collection from all sequence blobs ──────
         sys = system if system is not None else seqs[0].system
-        blobs = [write_to_stream(s) for s in seqs]
+        # Use raw file bytes when available to avoid a lossy pypulseq round-trip.
+        blobs = raw_blobs if raw_blobs is not None else [write_to_stream(s) for s in seqs]
         cseq = _PulseqCollection(
             blobs,
             float(sys.gamma),
@@ -146,8 +156,12 @@ class SequenceCollection(pp.Sequence):
         object.__setattr__(self, '_cseq', cseq)
         object.__setattr__(self, '_num_averages', int(num_averages))
         object.__setattr__(self, '_seq_path', seq_path)
-        object.__setattr__(self, '_seq_info_cache', None)    # lazy: SequenceDescriptionInfo
-        object.__setattr__(self, '_traj_info_cache', None)   # lazy: TrajectoryInfo | False
+        object.__setattr__(
+            self, '_seq_info_cache', None
+        )  # lazy: SequenceDescriptionInfo
+        object.__setattr__(
+            self, '_traj_info_cache', None
+        )  # lazy: TrajectoryInfo | False
 
     def __getattribute__(self, name):
         try:
@@ -157,8 +171,14 @@ class SequenceCollection(pp.Sequence):
 
     def __setattr__(self, name, value):
         if name in (
-            '_seq', '_cseq', '_seqs', '_num_averages', '_system_override',
-            '_seq_path', '_seq_info_cache', '_traj_info_cache',
+            '_seq',
+            '_cseq',
+            '_seqs',
+            '_num_averages',
+            '_system_override',
+            '_seq_path',
+            '_seq_info_cache',
+            '_traj_info_cache',
         ):
             object.__setattr__(self, name, value)
         elif name == 'system':
@@ -625,14 +645,14 @@ class SequenceCollection(pp.Sequence):
             sp = si.seq_params
             te_ms = sp.min_te_us * 1e-3
             tr_ms = sp.min_tr_us * 1e-3
-            fa    = sp.max_flip_angle_deg
-            t_s   = sp.total_scan_time_us * 1e-6
+            fa = sp.max_flip_angle_deg
+            t_s = sp.total_scan_time_us * 1e-6
             lines.append(
                 f'Sequence description: '
                 f'min_TE={te_ms:.3f} ms  min_TR={tr_ms:.3f} ms  '
                 f'max_FA={fa:.1f} deg  total={t_s:.3f} s'
             )
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
         try:
@@ -643,7 +663,7 @@ class SequenceCollection(pp.Sequence):
                     f'{len(ti.encoding_spaces)} encoding space(s)  '
                     f'{len(ti.table)} ADC entries'
                 )
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
         return '\n'.join(lines)
@@ -663,7 +683,9 @@ class SequenceCollection(pp.Sequence):
             Global sequence parameters plus per-subsequence event lists,
             RF shape tuples, shim definitions, and composite RF groups.
         """
-        from ._cache_sections import build_sequence_description_info, SequenceDescriptionInfo
+        from ._cache_sections import (
+            build_sequence_description_info,
+        )
 
         cached = object.__getattribute__(self, '_seq_info_cache')
         if cached is not None:
@@ -698,7 +720,9 @@ class SequenceCollection(pp.Sequence):
 
         seq_path = object.__getattribute__(self, '_seq_path')
         result = read_trajectory_info(seq_path) if seq_path is not None else None
-        object.__setattr__(self, '_traj_info_cache', result if result is not None else False)
+        object.__setattr__(
+            self, '_traj_info_cache', result if result is not None else False
+        )
         return result
 
     def describe(self, *, do_print: bool = True) -> str:
@@ -735,10 +759,12 @@ class SequenceCollection(pp.Sequence):
         for sd in si.subseqs:
             lines.append(f'  --- Subsequence {sd.subseq_idx} ---')
             lines.append(f'    TR duration:      {sd.tr_duration_us * 1e-3:.3f} ms')
-            num_rf  = sum(1 for r in sd.rows if r.type == 1)
-            num_adc = sum(1 for r in sd.rows if r.type == 2)
-            lines.append(f'    Rows:             {len(sd.rows)} total '
-                         f'({num_rf} RF, {num_adc} ADC)')
+            num_rf = sd.num_rf_events
+            num_adc = sd.num_adc_events
+            lines.append(
+                f'    Events:           {len(sd.events)} total '
+                f'({num_rf} RF, {num_adc} ADC)'
+            )
             if sd.flip_angles_deg:
                 fa_str = ', '.join(f'{f:.1f}' for f in sd.flip_angles_deg[:6])
                 suffix = ', ...' if len(sd.flip_angles_deg) > 6 else ''
@@ -754,7 +780,7 @@ class SequenceCollection(pp.Sequence):
             lines.append(f'  Table entries:      {len(ti.table)}')
             for ei, es in enumerate(ti.encoding_spaces):
                 fov_mm = tuple(round(v * 1e3, 1) for v in es.fov)
-                mat    = tuple(int(v) for v in es.matrix)
+                mat = tuple(int(v) for v in es.matrix)
                 lines.append(f'  ES {ei}: FOV={fov_mm} mm  matrix={mat}')
             lines.append('')
         else:
@@ -1181,7 +1207,6 @@ class SequenceCollection(pp.Sequence):
     def validate(
         self,
         *,
-        xml_path: str | Path | None = None,
         do_plot: bool = False,
         subsequence_idx: int | None = None,
         tr_instance: int | None = None,
@@ -1205,9 +1230,6 @@ class SequenceCollection(pp.Sequence):
 
         Parameters
         ----------
-        xml_path : str, Path, or None, optional
-            Path to an XML truth file with ``<gx>``, ``<gy>``, ``<gz>``, ``<rf>`` elements
-            containing reference waveforms. If ``None``, uses pypulseq as reference.
         do_plot : bool, default False
             If ``True``, visually compare waveforms; enforces explicit targeting
             semantics when ``do_plot=False`` allows traversal.
@@ -1281,7 +1303,6 @@ class SequenceCollection(pp.Sequence):
 
         return _validate_impl(
             self,
-            xml_path=xml_path,
             do_plot=do_plot,
             subsequence_idx=subsequence_idx,
             tr_instance=tr_instance,

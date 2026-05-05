@@ -1611,13 +1611,18 @@ int pulseqlib_get_tr_waveforms(const pulseqlib_collection *coll,
     /* average-expansion variables */
     int *block_order;
     int pass_base;
+    int pass_scan_start; /* scan-table offset for output slot 0 of this pass */
     int eff_num_averages;
+    /* occurrence-position map: 0-based position within each segment occurrence */
+    int *scan_blk_in_occ;
 
     pos_max_gx = NULL;
     pos_max_gy = NULL;
     pos_max_gz = NULL;
     block_order = NULL;
+    scan_blk_in_occ = NULL;
     pass_base = 0;
+    pass_scan_start = -1;
 
     if (!diag)
     {
@@ -1689,6 +1694,9 @@ int pulseqlib_get_tr_waveforms(const pulseqlib_collection *coll,
                     block_order[n++] = pass_base + prep_blk + img_len + k;
                 block_start = 0;
                 block_count = exp_count;
+                /* scan-table position for output slot 0 of this pass:
+                 * each pass occupies exp_count consecutive scan entries. */
+                pass_scan_start = (pass_base / desc->pass_len) * block_count;
             }
             else
             {
@@ -1791,6 +1799,8 @@ int pulseqlib_get_tr_waveforms(const pulseqlib_collection *coll,
                     block_order[n++] = pass_base + prep_blk_c + img_len_c + k;
                 block_start = 0;
                 block_count = exp_count_c;
+                /* scan-table position for output slot 0 of this canonical pass */
+                pass_scan_start = (pass_base / desc->pass_len) * block_count;
             }
             else
             {
@@ -2013,6 +2023,33 @@ int pulseqlib_get_tr_waveforms(const pulseqlib_collection *coll,
         (total_adc > 0 && !out->adc_events))
         goto alloc_fail;
 
+    /* ---- scan_blk_in_occ: 0-based position within current segment occurrence ----
+     * scan_table_seg_id is populated for ALL block positions (including 2nd, 3rd, …
+     * occurrences of the same unique segment), unlike segment_definitions[s].start_block
+     * which only records the first occurrence.  We iterate the scan table once to
+     * compute the intra-occurrence offset for every scan-table position, resetting
+     * the counter whenever the segment changes OR we've filled num_blocks slots. */
+    if (desc->scan_table_seg_id && desc->scan_table_len > 0)
+    {
+        int occ_pos = 0, prev_seg = -1, si;
+        scan_blk_in_occ = (int *)PULSEQLIB_ALLOC(
+            (size_t)desc->scan_table_len * sizeof(int));
+        if (!scan_blk_in_occ)
+            goto alloc_fail;
+        for (si = 0; si < desc->scan_table_len; ++si)
+        {
+            int curr_seg = desc->scan_table_seg_id[si];
+            int seg_nblk = (curr_seg >= 0 &&
+                            curr_seg < desc->segment_table.num_unique_segments)
+                               ? desc->segment_definitions[curr_seg].num_blocks
+                               : 1;
+            if (curr_seg != prev_seg || occ_pos >= seg_nblk)
+                occ_pos = 0;
+            scan_blk_in_occ[si] = occ_pos++;
+            prev_seg = curr_seg;
+        }
+    }
+
     /* ---- PASS 2: fill ---- */
     t0 = 0.0f;
     idx_gx = 0;
@@ -2049,15 +2086,26 @@ int pulseqlib_get_tr_waveforms(const pulseqlib_collection *coll,
         out->blocks[n].start_us = t0;
         out->blocks[n].duration_us = block_dur_us;
 
-        /* Segment assignment: use canonical position 'n' to look up the
-         * segment.  For non-degenerate passes the segment definitions span
-         * the full (possibly average-expanded) canonical pass; for
-         * degenerate TRs they span a single TR.  In both cases 'n' is the
-         * correct 0-based position. */
-        out->blocks[n].segment_idx = find_segment_for_block_pos(
-            desc->segment_definitions,
-            desc->segment_table.num_unique_segments,
-            n);
+        /* Segment assignment: use scan_table_seg_id at the correct scan-table
+         * position.  For degenerate / single-pass paths block_idx equals the
+         * scan-table position (identity mapping, avg=0).  For average-expanded
+         * non-degenerate passes pass_scan_start is set to the first scan-table
+         * slot for this pass so pass_scan_start+n gives the exact NEX-aware
+         * position even when block_order[n] repeats block-table indices across
+         * multiple averages. */
+        {
+            int seg_id = -1;
+            int scan_pos = (pass_scan_start >= 0) ? (pass_scan_start + n) : block_idx;
+            if (desc->scan_table_seg_id &&
+                scan_pos >= 0 && scan_pos < desc->scan_table_len)
+                seg_id = desc->scan_table_seg_id[scan_pos];
+            else
+                seg_id = find_segment_for_block_pos(
+                    desc->segment_definitions,
+                    desc->segment_table.num_unique_segments,
+                    n);
+            out->blocks[n].segment_idx = seg_id;
+        }
 
         /* ---- RF isocenter anchor ---- */
         out->blocks[n].rf_isocenter_us = -1.0f;
@@ -2107,7 +2155,21 @@ int pulseqlib_get_tr_waveforms(const pulseqlib_collection *coll,
                     if (seg->timing.adc_anchors &&
                         seg->timing.num_adc_anchors > 0)
                     {
-                        int blk_in_seg = n - seg->start_block;
+                        /* blk_in_seg: position of this block within the current
+                         * segment occurrence.  Use scan_blk_in_occ indexed at
+                         * the same NEX-aware scan position used for segment
+                         * assignment above.  For degenerate paths scan_pos ==
+                         * block_idx; for average-expanded non-degenerate passes
+                         * scan_pos = pass_scan_start + n correctly tracks the
+                         * position within the expanded occurrence. */
+                        int scan_pos2 = (pass_scan_start >= 0)
+                                            ? (pass_scan_start + n)
+                                            : block_idx;
+                        int blk_in_seg = (scan_blk_in_occ &&
+                                          scan_pos2 >= 0 &&
+                                          scan_pos2 < desc->scan_table_len)
+                                             ? scan_blk_in_occ[scan_pos2]
+                                             : (n - seg->start_block);
                         int ai;
                         /* Compute segment start in TR-relative time. */
                         float seg_start_tr = t0;
@@ -2130,7 +2192,7 @@ int pulseqlib_get_tr_waveforms(const pulseqlib_collection *coll,
                         }
                     }
                 }
-                /* No fallback: anchors must be correct. If not found, return error. */
+                /* No fallback: segment anchors must be correct. */
                 if (!found_anchor)
                 {
                     out->blocks[n].adc_kzero_us = -1.0f;
@@ -2375,12 +2437,16 @@ int pulseqlib_get_tr_waveforms(const pulseqlib_collection *coll,
 
     if (block_order)
         PULSEQLIB_FREE(block_order);
+    if (scan_blk_in_occ)
+        PULSEQLIB_FREE(scan_blk_in_occ);
     diag->code = PULSEQLIB_SUCCESS;
     return PULSEQLIB_SUCCESS;
 
 alloc_fail:
     if (block_order)
         PULSEQLIB_FREE(block_order);
+    if (scan_blk_in_occ)
+        PULSEQLIB_FREE(scan_blk_in_occ);
     if (pos_max_gx)
         PULSEQLIB_FREE(pos_max_gx);
     if (pos_max_gy)

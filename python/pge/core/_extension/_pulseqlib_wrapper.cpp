@@ -18,6 +18,7 @@
 #include "pulseqlib.hpp"
 #include "pulseqlib_methods.h"
 #include "pulseqlib_types.h"
+#include "pulseqlib_internal.h"
 
 namespace py = pybind11;
 
@@ -64,6 +65,38 @@ public:
                 buf_ptrs.data(), buf_sizes.data(), n,
                 opts, parse_labels, num_averages));
         source_size_ = (n > 0) ? buf_sizes[0] : 0;
+    }
+
+    /** Load from a .seq file path, using the .pge cache when present. */
+    _PulseqCollection(const std::string &file_path,
+                      float gamma,
+                      float B0,
+                      float max_grad,
+                      float max_slew,
+                      float rf_raster_time,
+                      float grad_raster_time,
+                      float adc_raster_time,
+                      float block_duration_raster,
+                      bool parse_labels,
+                      int num_averages)
+    {
+        pulseqlib::Opts opts;
+        opts.gamma_hz_per_t = gamma;
+        opts.b0_t = B0;
+        opts.max_grad_hz_per_m = max_grad;
+        opts.max_slew_hz_per_m_per_s = max_slew;
+        opts.rf_raster_us = rf_raster_time * 1e6f;
+        opts.grad_raster_us = grad_raster_time * 1e6f;
+        opts.adc_raster_us = adc_raster_time * 1e6f;
+        opts.block_raster_us = block_duration_raster * 1e6f;
+
+        coll_ = std::unique_ptr<pulseqlib::Collection>(
+            new pulseqlib::Collection(
+                file_path.c_str(), opts,
+                /*cache_binary=*/true,
+                /*verify_signature=*/false,
+                parse_labels, num_averages));
+        source_size_ = 0;
     }
 
     pulseqlib::Collection &coll() { return *coll_; }
@@ -416,18 +449,142 @@ static py::dict _get_sequence_description(_PulseqCollection &pc, int subseq_idx)
     result["subseq_idx"] = sd.subseq_idx;
     result["tr_duration_us"] = sd.tr_duration_us;
 
-    // ── Compact row table (one row per pass block) ─────────────────
-    py::list rows;
+    // ── Compact event table (one event per pass block) ─────────────
+    // params[0] = timestamp_us; params[1..N] = type-specific event params.
+    py::list events;
     for (int i = 0; i < sd.num_rows; ++i)
     {
         const pulseqlib_seq_event *row = &sd.rows[i];
+        std::vector<float> p;
+        p.reserve(1 + PULSEQLIB_SEQ_EVENT_PARAMS);
+        p.push_back(row->timestamp_us);
+        p.insert(p.end(), row->params, row->params + PULSEQLIB_SEQ_EVENT_PARAMS);
         py::dict rd;
         rd["type"] = row->type;
-        rd["timestamp_us"] = row->timestamp_us;
-        rd["params"] = std::vector<float>(row->params, row->params + PULSEQLIB_SEQ_EVENT_PARAMS);
-        rows.append(rd);
+        rd["params"] = p;
+        events.append(rd);
     }
-    result["rows"] = rows;
+    result["events"] = events;
+
+    // ── RF shape tuples (one per unique RF definition) ─────────────
+    // Build a map: rf_def_idx -> (global_seg_idx, blk_pos) for waveform retrieval.
+    // Only need any single occurrence of each unique RF.
+    {
+        const pulseqlib_collection *coll_ptr = pc.coll().handle();
+        if (subseq_idx >= 0 && subseq_idx < coll_ptr->num_subsequences)
+        {
+            const pulseqlib_sequence_descriptor *desc =
+                &coll_ptr->descriptors[subseq_idx];
+
+            // Compute global segment offset for this subsequence
+            int seg_offset = 0;
+            for (int i = 0; i < subseq_idx; ++i)
+                seg_offset += coll_ptr->descriptors[i].num_unique_segments;
+
+            // For each unique RF definition, find the first (seg, blk) that uses it
+            std::vector<int> rf_seg(desc->num_unique_rfs, -1);
+            std::vector<int> rf_blk(desc->num_unique_rfs, -1);
+            for (int si = 0; si < desc->segment_table.num_unique_segments; ++si)
+            {
+                const pulseqlib_tr_segment *seg = &desc->segment_definitions[si];
+                for (int bi = 0; bi < seg->num_blocks; ++bi)
+                {
+                    int bdef_idx = seg->unique_block_indices[bi];
+                    int rf_id = desc->block_definitions[bdef_idx].rf_id;
+                    if (rf_id >= 0 && rf_id < desc->num_unique_rfs &&
+                        rf_seg[rf_id] < 0)
+                    {
+                        rf_seg[rf_id] = seg_offset + si;
+                        rf_blk[rf_id] = bi;
+                    }
+                }
+            }
+
+            py::list rft_list;
+            for (int rf_id = 0; rf_id < desc->num_unique_rfs; ++rf_id)
+            {
+                if (rf_seg[rf_id] < 0)
+                    continue; // RF definition exists but not used in any segment block
+
+                pulseqlib_rf_stats stats;
+                int rc2 = pulseqlib_get_rf_stats(
+                    coll_ptr, &stats, subseq_idx, rf_id);
+                if (rc2 != PULSEQLIB_SUCCESS)
+                    continue;
+
+                // Magnitude waveform
+                int nch = 0, npts = 0;
+                float **mag_arr = pulseqlib_get_rf_magnitude(
+                    coll_ptr, &nch, &npts, rf_seg[rf_id], rf_blk[rf_id]);
+
+                // Phase waveform
+                int nch_ph = 0, npts_ph = 0;
+                float **phase_arr = pulseqlib_get_rf_phase(
+                    coll_ptr, &nch_ph, &npts_ph, rf_seg[rf_id], rf_blk[rf_id]);
+
+                // Time axis
+                float *time_arr = pulseqlib_get_rf_time_us(
+                    coll_ptr, rf_seg[rf_id], rf_blk[rf_id]);
+
+                // Flatten magnitude: [ch0_s0, ch0_s1, ..., ch1_s0, ...]
+                std::vector<float> mag_flat, phase_flat, time_flat;
+                if (mag_arr && nch > 0)
+                {
+                    for (int c = 0; c < nch; ++c)
+                    {
+                        if (npts > 0)
+                        {
+                            mag_flat.insert(mag_flat.end(),
+                                            mag_arr[c], mag_arr[c] + npts);
+                        }
+                        PULSEQLIB_FREE(mag_arr[c]);
+                    }
+                    PULSEQLIB_FREE(mag_arr);
+                }
+                if (phase_arr && nch_ph > 0)
+                {
+                    for (int c = 0; c < nch_ph; ++c)
+                    {
+                        if (npts_ph > 0)
+                        {
+                            phase_flat.insert(phase_flat.end(),
+                                              phase_arr[c], phase_arr[c] + npts_ph);
+                        }
+                        PULSEQLIB_FREE(phase_arr[c]);
+                    }
+                    PULSEQLIB_FREE(phase_arr);
+                }
+                if (time_arr && npts > 0)
+                {
+                    time_flat.assign(time_arr, time_arr + npts);
+                    PULSEQLIB_FREE(time_arr);
+                }
+
+                // band_freq_offsets: trim to num_bands entries
+                int nb = (stats.num_bands > 0) ? stats.num_bands : 1;
+                std::vector<float> freq_offsets(
+                    stats.band_freq_offsets_hz,
+                    stats.band_freq_offsets_hz + nb);
+
+                float rf_raster_us_val = desc->rf_raster_us;
+
+                py::dict t;
+                t["tuple_id"] = rf_id;
+                t["N_tx"] = (nch > 0) ? nch : 1;
+                t["N_samples"] = npts;
+                t["rf_raster_us"] = rf_raster_us_val;
+                t["num_bands"] = stats.num_bands;
+                t["band_freq_offsets_hz"] = freq_offsets;
+                t["band_bandwidth_hz"] = stats.band_bandwidth_hz;
+                t["total_b1sq_power"] = stats.total_b1sq_power;
+                t["mag"] = mag_flat;
+                t["phase"] = phase_flat;
+                t["time"] = time_flat;
+                rft_list.append(t);
+            }
+            result["rf_shape_tuples"] = rft_list;
+        }
+    }
 
     pulseqlib_free_sequence_description(&sd);
     return result;
@@ -441,6 +598,19 @@ PYBIND11_MODULE(_pulseqlib_wrapper, m)
         .def(py::init<py::list, float, float, float, float,
                       float, float, float, float, bool, int>(),
              py::arg("seq_bytes_list"),
+             py::arg("gamma"),
+             py::arg("B0"),
+             py::arg("max_grad"),
+             py::arg("max_slew"),
+             py::arg("rf_raster_time"),
+             py::arg("grad_raster_time"),
+             py::arg("adc_raster_time"),
+             py::arg("block_duration_raster"),
+             py::arg("parse_labels") = true,
+             py::arg("num_averages") = 1)
+        .def(py::init<std::string, float, float, float, float,
+                      float, float, float, float, bool, int>(),
+             py::arg("file_path"),
              py::arg("gamma"),
              py::arg("B0"),
              py::arg("max_grad"),
