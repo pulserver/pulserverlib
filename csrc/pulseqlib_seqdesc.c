@@ -739,7 +739,7 @@ int pulseqlib_get_sequence_parameters(
     const pulseqlib_sequence_descriptor *desc;
     const pulseqlib_tr_descriptor *trd;
     pulseqlib_scan_time_info st = PULSEQLIB_SCAN_TIME_INFO_INIT;
-    int ss, i;
+    int ss;
     float fa_max = 0.0f;
 
     if (!out || !coll)

@@ -5,8 +5,8 @@ Provides:
   * ``build_sequence_description_info`` — build SequenceDescriptionInfo from
     the pybind ``_get_sequence_parameters`` / ``_get_sequence_description``
     output dicts (always available).
-  * ``read_trajectory_info`` — parse section 5 (TRAJECTORY) from a co-located
-    .bin cache file (present when the PSD predownload phase has been run).
+    * ``read_trajectory_info`` — parse section 4 (TRAJECTORY) from a co-located
+        .pge cache file (present when the PSD predownload phase has been run).
 """
 
 from __future__ import annotations
@@ -139,7 +139,7 @@ class SequenceDescriptionInfo:
     subseqs:    list[SequenceDescription]
 
 
-# ── Dataclasses — TrajectoryInfo (parsed from .bin section 5) ────────
+# ── Dataclasses — TrajectoryInfo (parsed from .pge section 4) ────────
 
 @dataclass
 class LabelLimits:
@@ -230,7 +230,7 @@ def build_sequence_description_info(
     return SequenceDescriptionInfo(seq_params=sp, subseqs=subseqs)
 
 
-# ── Pure-Python .bin reader for section 4 (TRAJECTORY) ───────────────
+# ── Pure-Python .pge reader for section 4 (TRAJECTORY) ───────────────
 
 _LL_NAMES = ('slc', 'phs', 'rep', 'avg', 'seg', 'set', 'eco', 'par', 'lin', 'acq')
 
@@ -264,9 +264,9 @@ def _find_section(data: bytes, section_id: int):
 
 
 def read_trajectory_info(seq_path: str | Path) -> TrajectoryInfo | None:
-    """Read trajectory data (cache section 4) from a co-located ``.bin`` file.
+    """Read trajectory data (cache section 4) from a co-located ``.pge`` file.
 
-    Returns ``None`` when the ``.bin`` file does not exist or section 4 is
+    Returns ``None`` when the ``.pge`` file does not exist or section 4 is
     absent (e.g. for Cartesian sequences or when the cache was not written
     by the PSD predownload phase).
 
@@ -274,9 +274,9 @@ def read_trajectory_info(seq_path: str | Path) -> TrajectoryInfo | None:
     ----------
     seq_path : str or Path
         Path to the ``.seq`` sequence file.  The function looks for a file
-        with the same base name but ``.bin`` extension.
+        with the same base name but ``.pge`` extension.
     """
-    bin_path = Path(seq_path).with_suffix('.bin')
+    bin_path = Path(seq_path).with_suffix('.pge')
     if not bin_path.exists():
         return None
 

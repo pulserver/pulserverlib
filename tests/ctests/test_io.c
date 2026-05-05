@@ -9,35 +9,39 @@
 
 #include "test_helpers.h"
 
-static void build_seq_path(char* out_path, size_t out_size, const char* filename)
+static void build_seq_path(char *out_path, size_t out_size, const char *filename)
 {
     (void)snprintf(out_path, out_size, "%s%s", TEST_DATA_DIR, filename);
 }
 
-static void build_cache_path(char* out_path, size_t out_size, const char* seq_path)
+static void build_cache_path(char *out_path, size_t out_size, const char *seq_path)
 {
-    const char* dot;
-    const char* slash_fwd;
-    const char* slash_back;
+    const char *dot;
+    const char *slash_fwd;
+    const char *slash_back;
 
     (void)snprintf(out_path, out_size, "%s", seq_path);
 
     dot = strrchr(out_path, '.');
     slash_fwd = strrchr(out_path, '/');
     slash_back = strrchr(out_path, '\\');
-    if (dot && dot > slash_fwd && dot > slash_back) {
-        (void)snprintf((char*)dot, out_size - (size_t)(dot - out_path), ".bin");
-    } else {
+    if (dot && dot > slash_fwd && dot > slash_back)
+    {
+        (void)snprintf((char *)dot, out_size - (size_t)(dot - out_path), ".pge");
+    }
+    else
+    {
         size_t len = strlen(out_path);
         if (len + 4 < out_size)
-            strcat(out_path, ".bin");
+            strcat(out_path, ".pge");
     }
 }
 
-static int cache_file_exists(const char* cache_path)
+static int cache_file_exists(const char *cache_path)
 {
-    FILE* f = fopen(cache_path, "rb");
-    if (!f) return 0;
+    FILE *f = fopen(cache_path, "rb");
+    if (!f)
+        return 0;
     fclose(f);
     return 1;
 }
@@ -45,7 +49,7 @@ static int cache_file_exists(const char* cache_path)
 MU_TEST(test_signature_valid_gre)
 {
     pulseqlib_opts opts;
-    pulseqlib_collection* coll = NULL;
+    pulseqlib_collection *coll = NULL;
     int rc;
 
     gre_opts_init(&opts);
@@ -60,12 +64,12 @@ MU_TEST(test_signature_valid_gre)
 MU_TEST(test_signature_mismatch_gre)
 {
     pulseqlib_opts opts;
-    pulseqlib_collection* coll = NULL;
+    pulseqlib_collection *coll = NULL;
     int rc;
 
     gre_opts_init(&opts);
     rc = load_seq_with_signature_check(
-             &coll, "gre_2d_1sl_1avg_corrupted.seq", &opts);
+        &coll, "gre_2d_1sl_1avg_corrupted.seq", &opts);
 
     mu_assert_int_eq(PULSEQLIB_ERR_SIGNATURE_MISMATCH, rc);
     mu_assert(coll == NULL, "collection must remain NULL on signature mismatch");
@@ -75,8 +79,8 @@ MU_TEST(test_cache_stage_loaders_and_clear)
 {
     pulseqlib_opts opts;
     pulseqlib_diagnostic diag = PULSEQLIB_DIAGNOSTIC_INIT;
-    pulseqlib_collection* coll = NULL;
-    pulseqlib_collection* stage_coll = NULL;
+    pulseqlib_collection *coll = NULL;
+    pulseqlib_collection *stage_coll = NULL;
     pulseqlib_collection_info info = PULSEQLIB_COLLECTION_INFO_INIT;
     char seq_path[512];
     char cache_path[512];

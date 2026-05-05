@@ -13,7 +13,7 @@
 /* ================================================================== */
 
 /* from pulseqlib_cache.c (we reuse these via the same pattern) */
-static char* traj_make_cache_path(const char* seq_path);
+static char *traj_make_cache_path(const char *seq_path);
 
 /* ================================================================== */
 /*  Constants                                                         */
@@ -25,21 +25,22 @@ static char* traj_make_cache_path(const char* seq_path);
 /*  Helpers                                                           */
 /* ================================================================== */
 
-static char* traj_make_cache_path(const char* seq_path)
+static char *traj_make_cache_path(const char *seq_path)
 {
     size_t len;
-    char* out;
-    const char* dot;
+    char *out;
+    const char *dot;
 
     len = strlen(seq_path);
-    out = (char*)PULSEQLIB_ALLOC(len + 5);
-    if (!out) return NULL;
+    out = (char *)PULSEQLIB_ALLOC(len + 5);
+    if (!out)
+        return NULL;
     strcpy(out, seq_path);
     dot = strrchr(out, '.');
     if (dot && (strrchr(out, '/') == NULL || dot > strrchr(out, '/')))
-        strcpy((char*)(out + (dot - out)), ".bin");
+        strcpy((char *)(out + (dot - out)), ".pge");
     else
-        strcat(out, ".bin");
+        strcat(out, ".pge");
     return out;
 }
 
@@ -80,10 +81,11 @@ static int is_trivial_shot(const float* k, int n)
 #endif
 
 /* Compare two k-space shot shapes; returns 1 if identical within tolerance. */
-static int shots_equal(const float* a, const float* b, int n)
+static int shots_equal(const float *a, const float *b, int n)
 {
     int i;
-    for (i = 0; i < n; ++i) {
+    for (i = 0; i < n; ++i)
+    {
         float d = a[i] - b[i];
         if (d > TRAJ_DEDUP_TOL || d < -TRAJ_DEDUP_TOL)
             return 0;
@@ -93,14 +95,15 @@ static int shots_equal(const float* a, const float* b, int n)
 
 /* Add a shot to the library if not already present.
  * Returns the shot index, or -1 on allocation failure. */
-static int kshot_library_add(pulseqlib_kshot_library* lib,
-                             const float* k, int n)
+static int kshot_library_add(pulseqlib_kshot_library *lib,
+                             const float *k, int n)
 {
     int i;
-    pulseqlib_kshot* shot;
+    pulseqlib_kshot *shot;
 
     /* Check for duplicate */
-    for (i = 0; i < lib->num_shots; ++i) {
+    for (i = 0; i < lib->num_shots; ++i)
+    {
         if (lib->shots[i].num_samples == n &&
             shots_equal(lib->shots[i].k, k, n))
             return i;
@@ -108,17 +111,19 @@ static int kshot_library_add(pulseqlib_kshot_library* lib,
 
     /* Grow array */
     {
-        pulseqlib_kshot* new_shots;
-        new_shots = (pulseqlib_kshot*)realloc(
+        pulseqlib_kshot *new_shots;
+        new_shots = (pulseqlib_kshot *)realloc(
             lib->shots, (size_t)(lib->num_shots + 1) * sizeof(pulseqlib_kshot));
-        if (!new_shots) return -1;
+        if (!new_shots)
+            return -1;
         lib->shots = new_shots;
     }
 
     shot = &lib->shots[lib->num_shots];
     shot->num_samples = n;
-    shot->k = (float*)PULSEQLIB_ALLOC((size_t)n * sizeof(float));
-    if (!shot->k) return -1;
+    shot->k = (float *)PULSEQLIB_ALLOC((size_t)n * sizeof(float));
+    if (!shot->k)
+        return -1;
     memcpy(shot->k, k, (size_t)n * sizeof(float));
 
     return lib->num_shots++;
@@ -136,45 +141,57 @@ static int kshot_library_add(pulseqlib_kshot_library* lib,
  * Mirrors testutils.TruthBuilder.sampleGradAtTimes (analytic trap +
  * linear interp ARB with zero outside). */
 static float sample_grad_axis_at(
-    const pulseqlib_sequence_descriptor* desc,
+    const pulseqlib_sequence_descriptor *desc,
     int grad_event_id,
-    const float* arb_xp, const float* arb_fp, int arb_n, /* may be NULL */
+    const float *arb_xp, const float *arb_fp, int arb_n, /* may be NULL */
     float t_us)
 {
-    const pulseqlib_grad_definition* gd;
+    const pulseqlib_grad_definition *gd;
     float amp, ti;
     int shot_idx;
 
     if (grad_event_id < 0 || grad_event_id >= desc->grad_table_size)
         return 0.0f;
-    amp      = desc->grad_table[grad_event_id].amplitude;
+    amp = desc->grad_table[grad_event_id].amplitude;
     shot_idx = desc->grad_table[grad_event_id].shot_index;
-    gd       = &desc->grad_definitions[desc->grad_table[grad_event_id].id];
+    gd = &desc->grad_definitions[desc->grad_table[grad_event_id].id];
     ti = t_us - (float)gd->delay;
 
-    if (gd->type == 0) {
-        float r  = (float)gd->rise_time_or_unused;
+    if (gd->type == 0)
+    {
+        float r = (float)gd->rise_time_or_unused;
         float fl = (float)gd->flat_time_or_unused;
         float fa = (float)gd->fall_time_or_num_uncompressed_samples;
-        if (ti <= 0.0f) return 0.0f;
-        if (r > 0.0f && ti < r) return amp * (ti / r);
-        if (ti < r + fl) return amp;
-        if (fa > 0.0f && ti < r + fl + fa) return amp * (1.0f - (ti - r - fl) / fa);
+        if (ti <= 0.0f)
+            return 0.0f;
+        if (r > 0.0f && ti < r)
+            return amp * (ti / r);
+        if (ti < r + fl)
+            return amp;
+        if (fa > 0.0f && ti < r + fl + fa)
+            return amp * (1.0f - (ti - r - fl) / fa);
         return 0.0f;
     }
     /* ARB: caller pre-decompressed shape into (arb_xp, arb_fp).  Linear
      * interp with zero outside [arb_xp[0], arb_xp[n-1]]. */
     (void)shot_idx;
-    if (!arb_xp || !arb_fp || arb_n < 2) return 0.0f;
-    if (t_us < arb_xp[0] || t_us > arb_xp[arb_n - 1]) return 0.0f;
+    if (!arb_xp || !arb_fp || arb_n < 2)
+        return 0.0f;
+    if (t_us < arb_xp[0] || t_us > arb_xp[arb_n - 1])
+        return 0.0f;
     {
         int lo = 0, hi = arb_n - 1, mid;
         float frac;
-        while (hi - lo > 1) {
+        while (hi - lo > 1)
+        {
             mid = (lo + hi) >> 1;
-            if (arb_xp[mid] <= t_us) lo = mid; else hi = mid;
+            if (arb_xp[mid] <= t_us)
+                lo = mid;
+            else
+                hi = mid;
         }
-        if (arb_xp[hi] == arb_xp[lo]) return arb_fp[lo];
+        if (arb_xp[hi] == arb_xp[lo])
+            return arb_fp[lo];
         frac = (t_us - arb_xp[lo]) / (arb_xp[hi] - arb_xp[lo]);
         return arb_fp[lo] * (1.0f - frac) + arb_fp[hi] * frac;
     }
@@ -188,12 +205,12 @@ static float sample_grad_axis_at(
  * Time grid is in microseconds relative to block start (delay-shifted),
  * matching what sample_grad_axis_at and expand_block_axis_grad expect. */
 static int decompress_block_arb(
-    const pulseqlib_sequence_descriptor* desc,
+    const pulseqlib_sequence_descriptor *desc,
     int grad_event_id,
     float grad_raster_us,
-    float** out_xp, float** out_fp, int* out_n)
+    float **out_xp, float **out_fp, int *out_n)
 {
-    const pulseqlib_grad_definition* gd;
+    const pulseqlib_grad_definition *gd;
     pulseqlib_shape_arbitrary decomp = {0, 0, NULL};
     pulseqlib_shape_arbitrary decomp_t = {0, 0, NULL};
     float amp;
@@ -201,56 +218,80 @@ static int decompress_block_arb(
     float *xp = NULL, *fp = NULL;
     int nsrc, i, rc = 0;
 
-    *out_xp = NULL; *out_fp = NULL; *out_n = 0;
-    if (grad_event_id < 0 || grad_event_id >= desc->grad_table_size) return 0;
-    gd       = &desc->grad_definitions[desc->grad_table[grad_event_id].id];
-    if (gd->type == 0) return 0;
-    amp      = desc->grad_table[grad_event_id].amplitude;
+    *out_xp = NULL;
+    *out_fp = NULL;
+    *out_n = 0;
+    if (grad_event_id < 0 || grad_event_id >= desc->grad_table_size)
+        return 0;
+    gd = &desc->grad_definitions[desc->grad_table[grad_event_id].id];
+    if (gd->type == 0)
+        return 0;
+    amp = desc->grad_table[grad_event_id].amplitude;
     shot_idx = desc->grad_table[grad_event_id].shot_index;
-    if (shot_idx < 0 || shot_idx >= PULSEQLIB_MAX_GRAD_SHOTS) return 0;
+    if (shot_idx < 0 || shot_idx >= PULSEQLIB_MAX_GRAD_SHOTS)
+        return 0;
     sid_one_based = gd->shot_shape_ids[shot_idx];
-    if (sid_one_based <= 0) return 0;
+    if (sid_one_based <= 0)
+        return 0;
     sid = sid_one_based - 1;
-    if (sid < 0 || sid >= desc->num_shapes) return 0;
+    if (sid < 0 || sid >= desc->num_shapes)
+        return 0;
 
     if (!pulseqlib__decompress_shape(&decomp, &desc->shapes[sid], 1.0f))
         return -1;
     nsrc = decomp.num_samples;
-    xp = (float*)PULSEQLIB_ALLOC((size_t)nsrc * sizeof(float));
-    fp = (float*)PULSEQLIB_ALLOC((size_t)nsrc * sizeof(float));
-    if (!xp || !fp) { rc = -1; goto fail; }
+    xp = (float *)PULSEQLIB_ALLOC((size_t)nsrc * sizeof(float));
+    fp = (float *)PULSEQLIB_ALLOC((size_t)nsrc * sizeof(float));
+    if (!xp || !fp)
+    {
+        rc = -1;
+        goto fail;
+    }
 
-    if (gd->unused_or_time_shape_id > 0
-        && gd->unused_or_time_shape_id <= desc->num_shapes) {
+    if (gd->unused_or_time_shape_id > 0 && gd->unused_or_time_shape_id <= desc->num_shapes)
+    {
         int ts_idx = gd->unused_or_time_shape_id - 1;
         if (!pulseqlib__decompress_shape(&decomp_t,
                                          &desc->shapes[ts_idx],
-                                         grad_raster_us)) {
-            rc = -1; goto fail;
+                                         grad_raster_us))
+        {
+            rc = -1;
+            goto fail;
         }
         for (i = 0; i < nsrc && i < decomp_t.num_samples; ++i)
             xp[i] = (float)gd->delay + decomp_t.samples[i];
         for (; i < nsrc; ++i)
             xp[i] = (float)gd->delay + ((float)i + 0.5f) * grad_raster_us;
-    } else {
+    }
+    else
+    {
         /* Uniform ARB: pulseq stores samples at raster centres
          * (mr.makeArbitraryGrad sets tt = ((1:N) - 0.5) * raster), so
          * sample i lives at t = delay + (i + 0.5) * raster, not i*raster. */
         for (i = 0; i < nsrc; ++i)
             xp[i] = (float)gd->delay + ((float)i + 0.5f) * grad_raster_us;
     }
-    for (i = 0; i < nsrc; ++i) fp[i] = amp * decomp.samples[i];
+    for (i = 0; i < nsrc; ++i)
+        fp[i] = amp * decomp.samples[i];
 
-    *out_xp = xp; *out_fp = fp; *out_n = nsrc;
-    if (decomp.samples) PULSEQLIB_FREE(decomp.samples);
-    if (decomp_t.samples) PULSEQLIB_FREE(decomp_t.samples);
+    *out_xp = xp;
+    *out_fp = fp;
+    *out_n = nsrc;
+    if (decomp.samples)
+        PULSEQLIB_FREE(decomp.samples);
+    if (decomp_t.samples)
+        PULSEQLIB_FREE(decomp_t.samples);
     return 1;
 
 fail:
-    if (xp) PULSEQLIB_FREE(xp);
-    if (fp) PULSEQLIB_FREE(fp);
-    if (decomp.samples) PULSEQLIB_FREE(decomp.samples);
-    if (decomp_t.samples) PULSEQLIB_FREE(decomp_t.samples);
+    if (xp)
+        PULSEQLIB_FREE(xp);
+    if (fp)
+        PULSEQLIB_FREE(fp);
+    if (decomp.samples)
+        PULSEQLIB_FREE(decomp.samples);
+    if (decomp_t.samples)
+        PULSEQLIB_FREE(decomp_t.samples);
     return rc;
 }
 
@@ -291,14 +332,14 @@ static int expand_block_axis_grad(
     amp      = desc->grad_table[grad_event_id].amplitude;
     shot_idx = desc->grad_table[grad_event_id].shot_index;
     gd       = &desc->grad_definitions[desc->grad_table[grad_event_id].id];
-    delay_samp = (int)((float)gd->delay / grad_raster_us + 0.5f);
+    delay_samp = (int)((float)gd->delay / grad_raster_us);
 
     if (gd->type == 0) {
         /* TRAP (raw seq encoding 0; not the PULSEQLIB__GRAD_TRAP=1 macro
          * used by the parse-time representation). */
-        int rise = (int)((float)gd->rise_time_or_unused / grad_raster_us + 0.5f);
-        int flat = (int)((float)gd->flat_time_or_unused / grad_raster_us + 0.5f);
-        int fall = (int)((float)gd->fall_time_or_num_uncompressed_samples / grad_raster_us + 0.5f);
+        int rise = (int)((float)gd->rise_time_or_unused / grad_raster_us);
+        int flat = (int)((float)gd->flat_time_or_unused / grad_raster_us);
+        int fall = (int)((float)gd->fall_time_or_num_uncompressed_samples / grad_raster_us);
         for (i = 0; i < n_grad; ++i) {
             int s = i - delay_samp;
             float v;
@@ -415,19 +456,19 @@ static int expand_block_axis_grad(
  * Returns per-axis k-space arrays of length adc_num_samples.
  */
 static int compute_block_kspace(
-    const pulseqlib_sequence_descriptor* desc,
+    const pulseqlib_sequence_descriptor *desc,
     int block_table_idx,
     int kzero_index,
-    float* out_kx, float* out_ky, float* out_kz,  /* [adc_num_samples] */
-    int* out_num_samples,
+    float *out_kx, float *out_ky, float *out_kz, /* [adc_num_samples] */
+    int *out_num_samples,
     /* g(t) constant during ADC window?  Used by caller as the
      * cartesian-shot classifier (truth uses the same criterion).
      * Pass NULL pointers if not needed. */
-    int* out_gx_const, int* out_gy_const, int* out_gz_const,
-    pulseqlib_diagnostic* diag)
+    int *out_gx_const, int *out_gy_const, int *out_gz_const,
+    pulseqlib_diagnostic *diag)
 {
-    const pulseqlib_block_table_element* bte;
-    const pulseqlib_adc_definition* adc_def;
+    const pulseqlib_block_table_element *bte;
+    const pulseqlib_adc_definition *adc_def;
     int adc_def_idx;
     int adc_num_samples, adc_delay_us;
     float adc_dwell_us;
@@ -437,15 +478,19 @@ static int compute_block_kspace(
     float *kx_full, *ky_full, *kz_full;
     int i;
 
-    kx_full = NULL; ky_full = NULL; kz_full = NULL;
+    kx_full = NULL;
+    ky_full = NULL;
+    kz_full = NULL;
     bte = &desc->block_table[block_table_idx];
     /* block_table[].adc_id holds the RAW seq ADC index (per-instance);
      * the deduped index into desc->adc_definitions[] lives in
      * block_definitions[bte->id].adc_id. */
     adc_def_idx = desc->block_definitions[bte->id].adc_id;
-    if (adc_def_idx < 0 || adc_def_idx >= desc->num_unique_adcs) {
-        if (diag) sprintf(diag->message,
-            "Block %d has no ADC event", block_table_idx);
+    if (adc_def_idx < 0 || adc_def_idx >= desc->num_unique_adcs)
+    {
+        if (diag)
+            sprintf(diag->message,
+                    "Block %d has no ADC event", block_table_idx);
         return PULSEQLIB_ERR_INVALID_ARGUMENT;
     }
 
@@ -458,8 +503,8 @@ static int compute_block_kspace(
     /* Per-instance duration_us is -1 when the block uses the deduped
      * definition's duration; fall back to block_definitions[bte->id]. */
     block_dur_us = (bte->duration_us >= 0)
-        ? bte->duration_us
-        : desc->block_definitions[bte->id].duration_us;
+                       ? bte->duration_us
+                       : desc->block_definitions[bte->id].duration_us;
 
     /* Build a piecewise-linear-EXACT integration grid.
      *
@@ -484,7 +529,7 @@ static int compute_block_kspace(
      * decompress_block_arb already returns the correct (xp_us, fp_hzm)
      * pairs for both ARB modes; for TRAPs we synthesize the four edge
      * times here.  Output k_full[] is indexed by the merged grid. */
-    dt_s   = grad_raster_us * 1e-6f; /* (kept for potential future use) */
+    dt_s = grad_raster_us * 1e-6f; /* (kept for potential future use) */
     (void)dt_s;
     {
         float *t_grid = NULL;
@@ -492,32 +537,48 @@ static int compute_block_kspace(
         int n_steps = 0;
 
         /* Per-axis breakpoint sources. */
-        float *bp_x = NULL, *fpx = NULL; int nx = 0;
-        float *bp_y = NULL, *fpy = NULL; int ny = 0;
-        float *bp_z = NULL, *fpz = NULL; int nz = 0;
+        float *bp_x = NULL, *fpx = NULL;
+        int nx = 0;
+        float *bp_y = NULL, *fpy = NULL;
+        int ny = 0;
+        float *bp_z = NULL, *fpz = NULL;
+        int nz = 0;
         float trap_bp_x[4], trap_bp_y[4], trap_bp_z[4];
         int n_trap_x = 0, n_trap_y = 0, n_trap_z = 0;
 
         int rx = decompress_block_arb(desc, bte->gx_id, grad_raster_us, &bp_x, &fpx, &nx);
         int ry = decompress_block_arb(desc, bte->gy_id, grad_raster_us, &bp_y, &fpy, &ny);
         int rz = decompress_block_arb(desc, bte->gz_id, grad_raster_us, &bp_z, &fpz, &nz);
-        (void)rx; (void)ry; (void)rz;
+        (void)rx;
+        (void)ry;
+        (void)rz;
 
         /* TRAP breakpoints (only when axis is TRAP, not ARB and not idle). */
         {
-            int gid[3]; int t = 0;
-            int *ntr[3]; float (*bp_arr[3])[4];
-            gid[0]=bte->gx_id; gid[1]=bte->gy_id; gid[2]=bte->gz_id;
-            ntr[0]=&n_trap_x; ntr[1]=&n_trap_y; ntr[2]=&n_trap_z;
-            bp_arr[0]=&trap_bp_x; bp_arr[1]=&trap_bp_y; bp_arr[2]=&trap_bp_z;
-            for (t = 0; t < 3; ++t) {
-                const pulseqlib_grad_definition* gd2;
-                if (gid[t] < 0 || gid[t] >= desc->grad_table_size) continue;
+            int gid[3];
+            int t = 0;
+            int *ntr[3];
+            float (*bp_arr[3])[4];
+            gid[0] = bte->gx_id;
+            gid[1] = bte->gy_id;
+            gid[2] = bte->gz_id;
+            ntr[0] = &n_trap_x;
+            ntr[1] = &n_trap_y;
+            ntr[2] = &n_trap_z;
+            bp_arr[0] = &trap_bp_x;
+            bp_arr[1] = &trap_bp_y;
+            bp_arr[2] = &trap_bp_z;
+            for (t = 0; t < 3; ++t)
+            {
+                const pulseqlib_grad_definition *gd2;
+                if (gid[t] < 0 || gid[t] >= desc->grad_table_size)
+                    continue;
                 gd2 = &desc->grad_definitions[desc->grad_table[gid[t]].id];
-                if (gd2->type != 0) continue; /* ARB; handled by decompress_block_arb */
+                if (gd2->type != 0)
+                    continue; /* ARB; handled by decompress_block_arb */
                 {
-                    float d  = (float)gd2->delay;
-                    float r  = (float)gd2->rise_time_or_unused;
+                    float d = (float)gd2->delay;
+                    float r = (float)gd2->rise_time_or_unused;
                     float fl = (float)gd2->flat_time_or_unused;
                     float fa = (float)gd2->fall_time_or_num_uncompressed_samples;
                     (*bp_arr[t])[0] = d;
@@ -537,38 +598,54 @@ static int compute_block_kspace(
             int n_raster, j;
             float t_us;
             float *tmp;
-            int fp_int = 0; (void)fp_int;
-            n_raster = (int)((float)block_dur_us / grad_raster_us + 0.5f) + 1;
-            if (n_raster < 2) n_raster = 2;
+            int fp_int = 0;
+            (void)fp_int;
+            n_raster = (int)((float)block_dur_us / grad_raster_us) + 1;
+            if (n_raster < 2)
+                n_raster = 2;
             cap = 2 + n_raster + nx + ny + nz + n_trap_x + n_trap_y + n_trap_z + adc_num_samples;
-            tmp = (float*)PULSEQLIB_ALLOC((size_t)cap * sizeof(float));
-            if (!tmp) goto bp_alloc_fail;
+            tmp = (float *)PULSEQLIB_ALLOC((size_t)cap * sizeof(float));
+            if (!tmp)
+                goto bp_alloc_fail;
             idx = 0;
             tmp[idx++] = 0.0f;
             tmp[idx++] = (float)block_dur_us;
-            for (j = 0; j < n_raster; ++j) tmp[idx++] = (float)j * grad_raster_us;
-            for (j = 0; j < nx; ++j) tmp[idx++] = bp_x[j];
-            for (j = 0; j < ny; ++j) tmp[idx++] = bp_y[j];
-            for (j = 0; j < nz; ++j) tmp[idx++] = bp_z[j];
-            for (j = 0; j < n_trap_x; ++j) tmp[idx++] = trap_bp_x[j];
-            for (j = 0; j < n_trap_y; ++j) tmp[idx++] = trap_bp_y[j];
-            for (j = 0; j < n_trap_z; ++j) tmp[idx++] = trap_bp_z[j];
-            for (j = 0; j < adc_num_samples; ++j) {
+            for (j = 0; j < n_raster; ++j)
+                tmp[idx++] = (float)j * grad_raster_us;
+            for (j = 0; j < nx; ++j)
+                tmp[idx++] = bp_x[j];
+            for (j = 0; j < ny; ++j)
+                tmp[idx++] = bp_y[j];
+            for (j = 0; j < nz; ++j)
+                tmp[idx++] = bp_z[j];
+            for (j = 0; j < n_trap_x; ++j)
+                tmp[idx++] = trap_bp_x[j];
+            for (j = 0; j < n_trap_y; ++j)
+                tmp[idx++] = trap_bp_y[j];
+            for (j = 0; j < n_trap_z; ++j)
+                tmp[idx++] = trap_bp_z[j];
+            for (j = 0; j < adc_num_samples; ++j)
+            {
                 t_us = (float)adc_delay_us + ((float)j + 0.5f) * adc_dwell_us;
                 tmp[idx++] = t_us;
             }
             /* Clamp to [0, blk_dur] and sort/unique (insertion sort is fine
              * — block-level grids are small, O(few hundred). */
-            for (j = 0; j < idx; ++j) {
-                if (tmp[j] < 0.0f) tmp[j] = 0.0f;
-                if (tmp[j] > (float)block_dur_us) tmp[j] = (float)block_dur_us;
+            for (j = 0; j < idx; ++j)
+            {
+                if (tmp[j] < 0.0f)
+                    tmp[j] = 0.0f;
+                if (tmp[j] > (float)block_dur_us)
+                    tmp[j] = (float)block_dur_us;
             }
             {
                 int a;
-                for (a = 1; a < idx; ++a) {
+                for (a = 1; a < idx; ++a)
+                {
                     float key = tmp[a];
                     int b2 = a - 1;
-                    while (b2 >= 0 && tmp[b2] > key) {
+                    while (b2 >= 0 && tmp[b2] > key)
+                    {
                         tmp[b2 + 1] = tmp[b2];
                         --b2;
                     }
@@ -578,53 +655,69 @@ static int compute_block_kspace(
             {
                 int a, w = 0;
                 const float eps_us = 1e-4f; /* 0.1 ns */
-                for (a = 0; a < idx; ++a) {
-                    if (w == 0 || tmp[a] - tmp[w - 1] > eps_us) tmp[w++] = tmp[a];
+                for (a = 0; a < idx; ++a)
+                {
+                    if (w == 0 || tmp[a] - tmp[w - 1] > eps_us)
+                        tmp[w++] = tmp[a];
                 }
                 idx = w;
             }
             n_steps = idx;
-            t_grid  = tmp;
+            t_grid = tmp;
         }
 
-        if (n_steps < 2) {
+        if (n_steps < 2)
+        {
             PULSEQLIB_FREE(t_grid);
             goto bp_alloc_fail;
         }
 
-        gx_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        gy_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        gz_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        kx_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        ky_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        kz_full = (float*)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        if (!gx_full || !gy_full || !gz_full || !kx_full || !ky_full || !kz_full) {
+        gx_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        gy_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        gz_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        kx_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        ky_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        kz_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
+        if (!gx_full || !gy_full || !gz_full || !kx_full || !ky_full || !kz_full)
+        {
             PULSEQLIB_FREE(t_grid);
-            PULSEQLIB_FREE(gx_full); PULSEQLIB_FREE(gy_full); PULSEQLIB_FREE(gz_full);
-            if (bp_x) PULSEQLIB_FREE(bp_x);
-            if (fpx) PULSEQLIB_FREE(fpx);
-            if (bp_y) PULSEQLIB_FREE(bp_y);
-            if (fpy) PULSEQLIB_FREE(fpy);
-            if (bp_z) PULSEQLIB_FREE(bp_z);
-            if (fpz) PULSEQLIB_FREE(fpz);
+            PULSEQLIB_FREE(gx_full);
+            PULSEQLIB_FREE(gy_full);
+            PULSEQLIB_FREE(gz_full);
+            if (bp_x)
+                PULSEQLIB_FREE(bp_x);
+            if (fpx)
+                PULSEQLIB_FREE(fpx);
+            if (bp_y)
+                PULSEQLIB_FREE(bp_y);
+            if (fpy)
+                PULSEQLIB_FREE(fpy);
+            if (bp_z)
+                PULSEQLIB_FREE(bp_z);
+            if (fpz)
+                PULSEQLIB_FREE(fpz);
             goto alloc_fail;
         }
         /* Sample g analytically at every breakpoint (sample_grad_axis_at
          * is exact for both TRAP and ARB; matches truth's
          * sampleGradAtTimes). */
-        for (i = 0; i < n_steps; ++i) {
+        for (i = 0; i < n_steps; ++i)
+        {
             gx_full[i] = sample_grad_axis_at(desc, bte->gx_id, bp_x, fpx, nx, t_grid[i]);
             gy_full[i] = sample_grad_axis_at(desc, bte->gy_id, bp_y, fpy, ny, t_grid[i]);
             gz_full[i] = sample_grad_axis_at(desc, bte->gz_id, bp_z, fpz, nz, t_grid[i]);
         }
 
         /* Trapezoidal cumsum (analytically exact on this grid). */
-        kx_full[0] = 0.0f; ky_full[0] = 0.0f; kz_full[0] = 0.0f;
-        for (i = 1; i < n_steps; ++i) {
+        kx_full[0] = 0.0f;
+        ky_full[0] = 0.0f;
+        kz_full[0] = 0.0f;
+        for (i = 1; i < n_steps; ++i)
+        {
             float dt_seg = (t_grid[i] - t_grid[i - 1]) * 1e-6f;
-            kx_full[i] = kx_full[i-1] + 0.5f * (gx_full[i-1] + gx_full[i]) * dt_seg;
-            ky_full[i] = ky_full[i-1] + 0.5f * (gy_full[i-1] + gy_full[i]) * dt_seg;
-            kz_full[i] = kz_full[i-1] + 0.5f * (gz_full[i-1] + gz_full[i]) * dt_seg;
+            kx_full[i] = kx_full[i - 1] + 0.5f * (gx_full[i - 1] + gx_full[i]) * dt_seg;
+            ky_full[i] = ky_full[i - 1] + 0.5f * (gy_full[i - 1] + gy_full[i]) * dt_seg;
+            kz_full[i] = kz_full[i - 1] + 0.5f * (gz_full[i - 1] + gz_full[i]) * dt_seg;
         }
 
         /* Per-axis cartesian classifier: g(t) constant across the
@@ -637,32 +730,49 @@ static int compute_block_kspace(
             int j;
             float t_us, gv;
             int first = 1;
-            for (j = 0; j < adc_num_samples; ++j) {
+            for (j = 0; j < adc_num_samples; ++j)
+            {
                 t_us = (float)adc_delay_us + ((float)j + 0.5f) * adc_dwell_us;
                 gv = sample_grad_axis_at(desc, bte->gx_id, bp_x, fpx, nx, t_us);
-                if (first || gv < xmin) xmin = gv;
-                if (first || gv > xmax) xmax = gv;
+                if (first || gv < xmin)
+                    xmin = gv;
+                if (first || gv > xmax)
+                    xmax = gv;
                 gv = sample_grad_axis_at(desc, bte->gy_id, bp_y, fpy, ny, t_us);
-                if (first || gv < ymin) ymin = gv;
-                if (first || gv > ymax) ymax = gv;
+                if (first || gv < ymin)
+                    ymin = gv;
+                if (first || gv > ymax)
+                    ymax = gv;
                 gv = sample_grad_axis_at(desc, bte->gz_id, bp_z, fpz, nz, t_us);
-                if (first || gv < zmin) zmin = gv;
-                if (first || gv > zmax) zmax = gv;
+                if (first || gv < zmin)
+                    zmin = gv;
+                if (first || gv > zmax)
+                    zmax = gv;
                 first = 0;
             }
-            xs = (xmax > -xmin) ? xmax : -xmin; if (xs < 0) xs = -xs;
-            ys = (ymax > -ymin) ? ymax : -ymin; if (ys < 0) ys = -ys;
-            zs = (zmax > -zmin) ? zmax : -zmin; if (zs < 0) zs = -zs;
+            xs = (xmax > -xmin) ? xmax : -xmin;
+            if (xs < 0)
+                xs = -xs;
+            ys = (ymax > -ymin) ? ymax : -ymin;
+            if (ys < 0)
+                ys = -ys;
+            zs = (zmax > -zmin) ? zmax : -zmin;
+            if (zs < 0)
+                zs = -zs;
             gxc = (xs < 1e-9f) ? 1 : ((xmax - xmin) / xs < 1e-3f);
             gyc = (ys < 1e-9f) ? 1 : ((ymax - ymin) / ys < 1e-3f);
             gzc = (zs < 1e-9f) ? 1 : ((zmax - zmin) / zs < 1e-3f);
-            if (getenv("PULSEQLIB_TRAJ_DEBUG")) {
+            if (getenv("PULSEQLIB_TRAJ_DEBUG"))
+            {
                 fprintf(stderr, "  cls blk=%d xmin=%.1f xmax=%.1f xs=%.1f gxc=%d  ymin=%.1f ymax=%.1f gyc=%d\n",
-                    block_table_idx, xmin, xmax, xs, gxc, ymin, ymax, gyc);
+                        block_table_idx, xmin, xmax, xs, gxc, ymin, ymax, gyc);
             }
-            if (out_gx_const) *out_gx_const = gxc;
-            if (out_gy_const) *out_gy_const = gyc;
-            if (out_gz_const) *out_gz_const = gzc;
+            if (out_gx_const)
+                *out_gx_const = gxc;
+            if (out_gy_const)
+                *out_gy_const = gyc;
+            if (out_gz_const)
+                *out_gz_const = gzc;
         }
 
         /* Resample to ADC sample centres via linear interp on the
@@ -671,30 +781,41 @@ static int compute_block_kspace(
             float t_us;
             int lo, hi, mid;
             float frac;
-            for (i = 0; i < adc_num_samples; ++i) {
+            for (i = 0; i < adc_num_samples; ++i)
+            {
                 t_us = (float)adc_delay_us + ((float)i + 0.5f) * adc_dwell_us;
-                if (t_us <= t_grid[0]) {
+                if (t_us <= t_grid[0])
+                {
                     out_kx[i] = kx_full[0];
                     out_ky[i] = ky_full[0];
                     out_kz[i] = kz_full[0];
                     continue;
                 }
-                if (t_us >= t_grid[n_steps - 1]) {
+                if (t_us >= t_grid[n_steps - 1])
+                {
                     out_kx[i] = kx_full[n_steps - 1];
                     out_ky[i] = ky_full[n_steps - 1];
                     out_kz[i] = kz_full[n_steps - 1];
                     continue;
                 }
-                lo = 0; hi = n_steps - 1;
-                while (hi - lo > 1) {
+                lo = 0;
+                hi = n_steps - 1;
+                while (hi - lo > 1)
+                {
                     mid = (lo + hi) >> 1;
-                    if (t_grid[mid] <= t_us) lo = mid; else hi = mid;
+                    if (t_grid[mid] <= t_us)
+                        lo = mid;
+                    else
+                        hi = mid;
                 }
-                if (t_grid[hi] == t_grid[lo]) {
+                if (t_grid[hi] == t_grid[lo])
+                {
                     out_kx[i] = kx_full[lo];
                     out_ky[i] = ky_full[lo];
                     out_kz[i] = kz_full[lo];
-                } else {
+                }
+                else
+                {
                     frac = (t_us - t_grid[lo]) / (t_grid[hi] - t_grid[lo]);
                     out_kx[i] = kx_full[lo] * (1.0f - frac) + kx_full[hi] * frac;
                     out_ky[i] = ky_full[lo] * (1.0f - frac) + ky_full[hi] * frac;
@@ -704,22 +825,36 @@ static int compute_block_kspace(
         }
 
         PULSEQLIB_FREE(t_grid);
-        PULSEQLIB_FREE(gx_full); PULSEQLIB_FREE(gy_full); PULSEQLIB_FREE(gz_full);
-        if (bp_x) PULSEQLIB_FREE(bp_x);
-        if (fpx) PULSEQLIB_FREE(fpx);
-        if (bp_y) PULSEQLIB_FREE(bp_y);
-        if (fpy) PULSEQLIB_FREE(fpy);
-        if (bp_z) PULSEQLIB_FREE(bp_z);
-        if (fpz) PULSEQLIB_FREE(fpz);
+        PULSEQLIB_FREE(gx_full);
+        PULSEQLIB_FREE(gy_full);
+        PULSEQLIB_FREE(gz_full);
+        if (bp_x)
+            PULSEQLIB_FREE(bp_x);
+        if (fpx)
+            PULSEQLIB_FREE(fpx);
+        if (bp_y)
+            PULSEQLIB_FREE(bp_y);
+        if (fpy)
+            PULSEQLIB_FREE(fpy);
+        if (bp_z)
+            PULSEQLIB_FREE(bp_z);
+        if (fpz)
+            PULSEQLIB_FREE(fpz);
         goto post_resample;
 
     bp_alloc_fail:
-        if (bp_x) PULSEQLIB_FREE(bp_x);
-        if (fpx) PULSEQLIB_FREE(fpx);
-        if (bp_y) PULSEQLIB_FREE(bp_y);
-        if (fpy) PULSEQLIB_FREE(fpy);
-        if (bp_z) PULSEQLIB_FREE(bp_z);
-        if (fpz) PULSEQLIB_FREE(fpz);
+        if (bp_x)
+            PULSEQLIB_FREE(bp_x);
+        if (fpx)
+            PULSEQLIB_FREE(fpx);
+        if (bp_y)
+            PULSEQLIB_FREE(bp_y);
+        if (fpy)
+            PULSEQLIB_FREE(fpy);
+        if (bp_z)
+            PULSEQLIB_FREE(bp_z);
+        if (fpz)
+            PULSEQLIB_FREE(fpz);
         goto alloc_fail;
     }
 
@@ -732,12 +867,15 @@ post_resample:
     {
         int kz = kzero_index;
         float ax, ay, az;
-        if (kz < 0) kz = 0;
-        if (kz >= adc_num_samples) kz = adc_num_samples - 1;
+        if (kz < 0)
+            kz = 0;
+        if (kz >= adc_num_samples)
+            kz = adc_num_samples - 1;
         ax = out_kx[kz];
         ay = out_ky[kz];
         az = out_kz[kz];
-        for (i = 0; i < adc_num_samples; ++i) {
+        for (i = 0; i < adc_num_samples; ++i)
+        {
             out_kx[i] -= ax;
             out_ky[i] -= ay;
             out_kz[i] -= az;
@@ -762,34 +900,35 @@ alloc_fail:
 /*  Public: compute trajectory                                        */
 /* ================================================================== */
 
-int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
-                                 pulseqlib_trajectory*       out,
-                                 pulseqlib_diagnostic*       diag,
-                                 int                         subseq_idx)
+int pulseqlib_compute_trajectory(const pulseqlib_collection *coll,
+                                 pulseqlib_trajectory *out,
+                                 pulseqlib_diagnostic *diag,
+                                 int subseq_idx)
 {
-    const pulseqlib_sequence_descriptor* desc;
+    const pulseqlib_sequence_descriptor *desc;
     int n, b;
     int num_adc_events;
     int adc_idx;
     int label_ncols;
-    int* label_buf = NULL;
-    pulseqlib_traj_table_entry* table = NULL;
-    float* kx_buf = NULL;
-    float* ky_buf = NULL;
-    float* kz_buf = NULL;
+    int *label_buf = NULL;
+    pulseqlib_traj_table_entry *table = NULL;
+    float *kx_buf = NULL;
+    float *ky_buf = NULL;
+    float *kz_buf = NULL;
     int max_adc_samples;
     /* Memoization: per-block_table-idx cached shot IDs and kzero so we
      * skip redundant compute_block_kspace calls when the same block is
      * referenced multiple times by the scan table (e.g. an EPI readout
      * block that recurs once per phase-encode line).  Cache is keyed by
      * (b, kzero); -2 means "not computed yet". */
-    int* cached_kx_id = NULL;
-    int* cached_ky_id = NULL;
-    int* cached_kz_id = NULL;
-    int* cached_kzero = NULL;
+    int *cached_kx_id = NULL;
+    int *cached_ky_id = NULL;
+    int *cached_kz_id = NULL;
+    int *cached_kzero = NULL;
     int rc;
 
-    if (!coll || !out) return PULSEQLIB_ERR_NULL_POINTER;
+    if (!coll || !out)
+        return PULSEQLIB_ERR_NULL_POINTER;
     if (subseq_idx < 0 || subseq_idx >= coll->num_subsequences)
         return PULSEQLIB_ERR_INVALID_ARGUMENT;
 
@@ -804,13 +943,15 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
      * the ADC slot, so it over-counts here. The deduped index is still
      * used downstream for the adc_definitions[] lookup. */
     num_adc_events = 0;
-    for (n = 0; n < desc->scan_table_len; ++n) {
+    for (n = 0; n < desc->scan_table_len; ++n)
+    {
         b = desc->scan_table_block_idx[n];
         if (desc->block_table[b].adc_id >= 0)
             ++num_adc_events;
     }
 
-    if (num_adc_events == 0) {
+    if (num_adc_events == 0)
+    {
         /* No ADC events — trajectory is empty */
         return PULSEQLIB_SUCCESS;
     }
@@ -819,35 +960,38 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
     max_adc_samples = 0;
     {
         int a;
-        for (a = 0; a < desc->num_unique_adcs; ++a) {
+        for (a = 0; a < desc->num_unique_adcs; ++a)
+        {
             if (desc->adc_definitions[a].num_samples > max_adc_samples)
                 max_adc_samples = desc->adc_definitions[a].num_samples;
         }
     }
 
     /* Allocate work buffers */
-    kx_buf = (float*)PULSEQLIB_ALLOC((size_t)max_adc_samples * sizeof(float));
-    ky_buf = (float*)PULSEQLIB_ALLOC((size_t)max_adc_samples * sizeof(float));
-    kz_buf = (float*)PULSEQLIB_ALLOC((size_t)max_adc_samples * sizeof(float));
+    kx_buf = (float *)PULSEQLIB_ALLOC((size_t)max_adc_samples * sizeof(float));
+    ky_buf = (float *)PULSEQLIB_ALLOC((size_t)max_adc_samples * sizeof(float));
+    kz_buf = (float *)PULSEQLIB_ALLOC((size_t)max_adc_samples * sizeof(float));
     label_ncols = desc->label_num_columns;
     if (label_ncols > 0)
-        label_buf = (int*)PULSEQLIB_ALLOC((size_t)label_ncols * sizeof(int));
-    table = (pulseqlib_traj_table_entry*)PULSEQLIB_ALLOC(
+        label_buf = (int *)PULSEQLIB_ALLOC((size_t)label_ncols * sizeof(int));
+    table = (pulseqlib_traj_table_entry *)PULSEQLIB_ALLOC(
         (size_t)num_adc_events * sizeof(pulseqlib_traj_table_entry));
 
     if (!kx_buf || !ky_buf || !kz_buf || !table)
         goto compute_fail;
 
     /* Allocate memoization cache and seed with sentinel -2 = uncomputed. */
-    if (desc->num_blocks > 0) {
+    if (desc->num_blocks > 0)
+    {
         int ci;
-        cached_kx_id = (int*)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
-        cached_ky_id = (int*)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
-        cached_kz_id = (int*)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
-        cached_kzero = (int*)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
+        cached_kx_id = (int *)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
+        cached_ky_id = (int *)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
+        cached_kz_id = (int *)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
+        cached_kzero = (int *)PULSEQLIB_ALLOC((size_t)desc->num_blocks * sizeof(int));
         if (!cached_kx_id || !cached_ky_id || !cached_kz_id || !cached_kzero)
             goto compute_fail;
-        for (ci = 0; ci < desc->num_blocks; ++ci) {
+        for (ci = 0; ci < desc->num_blocks; ++ci)
+        {
             cached_kx_id[ci] = -2;
             cached_ky_id[ci] = -2;
             cached_kz_id[ci] = -2;
@@ -871,33 +1015,39 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
      * recompute. */
     {
         adc_idx = 0;
-        for (n = 0; n < desc->scan_table_len; ++n) {
-            const pulseqlib_block_table_element* bte;
+        for (n = 0; n < desc->scan_table_len; ++n)
+        {
+            const pulseqlib_block_table_element *bte;
             int adc_def_idx, adc_nsamples, kzero;
             int kx_id, ky_id, kz_id;
 
             b = desc->scan_table_block_idx[n];
             bte = &desc->block_table[b];
 
-            if (bte->adc_id < 0) continue;
+            if (bte->adc_id < 0)
+                continue;
             adc_def_idx = desc->block_definitions[bte->id].adc_id;
-            if (adc_def_idx < 0) continue;
+            if (adc_def_idx < 0)
+                continue;
 
             adc_nsamples = desc->adc_definitions[adc_def_idx].num_samples;
 
             /* Find k-zero index from segment timing.
              * Look up which segment this block belongs to and find the
              * ADC anchor with matching block offset. */
-            kzero = adc_nsamples / 2;  /* default: center */
+            kzero = adc_nsamples / 2; /* default: center */
             {
                 int seg_idx = desc->scan_table_seg_id[n];
-                if (seg_idx >= 0 && seg_idx < desc->num_unique_segments) {
-                    const pulseqlib_tr_segment* seg_def = &desc->segment_definitions[seg_idx];
-                    const pulseqlib_segment_timing* tim = &seg_def->timing;
+                if (seg_idx >= 0 && seg_idx < desc->num_unique_segments)
+                {
+                    const pulseqlib_tr_segment *seg_def = &desc->segment_definitions[seg_idx];
+                    const pulseqlib_segment_timing *tim = &seg_def->timing;
                     int a;
-                    for (a = 0; a < tim->num_adc_anchors; ++a) {
+                    for (a = 0; a < tim->num_adc_anchors; ++a)
+                    {
                         if (tim->adc_anchors[a].block_offset ==
-                            (b - seg_def->start_block)) {
+                            (b - seg_def->start_block))
+                        {
                             kzero = tim->adc_anchors[a].kzero_index;
                             break;
                         }
@@ -913,46 +1063,61 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
              * Block-table indices are unique per scan-table row;
              * cross-block content equivalence is recovered by
              * kshot_library_add which dedups identical k arrays.) */
-            if (cached_kx_id && b >= 0 && b < desc->num_blocks
-                && cached_kx_id[b] != -2
-                && cached_kzero[b] == kzero) {
+            if (cached_kx_id && b >= 0 && b < desc->num_blocks && cached_kx_id[b] != -2 && cached_kzero[b] == kzero)
+            {
                 kx_id = cached_kx_id[b];
                 ky_id = cached_ky_id[b];
                 kz_id = cached_kz_id[b];
-            } else {
+            }
+            else
+            {
                 int gx_const = 0, gy_const = 0, gz_const = 0;
                 rc = compute_block_kspace(desc, b, kzero,
                                           kx_buf, ky_buf, kz_buf,
                                           &adc_nsamples,
                                           &gx_const, &gy_const, &gz_const,
                                           diag);
-                if (PULSEQLIB_FAILED(rc)) goto compute_fail;
+                if (PULSEQLIB_FAILED(rc))
+                    goto compute_fail;
 
                 /* Per-axis dedup into kshot library.  An axis is
                  * cartesian (kshot_id=-1) when g(t) is constant during
                  * the active ADC window; the mrdserver reconstructs
                  * coordinates from the gradient amplitude metadata
                  * (and applies any rotation) without needing a kshot. */
-                if (gx_const) {
+                if (gx_const)
+                {
                     kx_id = -1;
-                } else {
+                }
+                else
+                {
                     kx_id = kshot_library_add(&out->kshots, kx_buf, adc_nsamples);
-                    if (kx_id < 0) goto compute_fail;
+                    if (kx_id < 0)
+                        goto compute_fail;
                 }
-                if (gy_const) {
+                if (gy_const)
+                {
                     ky_id = -1;
-                } else {
-                    ky_id = kshot_library_add(&out->kshots, ky_buf, adc_nsamples);
-                    if (ky_id < 0) goto compute_fail;
                 }
-                if (gz_const) {
+                else
+                {
+                    ky_id = kshot_library_add(&out->kshots, ky_buf, adc_nsamples);
+                    if (ky_id < 0)
+                        goto compute_fail;
+                }
+                if (gz_const)
+                {
                     kz_id = -1;
-                } else {
+                }
+                else
+                {
                     kz_id = kshot_library_add(&out->kshots, kz_buf, adc_nsamples);
-                    if (kz_id < 0) goto compute_fail;
+                    if (kz_id < 0)
+                        goto compute_fail;
                 }
 
-                if (cached_kx_id && b >= 0 && b < desc->num_blocks) {
+                if (cached_kx_id && b >= 0 && b < desc->num_blocks)
+                {
                     cached_kx_id[b] = kx_id;
                     cached_ky_id[b] = ky_id;
                     cached_kz_id[b] = kz_id;
@@ -967,11 +1132,14 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
 
             /* Gradient amplitudes */
             table[adc_idx].gx_amplitude = (bte->gx_id >= 0 && bte->gx_id < desc->grad_table_size)
-                ? desc->grad_table[bte->gx_id].amplitude : 0.0f;
+                                              ? desc->grad_table[bte->gx_id].amplitude
+                                              : 0.0f;
             table[adc_idx].gy_amplitude = (bte->gy_id >= 0 && bte->gy_id < desc->grad_table_size)
-                ? desc->grad_table[bte->gy_id].amplitude : 0.0f;
+                                              ? desc->grad_table[bte->gy_id].amplitude
+                                              : 0.0f;
             table[adc_idx].gz_amplitude = (bte->gz_id >= 0 && bte->gz_id < desc->grad_table_size)
-                ? desc->grad_table[bte->gz_id].amplitude : 0.0f;
+                                              ? desc->grad_table[bte->gz_id].amplitude
+                                              : 0.0f;
 
             /* Rotation */
             table[adc_idx].rotation_id = bte->rotation_id;
@@ -981,13 +1149,16 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
             table[adc_idx].sample_time_us = (float)desc->adc_definitions[adc_def_idx].dwell_time * 1e-3f;
             table[adc_idx].flags = 0;
             table[adc_idx].off = (desc->off_table && adc_idx < desc->label_num_entries)
-                                 ? (desc->off_table[adc_idx] ? 1 : 0) : 0;
+                                     ? (desc->off_table[adc_idx] ? 1 : 0)
+                                     : 0;
 
             /* Labels from label table */
-            if (label_buf && adc_idx < desc->label_num_entries) {
+            if (label_buf && adc_idx < desc->label_num_entries)
+            {
                 rc = pulseqlib_get_adc_label(coll, label_buf,
                                              subseq_idx, adc_idx);
-                if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 10) {
+                if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 10)
+                {
                     /* Full Pulseq label mapping: col order matches label_table columns */
                     table[adc_idx].lin = label_buf[0];
                     table[adc_idx].slc = label_buf[1];
@@ -1009,17 +1180,19 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
                      * Column indices (0-based) match PULSEQLIB__* macros - 1.
                      * Flags 1-18 (FIRST/LAST) are NOT set here; they are computed
                      * per-encoding-space in the enrichment layer using actual min/max. */
-                    if (label_ncols > 10 && label_buf[10]) /* NAV  col11 */
-                        table[adc_idx].flags |= (1UL << 22);  /* ACQ_IS_NAVIGATION_DATA (23) */
-                    if (label_ncols > 11 && label_buf[11]) /* REV  col12 */
-                        table[adc_idx].flags |= (1UL << 21);  /* ACQ_IS_REVERSE (22) */
-                    if (label_ncols > 13 && label_buf[13]) /* REF  col14 */
-                        table[adc_idx].flags |= (1UL << 19);  /* ACQ_IS_PARALLEL_CALIBRATION (20) */
-                    if (label_ncols > 14 && label_buf[14]) /* IMA  col15 */
-                        table[adc_idx].flags |= (1UL << 20);  /* ACQ_IS_PARALLEL_CALIBRATION_AND_IMAGING (21) */
-                    if (label_ncols > 15 && label_buf[15]) /* NOISE col16 */
-                        table[adc_idx].flags |= (1UL << 18);  /* ACQ_IS_NOISE_MEASUREMENT (19) */
-                } else if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 3) {
+                    if (label_ncols > 10 && label_buf[10])   /* NAV  col11 */
+                        table[adc_idx].flags |= (1UL << 22); /* ACQ_IS_NAVIGATION_DATA (23) */
+                    if (label_ncols > 11 && label_buf[11])   /* REV  col12 */
+                        table[adc_idx].flags |= (1UL << 21); /* ACQ_IS_REVERSE (22) */
+                    if (label_ncols > 13 && label_buf[13])   /* REF  col14 */
+                        table[adc_idx].flags |= (1UL << 19); /* ACQ_IS_PARALLEL_CALIBRATION (20) */
+                    if (label_ncols > 14 && label_buf[14])   /* IMA  col15 */
+                        table[adc_idx].flags |= (1UL << 20); /* ACQ_IS_PARALLEL_CALIBRATION_AND_IMAGING (21) */
+                    if (label_ncols > 15 && label_buf[15])   /* NOISE col16 */
+                        table[adc_idx].flags |= (1UL << 18); /* ACQ_IS_NOISE_MEASUREMENT (19) */
+                }
+                else if (PULSEQLIB_SUCCEEDED(rc) && label_ncols >= 3)
+                {
                     /* GEHC mapping fallback: col0=lin, col1=slc, col2=eco */
                     table[adc_idx].lin = label_buf[0];
                     table[adc_idx].slc = label_buf[1];
@@ -1029,7 +1202,7 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
 
             /* NAV flag from block table (block-level nav_flag) */
             if (bte->nav_flag)
-                table[adc_idx].flags |= (1UL << 22);  /* ACQ_IS_NAVIGATION_DATA */
+                table[adc_idx].flags |= (1UL << 22); /* ACQ_IS_NAVIGATION_DATA */
 
             /* Encoding space ref: local index 0 = normal, 1 = navigator */
             table[adc_idx].encoding_space_ref =
@@ -1044,7 +1217,7 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
      * using actual label_limits min/max.  Only LAST_IN_MEASUREMENT is set here
      * since it is a scan-global property known at cache build time. */
     if (adc_idx > 0)
-        table[adc_idx - 1].flags |= (1UL << 24);  /* LAST_IN_MEASUREMENT (25) */
+        table[adc_idx - 1].flags |= (1UL << 24); /* LAST_IN_MEASUREMENT (25) */
 
     out->num_adc_events = adc_idx;
     out->table = table;
@@ -1056,15 +1229,21 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
      * after ownership transfer. */
     {
         int has_nav = 0, num_es_local, es, i;
-        for (i = 0; i < adc_idx; ++i) {
-            if (out->table[i].flags & (1UL << 22)) { has_nav = 1; break; }
+        for (i = 0; i < adc_idx; ++i)
+        {
+            if (out->table[i].flags & (1UL << 22))
+            {
+                has_nav = 1;
+                break;
+            }
         }
         num_es_local = has_nav ? 2 : 1;
 
         out->num_encoding_spaces = num_es_local;
-        out->encoding_spaces = (pulseqlib_encoding_space*)PULSEQLIB_ALLOC(
+        out->encoding_spaces = (pulseqlib_encoding_space *)PULSEQLIB_ALLOC(
             (size_t)num_es_local * sizeof(pulseqlib_encoding_space));
-        if (!out->encoding_spaces) goto compute_fail;
+        if (!out->encoding_spaces)
+            goto compute_fail;
         memset(out->encoding_spaces, 0,
                (size_t)num_es_local * sizeof(pulseqlib_encoding_space));
 
@@ -1077,7 +1256,8 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
         out->encoding_spaces[0].nav_subseq_offset = has_nav ? 1 : 0;
 
         /* ES 1 (if nav): navigator scans — use nav_fov / nav_matrix */
-        if (has_nav) {
+        if (has_nav)
+        {
             memcpy(out->encoding_spaces[1].fov, desc->nav_fov, sizeof(float) * 3);
             memcpy(out->encoding_spaces[1].matrix, desc->nav_matrix, sizeof(float) * 3);
             out->encoding_spaces[1].subseq_idx = subseq_idx;
@@ -1085,12 +1265,16 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
         }
 
         /* Compute per-encoding-space label_limits from table entries */
-        for (es = 0; es < num_es_local; ++es) {
-            pulseqlib_label_limits* ll = &out->encoding_spaces[es].label_limits;
+        for (es = 0; es < num_es_local; ++es)
+        {
+            pulseqlib_label_limits *ll = &out->encoding_spaces[es].label_limits;
             int first = 1;
-            for (i = 0; i < adc_idx; ++i) {
-                if (table[i].encoding_space_ref != es) continue;
-                if (first) {
+            for (i = 0; i < adc_idx; ++i)
+            {
+                if (table[i].encoding_space_ref != es)
+                    continue;
+                if (first)
+                {
                     ll->slc.min = ll->slc.max = table[i].slc;
                     ll->phs.min = ll->phs.max = table[i].phs;
                     ll->rep.min = ll->rep.max = table[i].rep;
@@ -1102,14 +1286,28 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection* coll,
                     ll->lin.min = ll->lin.max = table[i].lin;
                     ll->acq.min = ll->acq.max = table[i].acq;
                     first = 0;
-                } else {
-                    #define LLUP(fld) do { \
-                        if (table[i].fld < ll->fld.min) ll->fld.min = table[i].fld; \
-                        if (table[i].fld > ll->fld.max) ll->fld.max = table[i].fld; \
-                    } while(0)
-                    LLUP(slc); LLUP(phs); LLUP(rep); LLUP(avg); LLUP(seg);
-                    LLUP(set); LLUP(eco); LLUP(par); LLUP(lin); LLUP(acq);
-                    #undef LLUP
+                }
+                else
+                {
+#define LLUP(fld)                       \
+    do                                  \
+    {                                   \
+        if (table[i].fld < ll->fld.min) \
+            ll->fld.min = table[i].fld; \
+        if (table[i].fld > ll->fld.max) \
+            ll->fld.max = table[i].fld; \
+    } while (0)
+                    LLUP(slc);
+                    LLUP(phs);
+                    LLUP(rep);
+                    LLUP(avg);
+                    LLUP(seg);
+                    LLUP(set);
+                    LLUP(eco);
+                    LLUP(par);
+                    LLUP(lin);
+                    LLUP(acq);
+#undef LLUP
                 }
             }
         }
@@ -1135,7 +1333,8 @@ compute_fail:
     PULSEQLIB_FREE(cached_kz_id);
     PULSEQLIB_FREE(cached_kzero);
     /* If table ownership was already transferred to `out`, avoid double-free. */
-    if (out && out->table == table) table = NULL;
+    if (out && out->table == table)
+        table = NULL;
     PULSEQLIB_FREE(table);
     pulseqlib_free_trajectory(out);
     return PULSEQLIB_ERR_ALLOC_FAILED;
@@ -1145,12 +1344,14 @@ compute_fail:
 /*  Free trajectory                                                   */
 /* ================================================================== */
 
-void pulseqlib_free_trajectory(pulseqlib_trajectory* traj)
+void pulseqlib_free_trajectory(pulseqlib_trajectory *traj)
 {
     int i;
-    if (!traj) return;
+    if (!traj)
+        return;
 
-    if (traj->kshots.shots) {
+    if (traj->kshots.shots)
+    {
         for (i = 0; i < traj->kshots.num_shots; ++i)
             PULSEQLIB_FREE(traj->kshots.shots[i].k);
         free(traj->kshots.shots);
@@ -1171,40 +1372,47 @@ void pulseqlib_free_trajectory(pulseqlib_trajectory* traj)
 /*  Merge trajectory (append src into dst)                            */
 /* ================================================================== */
 
-int pulseqlib_merge_trajectory(pulseqlib_trajectory*       dst,
-                               const pulseqlib_trajectory* src)
+int pulseqlib_merge_trajectory(pulseqlib_trajectory *dst,
+                               const pulseqlib_trajectory *src)
 {
     int kshot_offset, es_offset, i;
 
-    if (!dst || !src) return PULSEQLIB_ERR_NULL_POINTER;
+    if (!dst || !src)
+        return PULSEQLIB_ERR_NULL_POINTER;
 
     kshot_offset = dst->kshots.num_shots;
-    es_offset    = dst->num_encoding_spaces;
+    es_offset = dst->num_encoding_spaces;
 
     /* ---- Append kshots ---- */
-    if (src->kshots.num_shots > 0) {
+    if (src->kshots.num_shots > 0)
+    {
         int new_count = kshot_offset + src->kshots.num_shots;
-        pulseqlib_kshot* new_shots = (pulseqlib_kshot*)realloc(
+        pulseqlib_kshot *new_shots = (pulseqlib_kshot *)realloc(
             dst->kshots.shots, (size_t)new_count * sizeof(pulseqlib_kshot));
-        if (!new_shots) return PULSEQLIB_ERR_ALLOC_FAILED;
+        if (!new_shots)
+            return PULSEQLIB_ERR_ALLOC_FAILED;
         dst->kshots.shots = new_shots;
-        for (i = 0; i < src->kshots.num_shots; ++i) {
-            pulseqlib_kshot* d = &dst->kshots.shots[kshot_offset + i];
-            const pulseqlib_kshot* s = &src->kshots.shots[i];
+        for (i = 0; i < src->kshots.num_shots; ++i)
+        {
+            pulseqlib_kshot *d = &dst->kshots.shots[kshot_offset + i];
+            const pulseqlib_kshot *s = &src->kshots.shots[i];
             d->num_samples = s->num_samples;
-            d->k = (float*)PULSEQLIB_ALLOC((size_t)s->num_samples * sizeof(float));
-            if (!d->k) return PULSEQLIB_ERR_ALLOC_FAILED;
+            d->k = (float *)PULSEQLIB_ALLOC((size_t)s->num_samples * sizeof(float));
+            if (!d->k)
+                return PULSEQLIB_ERR_ALLOC_FAILED;
             memcpy(d->k, s->k, (size_t)s->num_samples * sizeof(float));
         }
         dst->kshots.num_shots = new_count;
     }
 
     /* ---- Append encoding spaces ---- */
-    if (src->num_encoding_spaces > 0) {
+    if (src->num_encoding_spaces > 0)
+    {
         int new_count = es_offset + src->num_encoding_spaces;
-        pulseqlib_encoding_space* new_es = (pulseqlib_encoding_space*)realloc(
+        pulseqlib_encoding_space *new_es = (pulseqlib_encoding_space *)realloc(
             dst->encoding_spaces, (size_t)new_count * sizeof(pulseqlib_encoding_space));
-        if (!new_es) return PULSEQLIB_ERR_ALLOC_FAILED;
+        if (!new_es)
+            return PULSEQLIB_ERR_ALLOC_FAILED;
         dst->encoding_spaces = new_es;
         memcpy(&dst->encoding_spaces[es_offset], src->encoding_spaces,
                (size_t)src->num_encoding_spaces * sizeof(pulseqlib_encoding_space));
@@ -1212,21 +1420,27 @@ int pulseqlib_merge_trajectory(pulseqlib_trajectory*       dst,
     }
 
     /* ---- Append table entries (adjust kshot IDs + encoding_space_ref) ---- */
-    if (src->num_adc_events > 0) {
+    if (src->num_adc_events > 0)
+    {
         int old_count = dst->num_adc_events;
         int new_count = old_count + src->num_adc_events;
-        pulseqlib_traj_table_entry* new_table = (pulseqlib_traj_table_entry*)realloc(
+        pulseqlib_traj_table_entry *new_table = (pulseqlib_traj_table_entry *)realloc(
             dst->table, (size_t)new_count * sizeof(pulseqlib_traj_table_entry));
-        if (!new_table) return PULSEQLIB_ERR_ALLOC_FAILED;
+        if (!new_table)
+            return PULSEQLIB_ERR_ALLOC_FAILED;
         dst->table = new_table;
         memcpy(&dst->table[old_count], src->table,
                (size_t)src->num_adc_events * sizeof(pulseqlib_traj_table_entry));
 
-        for (i = 0; i < src->num_adc_events; ++i) {
-            pulseqlib_traj_table_entry* e = &dst->table[old_count + i];
-            if (e->kx_shot_id >= 0) e->kx_shot_id += kshot_offset;
-            if (e->ky_shot_id >= 0) e->ky_shot_id += kshot_offset;
-            if (e->kz_shot_id >= 0) e->kz_shot_id += kshot_offset;
+        for (i = 0; i < src->num_adc_events; ++i)
+        {
+            pulseqlib_traj_table_entry *e = &dst->table[old_count + i];
+            if (e->kx_shot_id >= 0)
+                e->kx_shot_id += kshot_offset;
+            if (e->ky_shot_id >= 0)
+                e->ky_shot_id += kshot_offset;
+            if (e->kz_shot_id >= 0)
+                e->kz_shot_id += kshot_offset;
             e->encoding_space_ref += es_offset;
         }
         dst->num_adc_events = new_count;
@@ -1239,27 +1453,31 @@ int pulseqlib_merge_trajectory(pulseqlib_trajectory*       dst,
 /*  Cache I/O helpers (local to this file)                            */
 /* ================================================================== */
 
-static void traj_swap4(void* p)
+static void traj_swap4(void *p)
 {
-    unsigned char* b = (unsigned char*)p;
+    unsigned char *b = (unsigned char *)p;
     unsigned char t;
-    t = b[0]; b[0] = b[3]; b[3] = t;
-    t = b[1]; b[1] = b[2]; b[2] = t;
+    t = b[0];
+    b[0] = b[3];
+    b[3] = t;
+    t = b[1];
+    b[1] = b[2];
+    b[2] = t;
 }
 
-static void traj_swap4_array(void* p, int count)
+static void traj_swap4_array(void *p, int count)
 {
     int i;
     for (i = 0; i < count; ++i)
-        traj_swap4((unsigned char*)p + (size_t)i * 4);
+        traj_swap4((unsigned char *)p + (size_t)i * 4);
 }
 
-static int traj_write4(FILE* f, const void* p, int count)
+static int traj_write4(FILE *f, const void *p, int count)
 {
     return (int)fwrite(p, 4, (size_t)count, f) == count;
 }
 
-static int traj_read4(FILE* f, void* p, int count)
+static int traj_read4(FILE *f, void *p, int count)
 {
     return (int)fread(p, 4, (size_t)count, f) == count;
 }
@@ -1268,14 +1486,14 @@ static int traj_read4(FILE* f, void* p, int count)
 /*  Write trajectory cache (section 4)                                */
 /* ================================================================== */
 
-#define CACHE_ENDIAN_MARKER  0x01020304
+#define CACHE_ENDIAN_MARKER 0x01020304
 #define CACHE_SECTION_TRAJECTORY 4
 
-int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory* traj,
-                                     const char*                 seq_path)
+int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory *traj,
+                                     const char *seq_path)
 {
-    char* cache_path;
-    FILE* f;
+    char *cache_path;
+    FILE *f;
     int marker, num_sections;
     int version_major, version_minor, vendor, stored_size;
     int do_swap;
@@ -1283,53 +1501,78 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory* traj,
     int i, found_idx;
     int entries_buf[16 * 3]; /* up to 16 sections x 3 ints each */
 
-    if (!traj || !seq_path) return PULSEQLIB_ERR_NULL_POINTER;
+    if (!traj || !seq_path)
+        return PULSEQLIB_ERR_NULL_POINTER;
 
     cache_path = traj_make_cache_path(seq_path);
-    if (!cache_path) return PULSEQLIB_ERR_ALLOC_FAILED;
+    if (!cache_path)
+        return PULSEQLIB_ERR_ALLOC_FAILED;
 
     f = fopen(cache_path, "r+b");
-    if (!f) { PULSEQLIB_FREE(cache_path); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+    if (!f)
+    {
+        PULSEQLIB_FREE(cache_path);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
 
     /* Read header */
-    if (!traj_read4(f, &marker, 1)) goto tw_fail;
+    if (!traj_read4(f, &marker, 1))
+        goto tw_fail;
     do_swap = 0;
-    if (marker != CACHE_ENDIAN_MARKER) {
+    if (marker != CACHE_ENDIAN_MARKER)
+    {
         traj_swap4(&marker);
-        if (marker != CACHE_ENDIAN_MARKER) goto tw_fail;
+        if (marker != CACHE_ENDIAN_MARKER)
+            goto tw_fail;
         do_swap = 1;
     }
-    if (!traj_read4(f, &version_major, 1)) goto tw_fail;
-    if (!traj_read4(f, &version_minor, 1)) goto tw_fail;
-    if (!traj_read4(f, &vendor, 1))        goto tw_fail;
-    if (!traj_read4(f, &stored_size, 1))   goto tw_fail;
+    if (!traj_read4(f, &version_major, 1))
+        goto tw_fail;
+    if (!traj_read4(f, &version_minor, 1))
+        goto tw_fail;
+    if (!traj_read4(f, &vendor, 1))
+        goto tw_fail;
+    if (!traj_read4(f, &stored_size, 1))
+        goto tw_fail;
     hdr_ns_pos = ftell(f);
-    if (!traj_read4(f, &num_sections, 1))  goto tw_fail;
-    if (do_swap) {
-        traj_swap4(&version_major); traj_swap4(&version_minor);
-        traj_swap4(&vendor); traj_swap4(&stored_size);
+    if (!traj_read4(f, &num_sections, 1))
+        goto tw_fail;
+    if (do_swap)
+    {
+        traj_swap4(&version_major);
+        traj_swap4(&version_minor);
+        traj_swap4(&vendor);
+        traj_swap4(&stored_size);
         traj_swap4(&num_sections);
     }
-    if (num_sections <= 0 || num_sections > 15) goto tw_fail;
+    if (num_sections <= 0 || num_sections > 15)
+        goto tw_fail;
 
     entries_pos = ftell(f);
-    if (entries_pos < 0) goto tw_fail;
+    if (entries_pos < 0)
+        goto tw_fail;
 
     /* Read existing section entries */
-    for (i = 0; i < num_sections; ++i) {
-        if (!traj_read4(f, &entries_buf[i * 3], 3)) goto tw_fail;
-        if (do_swap) traj_swap4_array(&entries_buf[i * 3], 3);
+    for (i = 0; i < num_sections; ++i)
+    {
+        if (!traj_read4(f, &entries_buf[i * 3], 3))
+            goto tw_fail;
+        if (do_swap)
+            traj_swap4_array(&entries_buf[i * 3], 3);
     }
 
     /* Check if section 4 already exists */
     found_idx = -1;
-    for (i = 0; i < num_sections; ++i) {
-        if (entries_buf[i * 3] == CACHE_SECTION_TRAJECTORY) {
+    for (i = 0; i < num_sections; ++i)
+    {
+        if (entries_buf[i * 3] == CACHE_SECTION_TRAJECTORY)
+        {
             found_idx = i;
             break;
         }
     }
-    if (found_idx < 0) {
+    if (found_idx < 0)
+    {
         found_idx = num_sections;
         entries_buf[found_idx * 3] = CACHE_SECTION_TRAJECTORY;
         num_sections++;
@@ -1338,86 +1581,133 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory* traj,
     /* Seek to end, write trajectory data */
     fseek(f, 0, SEEK_END);
     data_start = ftell(f);
-    if (data_start < 0) goto tw_fail;
+    if (data_start < 0)
+        goto tw_fail;
 
     /* Write kshot library */
-    if (!traj_write4(f, &traj->kshots.num_shots, 1)) goto tw_fail;
-    for (i = 0; i < traj->kshots.num_shots; ++i) {
-        if (!traj_write4(f, &traj->kshots.shots[i].num_samples, 1)) goto tw_fail;
-        if (traj->kshots.shots[i].num_samples > 0) {
+    if (!traj_write4(f, &traj->kshots.num_shots, 1))
+        goto tw_fail;
+    for (i = 0; i < traj->kshots.num_shots; ++i)
+    {
+        if (!traj_write4(f, &traj->kshots.shots[i].num_samples, 1))
+            goto tw_fail;
+        if (traj->kshots.shots[i].num_samples > 0)
+        {
             if (!traj_write4(f, traj->kshots.shots[i].k,
-                            traj->kshots.shots[i].num_samples)) goto tw_fail;
+                             traj->kshots.shots[i].num_samples))
+                goto tw_fail;
         }
     }
 
     /* Write encoding spaces */
-    if (!traj_write4(f, &traj->num_encoding_spaces, 1)) goto tw_fail;
-    for (i = 0; i < traj->num_encoding_spaces; ++i) {
-        const pulseqlib_encoding_space* es = &traj->encoding_spaces[i];
-        if (!traj_write4(f, es->fov, 3)) goto tw_fail;
-        if (!traj_write4(f, es->matrix, 3)) goto tw_fail;
-        if (!traj_write4(f, es->nav_fov, 3)) goto tw_fail;
-        if (!traj_write4(f, es->nav_matrix, 3)) goto tw_fail;
-        if (!traj_write4(f, &es->subseq_idx, 1)) goto tw_fail;
-        if (!traj_write4(f, &es->nav_subseq_offset, 1)) goto tw_fail;
-        if (!traj_write4(f, &es->label_limits, sizeof(pulseqlib_label_limits) / sizeof(int))) goto tw_fail;
+    if (!traj_write4(f, &traj->num_encoding_spaces, 1))
+        goto tw_fail;
+    for (i = 0; i < traj->num_encoding_spaces; ++i)
+    {
+        const pulseqlib_encoding_space *es = &traj->encoding_spaces[i];
+        if (!traj_write4(f, es->fov, 3))
+            goto tw_fail;
+        if (!traj_write4(f, es->matrix, 3))
+            goto tw_fail;
+        if (!traj_write4(f, es->nav_fov, 3))
+            goto tw_fail;
+        if (!traj_write4(f, es->nav_matrix, 3))
+            goto tw_fail;
+        if (!traj_write4(f, &es->subseq_idx, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &es->nav_subseq_offset, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &es->label_limits, sizeof(pulseqlib_label_limits) / sizeof(int)))
+            goto tw_fail;
     }
 
     /* Write trajectory table */
-    if (!traj_write4(f, &traj->num_adc_events, 1)) goto tw_fail;
-    for (i = 0; i < traj->num_adc_events; ++i) {
-        const pulseqlib_traj_table_entry* e = &traj->table[i];
+    if (!traj_write4(f, &traj->num_adc_events, 1))
+        goto tw_fail;
+    for (i = 0; i < traj->num_adc_events; ++i)
+    {
+        const pulseqlib_traj_table_entry *e = &traj->table[i];
         /* Write as contiguous 17 ints/floats:
          * 3 shot_ids + 3 amplitudes + rotation_id + 10 labels */
-        if (!traj_write4(f, &e->kx_shot_id, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->ky_shot_id, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->kz_shot_id, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->gx_amplitude, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->gy_amplitude, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->gz_amplitude, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->rotation_id, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->slc, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->seg, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->rep, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->avg, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->set, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->eco, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->phs, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->lin, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->par, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->acq, 1)) goto tw_fail;
+        if (!traj_write4(f, &e->kx_shot_id, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->ky_shot_id, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->kz_shot_id, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->gx_amplitude, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->gy_amplitude, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->gz_amplitude, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->rotation_id, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->slc, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->seg, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->rep, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->avg, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->set, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->eco, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->phs, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->lin, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->par, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->acq, 1))
+            goto tw_fail;
         /* new fields: flags (as 2 ints for portability), center_sample,
          * sample_time_us, encoding_space_ref.
          * On 32-bit targets unsigned long is 32 bits, so flags_hi is always 0. */
         {
             int flags_lo = (int)(e->flags & 0xFFFFFFFFUL);
             int flags_hi = 0;
-            if (sizeof(unsigned long) > 4) {
+            if (sizeof(unsigned long) > 4)
+            {
                 flags_hi = (int)((e->flags >> 16) >> 16);
             }
-            if (!traj_write4(f, &flags_lo, 1)) goto tw_fail;
-            if (!traj_write4(f, &flags_hi, 1)) goto tw_fail;
+            if (!traj_write4(f, &flags_lo, 1))
+                goto tw_fail;
+            if (!traj_write4(f, &flags_hi, 1))
+                goto tw_fail;
         }
-        if (!traj_write4(f, &e->center_sample, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->sample_time_us, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->encoding_space_ref, 1)) goto tw_fail;
-        if (!traj_write4(f, &e->off, 1)) goto tw_fail;
+        if (!traj_write4(f, &e->center_sample, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->sample_time_us, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->encoding_space_ref, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &e->off, 1))
+            goto tw_fail;
     }
 
     data_end = ftell(f);
-    if (data_end < 0) goto tw_fail;
+    if (data_end < 0)
+        goto tw_fail;
 
     entries_buf[found_idx * 3 + 1] = (int)data_start;
     entries_buf[found_idx * 3 + 2] = (int)(data_end - data_start);
 
     /* Patch num_sections */
-    if (fseek(f, hdr_ns_pos, SEEK_SET) != 0) goto tw_fail;
-    if (!traj_write4(f, &num_sections, 1)) goto tw_fail;
+    if (fseek(f, hdr_ns_pos, SEEK_SET) != 0)
+        goto tw_fail;
+    if (!traj_write4(f, &num_sections, 1))
+        goto tw_fail;
 
     /* Rewrite all section entries */
-    if (fseek(f, entries_pos, SEEK_SET) != 0) goto tw_fail;
-    for (i = 0; i < num_sections; ++i) {
-        if (!traj_write4(f, &entries_buf[i * 3], 3)) goto tw_fail;
+    if (fseek(f, entries_pos, SEEK_SET) != 0)
+        goto tw_fail;
+    for (i = 0; i < num_sections; ++i)
+    {
+        if (!traj_write4(f, &entries_buf[i * 3], 3))
+            goto tw_fail;
     }
 
     fclose(f);
@@ -1434,42 +1724,77 @@ tw_fail:
 /*  Load trajectory from cache (section 4)                            */
 /* ================================================================== */
 
-int pulseqlib_load_trajectory_cache(pulseqlib_trajectory* out,
-                                    const char*           seq_path)
+int pulseqlib_load_trajectory_cache(pulseqlib_trajectory *out,
+                                    const char *seq_path)
 {
-    char* cache_path;
-    FILE* f;
+    char *cache_path;
+    FILE *f;
     int marker, num_sections;
     int version_major, version_minor, vendor, stored_size;
     int do_swap, i, found;
     int section_id, section_offset, section_size;
 
-    if (!out || !seq_path) return PULSEQLIB_ERR_NULL_POINTER;
+    if (!out || !seq_path)
+        return PULSEQLIB_ERR_NULL_POINTER;
     memset(out, 0, sizeof(*out));
 
     cache_path = traj_make_cache_path(seq_path);
-    if (!cache_path) return PULSEQLIB_ERR_ALLOC_FAILED;
+    if (!cache_path)
+        return PULSEQLIB_ERR_ALLOC_FAILED;
 
     f = fopen(cache_path, "rb");
     PULSEQLIB_FREE(cache_path);
-    if (!f) return PULSEQLIB_ERR_FILE_READ_FAILED;
+    if (!f)
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
 
     /* Read header */
-    if (!traj_read4(f, &marker, 1)) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+    if (!traj_read4(f, &marker, 1))
+    {
+        fclose(f);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
     do_swap = 0;
-    if (marker != CACHE_ENDIAN_MARKER) {
+    if (marker != CACHE_ENDIAN_MARKER)
+    {
         traj_swap4(&marker);
-        if (marker != CACHE_ENDIAN_MARKER) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+        if (marker != CACHE_ENDIAN_MARKER)
+        {
+            fclose(f);
+            return PULSEQLIB_ERR_FILE_READ_FAILED;
+        }
         do_swap = 1;
     }
-    if (!traj_read4(f, &version_major, 1)) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
-    if (!traj_read4(f, &version_minor, 1)) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
-    if (!traj_read4(f, &vendor, 1))        { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
-    if (!traj_read4(f, &stored_size, 1))   { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
-    if (!traj_read4(f, &num_sections, 1))  { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
-    if (do_swap) {
-        traj_swap4(&version_major); traj_swap4(&version_minor);
-        traj_swap4(&vendor); traj_swap4(&stored_size);
+    if (!traj_read4(f, &version_major, 1))
+    {
+        fclose(f);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
+    if (!traj_read4(f, &version_minor, 1))
+    {
+        fclose(f);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
+    if (!traj_read4(f, &vendor, 1))
+    {
+        fclose(f);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
+    if (!traj_read4(f, &stored_size, 1))
+    {
+        fclose(f);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
+    if (!traj_read4(f, &num_sections, 1))
+    {
+        fclose(f);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
+    if (do_swap)
+    {
+        traj_swap4(&version_major);
+        traj_swap4(&version_minor);
+        traj_swap4(&vendor);
+        traj_swap4(&stored_size);
         traj_swap4(&num_sections);
     }
 
@@ -1477,116 +1802,202 @@ int pulseqlib_load_trajectory_cache(pulseqlib_trajectory* out,
     found = 0;
     section_offset = 0;
     section_size = 0;
-    for (i = 0; i < num_sections; ++i) {
-        if (!traj_read4(f, &section_id, 1))     { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
-        if (!traj_read4(f, &section_offset, 1))  { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
-        if (!traj_read4(f, &section_size, 1))    { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
-        if (do_swap) { traj_swap4(&section_id); traj_swap4(&section_offset); traj_swap4(&section_size); }
-        if (section_id == CACHE_SECTION_TRAJECTORY) { found = 1; break; }
+    for (i = 0; i < num_sections; ++i)
+    {
+        if (!traj_read4(f, &section_id, 1))
+        {
+            fclose(f);
+            return PULSEQLIB_ERR_FILE_READ_FAILED;
+        }
+        if (!traj_read4(f, &section_offset, 1))
+        {
+            fclose(f);
+            return PULSEQLIB_ERR_FILE_READ_FAILED;
+        }
+        if (!traj_read4(f, &section_size, 1))
+        {
+            fclose(f);
+            return PULSEQLIB_ERR_FILE_READ_FAILED;
+        }
+        if (do_swap)
+        {
+            traj_swap4(&section_id);
+            traj_swap4(&section_offset);
+            traj_swap4(&section_size);
+        }
+        if (section_id == CACHE_SECTION_TRAJECTORY)
+        {
+            found = 1;
+            break;
+        }
     }
 
-    if (!found) {
+    if (!found)
+    {
         fclose(f);
         return PULSEQLIB_ERR_FILE_READ_FAILED;
     }
 
     /* Seek to trajectory data */
-    if (fseek(f, section_offset, SEEK_SET) != 0) { fclose(f); return PULSEQLIB_ERR_FILE_READ_FAILED; }
+    if (fseek(f, section_offset, SEEK_SET) != 0)
+    {
+        fclose(f);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
 
     /* Read kshot library */
-    if (!traj_read4(f, &out->kshots.num_shots, 1)) goto lr_fail;
-    if (do_swap) traj_swap4(&out->kshots.num_shots);
+    if (!traj_read4(f, &out->kshots.num_shots, 1))
+        goto lr_fail;
+    if (do_swap)
+        traj_swap4(&out->kshots.num_shots);
 
-    if (out->kshots.num_shots > 0) {
-        out->kshots.shots = (pulseqlib_kshot*)PULSEQLIB_ALLOC(
+    if (out->kshots.num_shots > 0)
+    {
+        out->kshots.shots = (pulseqlib_kshot *)PULSEQLIB_ALLOC(
             (size_t)out->kshots.num_shots * sizeof(pulseqlib_kshot));
-        if (!out->kshots.shots) goto lr_fail;
+        if (!out->kshots.shots)
+            goto lr_fail;
         memset(out->kshots.shots, 0, (size_t)out->kshots.num_shots * sizeof(pulseqlib_kshot));
 
-        for (i = 0; i < out->kshots.num_shots; ++i) {
-            if (!traj_read4(f, &out->kshots.shots[i].num_samples, 1)) goto lr_fail;
-            if (do_swap) traj_swap4(&out->kshots.shots[i].num_samples);
+        for (i = 0; i < out->kshots.num_shots; ++i)
+        {
+            if (!traj_read4(f, &out->kshots.shots[i].num_samples, 1))
+                goto lr_fail;
+            if (do_swap)
+                traj_swap4(&out->kshots.shots[i].num_samples);
 
-            if (out->kshots.shots[i].num_samples > 0) {
-                out->kshots.shots[i].k = (float*)PULSEQLIB_ALLOC(
+            if (out->kshots.shots[i].num_samples > 0)
+            {
+                out->kshots.shots[i].k = (float *)PULSEQLIB_ALLOC(
                     (size_t)out->kshots.shots[i].num_samples * sizeof(float));
-                if (!out->kshots.shots[i].k) goto lr_fail;
+                if (!out->kshots.shots[i].k)
+                    goto lr_fail;
                 if (!traj_read4(f, out->kshots.shots[i].k,
-                               out->kshots.shots[i].num_samples)) goto lr_fail;
-                if (do_swap) traj_swap4_array(out->kshots.shots[i].k,
-                                              out->kshots.shots[i].num_samples);
+                                out->kshots.shots[i].num_samples))
+                    goto lr_fail;
+                if (do_swap)
+                    traj_swap4_array(out->kshots.shots[i].k,
+                                     out->kshots.shots[i].num_samples);
             }
         }
     }
 
     /* Read encoding spaces */
-    if (!traj_read4(f, &out->num_encoding_spaces, 1)) goto lr_fail;
-    if (do_swap) traj_swap4(&out->num_encoding_spaces);
+    if (!traj_read4(f, &out->num_encoding_spaces, 1))
+        goto lr_fail;
+    if (do_swap)
+        traj_swap4(&out->num_encoding_spaces);
 
-    if (out->num_encoding_spaces > 0) {
-        out->encoding_spaces = (pulseqlib_encoding_space*)PULSEQLIB_ALLOC(
+    if (out->num_encoding_spaces > 0)
+    {
+        out->encoding_spaces = (pulseqlib_encoding_space *)PULSEQLIB_ALLOC(
             (size_t)out->num_encoding_spaces * sizeof(pulseqlib_encoding_space));
-        if (!out->encoding_spaces) goto lr_fail;
+        if (!out->encoding_spaces)
+            goto lr_fail;
 
-        for (i = 0; i < out->num_encoding_spaces; ++i) {
-            pulseqlib_encoding_space* es = &out->encoding_spaces[i];
-            if (!traj_read4(f, es->fov, 3)) goto lr_fail;
-            if (!traj_read4(f, es->matrix, 3)) goto lr_fail;
-            if (!traj_read4(f, es->nav_fov, 3)) goto lr_fail;
-            if (!traj_read4(f, es->nav_matrix, 3)) goto lr_fail;
-            if (!traj_read4(f, &es->subseq_idx, 1)) goto lr_fail;
-            if (!traj_read4(f, &es->nav_subseq_offset, 1)) goto lr_fail;
-            if (!traj_read4(f, &es->label_limits, sizeof(pulseqlib_label_limits) / sizeof(int))) goto lr_fail;
+        for (i = 0; i < out->num_encoding_spaces; ++i)
+        {
+            pulseqlib_encoding_space *es = &out->encoding_spaces[i];
+            if (!traj_read4(f, es->fov, 3))
+                goto lr_fail;
+            if (!traj_read4(f, es->matrix, 3))
+                goto lr_fail;
+            if (!traj_read4(f, es->nav_fov, 3))
+                goto lr_fail;
+            if (!traj_read4(f, es->nav_matrix, 3))
+                goto lr_fail;
+            if (!traj_read4(f, &es->subseq_idx, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &es->nav_subseq_offset, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &es->label_limits, sizeof(pulseqlib_label_limits) / sizeof(int)))
+                goto lr_fail;
             /* swap all fields: 3+3+3+3 floats + 2 ints + 20 ints (label_limits) = 34 words */
-            if (do_swap) traj_swap4_array(es->fov, 34);
+            if (do_swap)
+                traj_swap4_array(es->fov, 34);
         }
     }
 
     /* Read trajectory table */
-    if (!traj_read4(f, &out->num_adc_events, 1)) goto lr_fail;
-    if (do_swap) traj_swap4(&out->num_adc_events);
+    if (!traj_read4(f, &out->num_adc_events, 1))
+        goto lr_fail;
+    if (do_swap)
+        traj_swap4(&out->num_adc_events);
 
-    if (out->num_adc_events > 0) {
-        out->table = (pulseqlib_traj_table_entry*)PULSEQLIB_ALLOC(
+    if (out->num_adc_events > 0)
+    {
+        out->table = (pulseqlib_traj_table_entry *)PULSEQLIB_ALLOC(
             (size_t)out->num_adc_events * sizeof(pulseqlib_traj_table_entry));
-        if (!out->table) goto lr_fail;
+        if (!out->table)
+            goto lr_fail;
 
-        for (i = 0; i < out->num_adc_events; ++i) {
-            pulseqlib_traj_table_entry* e = &out->table[i];
-            if (!traj_read4(f, &e->kx_shot_id, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->ky_shot_id, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->kz_shot_id, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->gx_amplitude, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->gy_amplitude, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->gz_amplitude, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->rotation_id, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->slc, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->seg, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->rep, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->avg, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->set, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->eco, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->phs, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->lin, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->par, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->acq, 1)) goto lr_fail;
-            if (do_swap) traj_swap4_array(&e->kx_shot_id, 17);
+        for (i = 0; i < out->num_adc_events; ++i)
+        {
+            pulseqlib_traj_table_entry *e = &out->table[i];
+            if (!traj_read4(f, &e->kx_shot_id, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->ky_shot_id, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->kz_shot_id, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->gx_amplitude, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->gy_amplitude, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->gz_amplitude, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->rotation_id, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->slc, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->seg, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->rep, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->avg, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->set, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->eco, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->phs, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->lin, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->par, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->acq, 1))
+                goto lr_fail;
+            if (do_swap)
+                traj_swap4_array(&e->kx_shot_id, 17);
             /* new fields */
             {
                 int flags_lo = 0, flags_hi = 0;
-                if (!traj_read4(f, &flags_lo, 1)) goto lr_fail;
-                if (!traj_read4(f, &flags_hi, 1)) goto lr_fail;
-                if (do_swap) { traj_swap4(&flags_lo); traj_swap4(&flags_hi); }
+                if (!traj_read4(f, &flags_lo, 1))
+                    goto lr_fail;
+                if (!traj_read4(f, &flags_hi, 1))
+                    goto lr_fail;
+                if (do_swap)
+                {
+                    traj_swap4(&flags_lo);
+                    traj_swap4(&flags_hi);
+                }
                 e->flags = (unsigned long)(unsigned int)flags_lo;
-                if (sizeof(unsigned long) > 4) {
+                if (sizeof(unsigned long) > 4)
+                {
                     e->flags |= ((unsigned long)(unsigned int)flags_hi << 16) << 16;
                 }
             }
-            if (!traj_read4(f, &e->center_sample, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->sample_time_us, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->encoding_space_ref, 1)) goto lr_fail;
-            if (!traj_read4(f, &e->off, 1)) goto lr_fail;
-            if (do_swap) traj_swap4_array(&e->center_sample, 4);
+            if (!traj_read4(f, &e->center_sample, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->sample_time_us, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->encoding_space_ref, 1))
+                goto lr_fail;
+            if (!traj_read4(f, &e->off, 1))
+                goto lr_fail;
+            if (do_swap)
+                traj_swap4_array(&e->center_sample, 4);
         }
     }
 

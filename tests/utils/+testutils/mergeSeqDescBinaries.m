@@ -1,5 +1,5 @@
 function mergeSeqDescBinaries(out_path, src_paths)
-%MERGESEQDESCBINARIES  Merge per-subseq _seq_desc.bin files into one collection
+%MERGESEQDESCBINARIES  Merge per-subseq _seq_desc.truth files into one collection
 %                      truth file, mirroring the layout of TruthBuilder
 %                      exportSequenceDescription (Section 5 wire format).
 %

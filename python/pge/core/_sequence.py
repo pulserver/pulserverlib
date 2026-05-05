@@ -654,7 +654,7 @@ class SequenceCollection(pp.Sequence):
         """Return the sequence description for all subsequences.
 
         Builds :class:`SequenceDescriptionInfo` from the loaded collection
-        using the C backend.  Always available — no ``.bin`` cache file
+        using the C backend.  Always available — no ``.pge`` cache file
         required.
 
         Returns
@@ -679,9 +679,9 @@ class SequenceCollection(pp.Sequence):
     def trajectory_info(self):
         """Return trajectory data from the binary cache, if present.
 
-        Reads section 5 (TRAJECTORY) from the ``.bin`` cache file written
+        Reads section 5 (TRAJECTORY) from the ``.pge`` cache file written
         alongside the ``.seq`` file by the PSD predownload phase.  Returns
-        ``None`` for Cartesian sequences or when no ``.bin`` file is present.
+        ``None`` for Cartesian sequences or when no ``.pge`` file is present.
 
         Returns
         -------

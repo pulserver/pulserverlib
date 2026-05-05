@@ -15,12 +15,12 @@ function exportCollectionTruth(out_dir, base_name, truths)
     end
 
     write_meta(fullfile(out_dir, [base_name '_meta.txt']), merged.meta);
-    write_tr_waveforms(fullfile(out_dir, [base_name '_tr_waveform.bin']), merged.tr_waveforms);
-    write_segment_defs(fullfile(out_dir, [base_name '_segment_def.bin']), merged.segment_def);
-    write_freqmod_defs(fullfile(out_dir, [base_name '_freqmod_def.bin']), merged.freqmod_def);
-    write_scan_table(fullfile(out_dir, [base_name '_scan_table.bin']), merged.scan_table);
-    write_label_state(fullfile(out_dir, [base_name '_label_state.bin']), merged.label_state);
-    write_freqmod_plan(fullfile(out_dir, [base_name '_freqmod_plan.bin']), merged.freqmod_plan);
+    write_tr_waveforms(fullfile(out_dir, [base_name '_tr_waveform.truth']), merged.tr_waveforms);
+    write_segment_defs(fullfile(out_dir, [base_name '_segment_def.truth']), merged.segment_def);
+    write_freqmod_defs(fullfile(out_dir, [base_name '_freqmod_def.truth']), merged.freqmod_def);
+    write_scan_table(fullfile(out_dir, [base_name '_scan_table.truth']), merged.scan_table);
+    write_label_state(fullfile(out_dir, [base_name '_label_state.truth']), merged.label_state);
+    write_freqmod_plan(fullfile(out_dir, [base_name '_freqmod_plan.truth']), merged.freqmod_plan);
 end
 
 function merged = merge_truth_cases(truths)

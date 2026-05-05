@@ -2138,7 +2138,7 @@ int pulseqlib_get_tr_waveforms(const pulseqlib_collection *coll,
                     {
                         diag->code = PULSEQLIB_ERR_INVALID_ARGUMENT;
                         sprintf(diag->message,
-                            "ADC anchor not found for block %d", n);
+                                "ADC anchor not found for block %d", n);
                     }
                     return PULSEQLIB_ERR_INVALID_ARGUMENT;
                 }

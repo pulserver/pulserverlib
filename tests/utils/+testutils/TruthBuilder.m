@@ -172,28 +172,28 @@ classdef TruthBuilder < handle
             obj.exportMeta(fullfile(out_dir, [base_name '_meta.txt']));
 
             % TR waveform binary
-            obj.exportTrWaveform(fullfile(out_dir, [base_name '_tr_waveform.bin']));
+            obj.exportTrWaveform(fullfile(out_dir, [base_name '_tr_waveform.truth']));
 
             % Segment definition binary
-            obj.exportSegmentDef(fullfile(out_dir, [base_name '_segment_def.bin']));
+            obj.exportSegmentDef(fullfile(out_dir, [base_name '_segment_def.truth']));
 
             % Freq-mod definition binary
-            obj.exportFreqModDefs(fullfile(out_dir, [base_name '_freqmod_def.bin']));
+            obj.exportFreqModDefs(fullfile(out_dir, [base_name '_freqmod_def.truth']));
 
             % Scan table binary
-            obj.exportScanTable(fullfile(out_dir, [base_name '_scan_table.bin']));
+            obj.exportScanTable(fullfile(out_dir, [base_name '_scan_table.truth']));
 
             % Supplemental label-state truth for metadata validation
-            obj.exportLabelState(fullfile(out_dir, [base_name '_label_state.bin']));
+            obj.exportLabelState(fullfile(out_dir, [base_name '_label_state.truth']));
 
             % Supplemental plan-level freq-mod truth (rotation-aware projected library)
-            obj.exportFreqModPlan(fullfile(out_dir, [base_name '_freqmod_plan.bin']));
+            obj.exportFreqModPlan(fullfile(out_dir, [base_name '_freqmod_plan.truth']));
 
             % Trajectory truth (Phase A MVP — per-ADC k-space samples)
-            obj.exportTrajectory(fullfile(out_dir, [base_name '_trajectory.bin']));
+            obj.exportTrajectory(fullfile(out_dir, [base_name '_trajectory.truth']));
 
             % Sequence description (Section 5 truth)
-            obj.exportSequenceDescription(fullfile(out_dir, [base_name '_seq_desc.bin']));
+            obj.exportSequenceDescription(fullfile(out_dir, [base_name '_seq_desc.truth']));
         end
     end
 

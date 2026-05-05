@@ -66,7 +66,7 @@ static void sd_swap4_array(void *p, int count)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Path helper: .seq → .bin (same as in trajectory.c)                */
+/*  Path helper: .seq → .pge (same as in trajectory.c)                */
 /* ------------------------------------------------------------------ */
 static char *sd_make_cache_path(const char *seq_path)
 {
@@ -78,7 +78,7 @@ static char *sd_make_cache_path(const char *seq_path)
     if (!p)
         return NULL;
     memcpy(p, seq_path, len - 4);
-    memcpy(p + len - 4, ".bin", 5);
+    memcpy(p + len - 4, ".pge", 5);
     return p;
 }
 

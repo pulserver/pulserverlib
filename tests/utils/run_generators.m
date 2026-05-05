@@ -23,7 +23,7 @@ for idx = 1:numel(script_order)
     run_generator_script(script_path);
 end
 
-% Post-pass: build pulseqlib cache .bin alongside each *valid* .seq fixture.
+% Post-pass: build pulseqlib cache .pge alongside each *valid* .seq fixture.
 % Fixtures named *_fail_* or *_corrupted are intentional negative-test inputs
 % (consumed by ctests for safety/IO assertions); pulseqlib_read is expected
 % to reject them, so we skip them here.

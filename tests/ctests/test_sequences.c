@@ -26,23 +26,25 @@
 #include <math.h>
 
 static int tr_waveform_matches_ref(
-    const seg_tr_waveform* ref_wf,
-    const pulseqlib_tr_gradient_waveforms* lib_wf)
+    const seg_tr_waveform *ref_wf,
+    const pulseqlib_tr_gradient_waveforms *lib_wf)
 {
     const float wave_rel_tol = 1e-3f;
     const float wave_time_abs_tol = 0.5f;
     int i, n;
 
     n = ref_wf->num_samples < lib_wf->gx.num_samples
-        ? ref_wf->num_samples : lib_wf->gx.num_samples;
+            ? ref_wf->num_samples
+            : lib_wf->gx.num_samples;
 
     if (abs(ref_wf->num_samples - lib_wf->gx.num_samples) > 1)
         return 0;
 
-    for (i = 0; i < n; ++i) {
-        float ref_t  = ref_wf->time_us[i];
-        float lib_t  = lib_wf->gx.time_us[i];
-        float dt     = ref_t - lib_t;
+    for (i = 0; i < n; ++i)
+    {
+        float ref_t = ref_wf->time_us[i];
+        float lib_t = lib_wf->gx.time_us[i];
+        float dt = ref_t - lib_t;
         float ref_gx = ref_wf->gx[i];
         float ref_gy = ref_wf->gy[i];
         float ref_gz = ref_wf->gz[i];
@@ -51,16 +53,20 @@ static int tr_waveform_matches_ref(
         float lib_gz = lib_wf->gz.amplitude_hz_per_m[i];
         float tol_gx, tol_gy, tol_gz;
 
-        if (dt < 0) dt = -dt;
+        if (dt < 0)
+            dt = -dt;
         if (dt > wave_time_abs_tol)
             return 0;
 
         tol_gx = (ref_gx < 0 ? -ref_gx : ref_gx) * wave_rel_tol;
-        if (tol_gx < 1.0f) tol_gx = 1.0f;
+        if (tol_gx < 1.0f)
+            tol_gx = 1.0f;
         tol_gy = (ref_gy < 0 ? -ref_gy : ref_gy) * wave_rel_tol;
-        if (tol_gy < 1.0f) tol_gy = 1.0f;
+        if (tol_gy < 1.0f)
+            tol_gy = 1.0f;
         tol_gz = (ref_gz < 0 ? -ref_gz : ref_gz) * wave_rel_tol;
-        if (tol_gz < 1.0f) tol_gz = 1.0f;
+        if (tol_gz < 1.0f)
+            tol_gz = 1.0f;
 
         if (fabsf(ref_gx - lib_gx) > tol_gx ||
             fabsf(ref_gy - lib_gy) > tol_gy ||
@@ -71,10 +77,11 @@ static int tr_waveform_matches_ref(
     return 1;
 }
 
-typedef struct {
-    const char* name;
-    const char* seq_file;
-    const char* base;
+typedef struct
+{
+    const char *name;
+    const char *seq_file;
+    const char *base;
     int num_averages;
 } seq_case;
 
@@ -136,7 +143,7 @@ static const seq_case kGreEpiCollectionCases[] = {
     {"gre_epi_collection_2d_1sl_3avg", "gre_epi_collection_2d_1sl_3avg.seq", "gre_epi_collection_2d_1sl_3avg", 3},
 };
 
-static void build_case_path(char* dst, size_t dst_sz, const seq_case* tc, const char* suffix)
+static void build_case_path(char *dst, size_t dst_sz, const seq_case *tc, const char *suffix)
 {
     (void)snprintf(dst, dst_sz, TEST_DATA_DIR "%s%s", tc->base, suffix);
 }
@@ -145,10 +152,10 @@ static void build_case_path(char* dst, size_t dst_sz, const seq_case* tc, const 
 /*  Phase 1: example_check step 6 (ADC, max_b1, TR)                  */
 /* ------------------------------------------------------------------ */
 
-static void run_check_case(const seq_case* tc)
+static void run_check_case(const seq_case *tc)
 {
     pulseqlib_opts opts;
-    pulseqlib_collection* coll = NULL;
+    pulseqlib_collection *coll = NULL;
     pulseqlib_collection_info cinfo = PULSEQLIB_COLLECTION_INFO_INIT;
     pulseqlib_subseq_info sinfo = PULSEQLIB_SUBSEQ_INFO_INIT;
     seg_meta meta = SEG_META_INIT;
@@ -177,7 +184,8 @@ static void run_check_case(const seq_case* tc)
 
     /* 1. Unique ADC definitions */
     mu_assert_int_eq(meta.num_unique_adcs, sinfo.num_unique_adcs);
-    for (a = 0; a < sinfo.num_unique_adcs; ++a) {
+    for (a = 0; a < sinfo.num_unique_adcs; ++a)
+    {
         pulseqlib_adc_def ad = PULSEQLIB_ADC_DEF_INIT;
         rc = pulseqlib_get_adc_def(coll, &ad, a);
         mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_adc_def failed");
@@ -207,7 +215,7 @@ static void run_check_case(const seq_case* tc)
             sinfo.degenerate_cooldown,
             sinfo.num_passes);
     mu_assert_float_near("TR duration",
-        (float)meta.tr_duration_us, sinfo.tr_duration_us, 1.0f);
+                         (float)meta.tr_duration_us, sinfo.tr_duration_us, 1.0f);
 
     /* 4. Num segments — verify segment count matches truth */
     fprintf(stderr, "[check][%s] num_segments: meta=%d  lib=%d\n",
@@ -297,12 +305,12 @@ MU_TEST_SUITE(suite_sequences_check)
 
 /* Relative tolerance for waveform amplitude comparison. */
 #define WAVE_REL_TOL 1e-3f
-#define WAVE_TIME_ABS_TOL 0.5f  /* us — half a raster step */
+#define WAVE_TIME_ABS_TOL 0.5f /* us — half a raster step */
 
-static void run_sequences_uieval_case(const seq_case* tc)
+static void run_sequences_uieval_case(const seq_case *tc)
 {
     pulseqlib_opts opts;
-    pulseqlib_collection* coll = NULL;
+    pulseqlib_collection *coll = NULL;
     pulseqlib_collection_info cinfo = PULSEQLIB_COLLECTION_INFO_INIT;
     pulseqlib_subseq_info sinfo = PULSEQLIB_SUBSEQ_INFO_INIT;
     seg_meta meta = SEG_META_INIT;
@@ -331,12 +339,12 @@ static void run_sequences_uieval_case(const seq_case* tc)
     ok = parse_meta(meta_path, &meta);
     mu_assert(ok, "failed to parse case _meta.txt");
 
-
     /* 4. Segment structure */
     fprintf(stderr, "[uieval][%s] num_segments: meta=%d  lib=%d\n",
             tc->name, meta.num_segments, cinfo.num_segments);
     mu_assert_int_eq(meta.num_segments, cinfo.num_segments);
-    for (s = 0; s < cinfo.num_segments && s < MAX_SEGMENTS; ++s) {
+    for (s = 0; s < cinfo.num_segments && s < MAX_SEGMENTS; ++s)
+    {
         pulseqlib_segment_info segi = PULSEQLIB_SEGMENT_INFO_INIT;
         rc = pulseqlib_get_segment_info(coll, &segi, s);
         mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_segment_info failed");
@@ -349,34 +357,40 @@ static void run_sequences_uieval_case(const seq_case* tc)
     int num_subseq = cinfo.num_subsequences;
     mu_assert(num_subseq > 0, "invalid num_subsequences from library");
 
-    for (int subseq_idx = 0; subseq_idx < num_subseq; ++subseq_idx) {
+    for (int subseq_idx = 0; subseq_idx < num_subseq; ++subseq_idx)
+    {
         rc = pulseqlib_get_subseq_info(coll, &sinfo, subseq_idx);
         mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_subseq_info failed");
         mu_assert(sinfo.num_passes > 0, "invalid num_passes from library");
 
         /* Build ground truth path for this subsequence if needed (here assumed single ground truth for all, adjust if needed) */
-        build_case_path(tr_path, sizeof(tr_path), tc, "_tr_waveform.bin");
+        build_case_path(tr_path, sizeof(tr_path), tc, "_tr_waveform.truth");
         ok = parse_tr_waveform_set(tr_path, &ref_wfs);
-        mu_assert(ok, "failed to parse case _tr_waveform.bin");
+        mu_assert(ok, "failed to parse case _tr_waveform.truth");
         mu_assert_int_eq(meta.num_canonical_trs, ref_wfs.num_trs);
 
-        for (int tr_idx = 0; tr_idx < ref_wfs.num_trs; ++tr_idx) {
+        for (int tr_idx = 0; tr_idx < ref_wfs.num_trs; ++tr_idx)
+        {
             pulseqlib_tr_gradient_waveforms tr_wf = PULSEQLIB_TR_GRADIENT_WAVEFORMS_INIT;
             pulseqlib_diagnostic_init(&diag);
             rc = pulseqlib_get_tr_gradient_waveforms(coll, &tr_wf, &diag, subseq_idx, tr_idx);
-            if (!PULSEQLIB_SUCCEEDED(rc)) {
+            if (!PULSEQLIB_SUCCEEDED(rc))
+            {
                 fprintf(stderr, "[DIAG] pulseqlib_get_tr_gradient_waveforms failed: case=%s subseq=%d tr_idx=%d rc=%d\n", tc->name, subseq_idx, tr_idx, rc);
             }
             mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_tr_gradient_waveforms failed");
 
             int matched = 0;
-            for (i = 0; i < ref_wfs.num_trs; ++i) {
-                if (tr_waveform_matches_ref(&ref_wfs.waveforms[i], &tr_wf)) {
+            for (i = 0; i < ref_wfs.num_trs; ++i)
+            {
+                if (tr_waveform_matches_ref(&ref_wfs.waveforms[i], &tr_wf))
+                {
                     matched = 1;
                     break;
                 }
             }
-            if (!matched) {
+            if (!matched)
+            {
                 fprintf(stderr, "[FAIL] Canonical TR %d waveform does not match any reference\n", tr_idx);
             }
             mu_assert(matched, "Canonical TR waveform does not match any reference");
@@ -489,19 +503,19 @@ MU_TEST_SUITE(suite_sequences_uieval)
 /*    - Event walk gap verification (mirrors walk_segment_events)      */
 /* ------------------------------------------------------------------ */
 
-#define GENI_AMP_REL_TOL  1e-3f   /* relative tolerance for normalised amps */
-#define GENI_DELAY_ABS_TOL 1.0f   /* us — half a raster step                */
+#define GENI_AMP_REL_TOL 1e-3f  /* relative tolerance for normalised amps */
+#define GENI_DELAY_ABS_TOL 1.0f /* us — half a raster step                */
 
 /* Relative amplitude comparison with absolute floor of 1.0 */
 #define GENI_AMP_NEAR(a, b) \
     (fabsf((a) - (b)) <= (((fabsf(a) > 1.0f ? fabsf(a) : 1.0f)) * GENI_AMP_REL_TOL))
 
-static void run_sequences_geninstructions_case(const seq_case* tc)
+static void run_sequences_geninstructions_case(const seq_case *tc)
 {
     pulseqlib_opts opts;
-    pulseqlib_collection* coll = NULL;
+    pulseqlib_collection *coll = NULL;
     pulseqlib_collection_info cinfo = PULSEQLIB_COLLECTION_INFO_INIT;
-    static seg_def_file ref;   /* static: too large (~8 MB) for stack */
+    static seg_def_file ref; /* static: too large (~8 MB) for stack */
     char seg_path[512];
     int rc, ok;
     int s, b, ax;
@@ -515,16 +529,17 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
     mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_collection_info failed");
 
     /* Load MATLAB ground truth */
-    build_case_path(seg_path, sizeof(seg_path), tc, "_segment_def.bin");
+    build_case_path(seg_path, sizeof(seg_path), tc, "_segment_def.truth");
     ok = parse_seg_def(seg_path, &ref);
-    mu_assert(ok, "failed to parse case _segment_def.bin");
+    mu_assert(ok, "failed to parse case _segment_def.truth");
 
     /* Number of segments must match */
     fprintf(stderr, "[geninstr][%s] num_segments: ref=%d  lib=%d\n",
             tc->name, ref.num_segments, cinfo.num_segments);
     mu_assert_int_eq(ref.num_segments, cinfo.num_segments);
 
-    for (s = 0; s < ref.num_segments; ++s) {
+    for (s = 0; s < ref.num_segments; ++s)
+    {
         pulseqlib_segment_info segi = PULSEQLIB_SEGMENT_INFO_INIT;
         rc = pulseqlib_get_segment_info(coll, &segi, s);
         mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_segment_info failed");
@@ -532,8 +547,9 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                 tc->name, s, ref.num_blocks[s], segi.num_blocks);
         mu_assert_int_eq(ref.num_blocks[s], segi.num_blocks);
 
-        for (b = 0; b < ref.num_blocks[s]; ++b) {
-            const seg_block_def* ref_blk = &ref.blocks[s][b];
+        for (b = 0; b < ref.num_blocks[s]; ++b)
+        {
+            const seg_block_def *ref_blk = &ref.blocks[s][b];
             pulseqlib_block_info bi = PULSEQLIB_BLOCK_INFO_INIT;
             int need_ns = 0;
             int need;
@@ -542,22 +558,22 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             need = pulseqlib_block_needs_freq_mod(coll, &need_ns, s, b);
 
             /* --- Flags -------------------------------------------- */
-            mu_assert_int_eq(ref_blk->has_rf,          bi.has_rf);
+            mu_assert_int_eq(ref_blk->has_rf, bi.has_rf);
             for (ax = 0; ax < 3; ++ax)
                 mu_assert_int_eq(ref_blk->has_grad[ax], bi.has_grad[ax]);
-            mu_assert_int_eq(ref_blk->has_adc,         bi.has_adc);
-            mu_assert_int_eq(ref_blk->has_rotation,    bi.has_rotation);
+            mu_assert_int_eq(ref_blk->has_adc, bi.has_adc);
+            mu_assert_int_eq(ref_blk->has_rotation, bi.has_rotation);
             mu_assert_int_eq(ref_blk->has_digital_out, bi.has_digitalout);
             mu_assert_int_eq(ref_blk->has_freq_mod, need);
 
             /* --- RF ----------------------------------------------- */
-            if (ref_blk->has_rf) {
+            if (ref_blk->has_rf)
+            {
                 int num_channels = 0, num_samples = 0;
-                float** mag;
+                float **mag;
                 int i;
 
-                mu_assert(fabsf(ref_blk->rf_delay - (float)bi.rf_delay_us * 1e-6f)
-                          <= GENI_DELAY_ABS_TOL * 1e-6f,
+                mu_assert(fabsf(ref_blk->rf_delay - (float)bi.rf_delay_us * 1e-6f) <= GENI_DELAY_ABS_TOL * 1e-6f,
                           "RF delay mismatch");
                 mu_assert_int_eq(ref_blk->rf_n, bi.rf_num_samples);
 
@@ -567,7 +583,8 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
 
                 /* Both library and MATLAB store normalised shapes
                    (peak ≈ 1.0).  Compare directly. */
-                for (i = 0; i < num_samples; ++i) {
+                for (i = 0; i < num_samples; ++i)
+                {
                     mu_assert(GENI_AMP_NEAR(ref_blk->rf_rho[i], mag[0][i]),
                               "RF magnitude shape mismatch");
                 }
@@ -575,21 +592,28 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                 /* Amplitude checks via new getters */
                 {
                     float init_amp = pulseqlib_get_rf_initial_amplitude_hz(coll, s, b);
-                    float max_amp  = pulseqlib_get_rf_max_amplitude_hz(coll, s, b);
+                    float max_amp = pulseqlib_get_rf_max_amplitude_hz(coll, s, b);
                     mu_assert(GENI_AMP_NEAR(ref_blk->rf_amp, init_amp),
                               "RF initial amplitude mismatch");
                     mu_assert(GENI_AMP_NEAR(fabsf(ref_blk->rf_amp), max_amp),
                               "RF max amplitude mismatch");
                 }
 
-                { int ch; for (ch = 0; ch < num_channels; ++ch) free(mag[ch]); free(mag); }
+                {
+                    int ch;
+                    for (ch = 0; ch < num_channels; ++ch)
+                        free(mag[ch]);
+                    free(mag);
+                }
 
                 /* RF timing array check */
                 {
-                    float* lib_rf_time = pulseqlib_get_rf_time_us(coll, s, b);
-                    if (lib_rf_time != NULL) {
+                    float *lib_rf_time = pulseqlib_get_rf_time_us(coll, s, b);
+                    if (lib_rf_time != NULL)
+                    {
                         /* Non-uniform raster: compare against truth rf_time_s */
-                        for (i = 0; i < ref_blk->rf_n; ++i) {
+                        for (i = 0; i < ref_blk->rf_n; ++i)
+                        {
                             float ref_us = ref_blk->rf_time_s[i] * 1e6f;
                             float lib_us = lib_rf_time[i];
                             if (fabsf(ref_us - lib_us) > 0.5f)
@@ -599,9 +623,12 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                                       "RF time array mismatch (>0.5 us)");
                         }
                         free(lib_rf_time);
-                    } else {
+                    }
+                    else
+                    {
                         /* Uniform raster: verify truth times match raster expectation */
-                        for (i = 0; i < ref_blk->rf_n; ++i) {
+                        for (i = 0; i < ref_blk->rf_n; ++i)
+                        {
                             float ref_us = ref_blk->rf_time_s[i] * 1e6f;
                             float expected_us = (float)i * ref_blk->rf_raster_us;
                             if (fabsf(ref_us - expected_us) > 0.5f)
@@ -615,16 +642,16 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             }
 
             /* --- Gradients ---------------------------------------- */
-            for (ax = 0; ax < 3; ++ax) {
-                if (ref_blk->has_grad[ax]) {
+            for (ax = 0; ax < 3; ++ax)
+            {
+                if (ref_blk->has_grad[ax])
+                {
                     int num_shots = 0, num_samples = 0;
-                    float** amps;
+                    float **amps;
                     int i;
                     int init_shot;
 
-                    mu_assert(fabsf(ref_blk->grad_delay[ax]
-                                    - (float)bi.grad_delay_us[ax] * 1e-6f)
-                              <= GENI_DELAY_ABS_TOL * 1e-6f,
+                    mu_assert(fabsf(ref_blk->grad_delay[ax] - (float)bi.grad_delay_us[ax] * 1e-6f) <= GENI_DELAY_ABS_TOL * 1e-6f,
                               "grad delay mismatch");
                     mu_assert_int_eq(ref_blk->grad_n[ax], bi.grad_num_samples[ax]);
 
@@ -642,10 +669,11 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                        against the MATLAB truth (which was extracted from
                        the same max-energy instance). */
                     init_shot = pulseqlib_get_grad_initial_shot_id(
-                                    coll, s, b, ax);
+                        coll, s, b, ax);
                     mu_assert(init_shot >= 0 && init_shot < num_shots,
                               "initial shot id out of range");
-                    for (i = 0; i < num_samples; ++i) {
+                    for (i = 0; i < num_samples; ++i)
+                    {
                         if (!GENI_AMP_NEAR(ref_blk->grad_wave[ax][i], amps[init_shot][i]))
                             fprintf(stderr, "[geninstr][%s] seg%d blk%d ax%d wave@%d: ref=%.4g  lib=%.4g (shot=%d)\n",
                                     tc->name, s, b, ax, i,
@@ -656,9 +684,10 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
 
                     /* Gradient timing array check */
                     {
-                        float* lib_time_us = pulseqlib_get_grad_time_us(coll, s, b, ax);
+                        float *lib_time_us = pulseqlib_get_grad_time_us(coll, s, b, ax);
                         mu_assert(lib_time_us != NULL, "pulseqlib_get_grad_time_us returned NULL");
-                        for (i = 0; i < ref_blk->grad_n[ax]; ++i) {
+                        for (i = 0; i < ref_blk->grad_n[ax]; ++i)
+                        {
                             float ref_us = ref_blk->grad_time_s[ax][i] * 1e6f;
                             float lib_us = lib_time_us[i];
                             if (fabsf(ref_us - lib_us) > 0.5f)
@@ -673,9 +702,9 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                     /* Amplitude checks via new getters */
                     {
                         float init_amp = pulseqlib_get_grad_initial_amplitude_hz_per_m(
-                                             coll, s, b, ax);
-                        float max_amp  = pulseqlib_get_grad_max_amplitude_hz_per_m(
-                                             coll, s, b, ax);
+                            coll, s, b, ax);
+                        float max_amp = pulseqlib_get_grad_max_amplitude_hz_per_m(
+                            coll, s, b, ax);
                         if (!GENI_AMP_NEAR(ref_blk->grad_amp[ax], init_amp))
                             fprintf(stderr, "[geninstr][%s] seg%d blk%d ax%d init_amp: ref=%.6g  lib=%.6g\n",
                                     tc->name, s, b, ax, ref_blk->grad_amp[ax], init_amp);
@@ -688,32 +717,35 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
                                   "grad max amplitude mismatch");
                     }
 
-                    { int sh; for (sh = 0; sh < num_shots; ++sh) free(amps[sh]); free(amps); }
+                    {
+                        int sh;
+                        for (sh = 0; sh < num_shots; ++sh)
+                            free(amps[sh]);
+                        free(amps);
+                    }
                 }
             }
 
             /* --- ADC ---------------------------------------------- */
-            if (ref_blk->has_adc) {
-                mu_assert(fabsf(ref_blk->adc_delay - (float)bi.adc_delay_us * 1e-6f)
-                          <= GENI_DELAY_ABS_TOL * 1e-6f,
+            if (ref_blk->has_adc)
+            {
+                mu_assert(fabsf(ref_blk->adc_delay - (float)bi.adc_delay_us * 1e-6f) <= GENI_DELAY_ABS_TOL * 1e-6f,
                           "ADC delay mismatch");
                 mu_assert_int_eq(ref_blk->adc_def_id, bi.adc_def_id);
             }
 
             /* --- Digital output ------------------------------------ */
-            if (ref_blk->has_digital_out) {
-                mu_assert(fabsf(ref_blk->digital_out_delay
-                                - (float)bi.digitalout_delay_us * 1e-6f)
-                          <= GENI_DELAY_ABS_TOL * 1e-6f,
+            if (ref_blk->has_digital_out)
+            {
+                mu_assert(fabsf(ref_blk->digital_out_delay - (float)bi.digitalout_delay_us * 1e-6f) <= GENI_DELAY_ABS_TOL * 1e-6f,
                           "digital-out delay mismatch");
-                mu_assert(fabsf(ref_blk->digital_out_duration
-                                - (float)bi.digitalout_duration_us * 1e-6f)
-                          <= GENI_DELAY_ABS_TOL * 1e-6f,
+                mu_assert(fabsf(ref_blk->digital_out_duration - (float)bi.digitalout_duration_us * 1e-6f) <= GENI_DELAY_ABS_TOL * 1e-6f,
                           "digital-out duration mismatch");
             }
 
             /* --- Freq-mod ----------------------------------------- */
-            if (ref_blk->has_freq_mod) {
+            if (ref_blk->has_freq_mod)
+            {
                 int raster_us = 2; /* vendor raster, matches MATLAB sys.rfRasterTime/adcRasterTime */
                 int lib_num_samples = bi.duration_us / raster_us;
                 mu_assert_int_eq(ref_blk->freq_mod_num_samples, lib_num_samples);
@@ -727,7 +759,8 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             if (!ref_blk->has_rf &&
                 !ref_blk->has_grad[0] && !ref_blk->has_grad[1] && !ref_blk->has_grad[2] &&
                 !ref_blk->has_adc &&
-                ref.num_blocks[s] == 1) {
+                ref.num_blocks[s] == 1)
+            {
                 int expected_delay_us = (int)(opts.block_raster_us + 0.5f);
                 mu_assert_int_eq(expected_delay_us, bi.duration_us);
             }
@@ -735,26 +768,32 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             /* --- Freq-mod (overlap API) --------------------------- */
             {
                 mu_assert_int_eq(ref_blk->has_freq_mod, need);
-                if (ref_blk->has_freq_mod) {
+                if (ref_blk->has_freq_mod)
+                {
                     mu_assert_int_eq(ref_blk->freq_mod_num_samples, need_ns);
                 }
             }
 
             /* --- Freq-mod definition ID consistency --------------- */
-            if (ref_blk->has_freq_mod) {
+            if (ref_blk->has_freq_mod)
+            {
                 mu_assert(ref_blk->freq_mod_def_id >= 0,
                           "freq_mod_def_id should be >= 0 when has_freq_mod");
-            } else {
+            }
+            else
+            {
                 mu_assert_int_eq(-1, ref_blk->freq_mod_def_id);
             }
 
             /* --- Anchors ------------------------------------------ */
-            if (ref_blk->has_rf) {
+            if (ref_blk->has_rf)
+            {
                 float lib_iso = pulseqlib_get_rf_isocenter_us(coll, s, b);
                 mu_assert(fabsf(ref_blk->rf_isocenter_us - lib_iso) <= 1.0f,
                           "RF isocenter_us mismatch");
             }
-            if (ref_blk->has_adc) {
+            if (ref_blk->has_adc)
+            {
                 float lib_kz = pulseqlib_get_adc_kzero_us(coll, s, b);
                 if (fabsf(ref_blk->adc_kzero_us - lib_kz) > 1.0f)
                     fprintf(stderr, "[geninstr][%s] seg%d blk%d adc_kzero_us: ref=%.4g  lib=%.4g\n",
@@ -769,14 +808,20 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             int ref_rf_adc = (int)roundf(ref.rf_adc_gap_us[s]);
             int ref_adc_adc = (int)roundf(ref.adc_adc_gap_us[s]);
 
-            if (ref_rf_adc >= 0) {
-                mu_assert_int_eq(ref_rf_adc, segi.rf_adc_gap_us);
-            } else {
+            if (ref_rf_adc >= 0)
+            {
                 mu_assert_int_eq(ref_rf_adc, segi.rf_adc_gap_us);
             }
-            if (ref_adc_adc >= 0) {
+            else
+            {
+                mu_assert_int_eq(ref_rf_adc, segi.rf_adc_gap_us);
+            }
+            if (ref_adc_adc >= 0)
+            {
                 mu_assert_int_eq(ref_adc_adc, segi.adc_adc_gap_us);
-            } else {
+            }
+            else
+            {
                 mu_assert_int_eq(ref_adc_adc, segi.adc_adc_gap_us);
             }
         }
@@ -794,31 +839,39 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             int seg_block_count = ref.num_blocks[s];
             int sb;
 
-            for (sb = 0; sb < seg_block_count; ++sb) {
-                const seg_block_def* sblk = &ref.blocks[s][sb];
+            for (sb = 0; sb < seg_block_count; ++sb)
+            {
+                const seg_block_def *sblk = &ref.blocks[s][sb];
                 if (sblk->has_rf || sblk->has_grad[0] ||
-                    sblk->has_grad[1] || sblk->has_grad[2]) {
+                    sblk->has_grad[1] || sblk->has_grad[2])
+                {
                     seg_has_active_block = 1;
                     break;
                 }
             }
 
             /* pure_delay: 1 block, no RF, no grads (may have ADC trigger) */
-            if (seg_block_count == 1 && !seg_has_active_block) {
+            if (seg_block_count == 1 && !seg_has_active_block)
+            {
                 mu_assert(segi.pure_delay,
                           "segment with 1 empty block should be pure_delay");
-            } else {
+            }
+            else
+            {
                 mu_assert(!segi.pure_delay,
                           "segment with active blocks should not be pure_delay");
             }
 
             /* has_trigger: when set, delay and duration must be valid */
-            if (segi.has_trigger) {
+            if (segi.has_trigger)
+            {
                 mu_assert(segi.trigger_delay_us >= 0,
                           "trigger_delay_us should be >= 0 when has_trigger");
                 mu_assert(segi.trigger_duration_us >= 0,
                           "trigger_duration_us should be >= 0 when has_trigger");
-            } else {
+            }
+            else
+            {
                 mu_assert_int_eq(-1, segi.trigger_delay_us);
                 mu_assert_int_eq(-1, segi.trigger_duration_us);
             }
@@ -827,53 +880,63 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
         /* --- Event walk gap verification (mirrors walk_segment_events
          *     in example_geninstructions.c) ------------------------ */
         {
-            typedef struct { int kind; int start_us; int end_us; } gap_evt;
+            typedef struct
+            {
+                int kind;
+                int start_us;
+                int end_us;
+            } gap_evt;
             gap_evt events[SEG_DEF_MAX_BLOCKS * 2];
             int n_evt = 0, t_walk = 0, wb, je;
             int walk_rf_adc = -1, walk_adc_adc = -1;
 
-            for (wb = 0; wb < ref.num_blocks[s]; ++wb) {
-                const seg_block_def* wb_blk = &ref.blocks[s][wb];
+            for (wb = 0; wb < ref.num_blocks[s]; ++wb)
+            {
+                const seg_block_def *wb_blk = &ref.blocks[s][wb];
                 pulseqlib_block_info wbi = PULSEQLIB_BLOCK_INFO_INIT;
                 rc = pulseqlib_get_block_info(coll, &wbi, s, wb);
                 mu_assert(PULSEQLIB_SUCCEEDED(rc), "get_block_info for event walk");
 
-                if (wb_blk->has_rf) {
+                if (wb_blk->has_rf)
+                {
                     /* Use the library's own RF duration (accounts for custom
                      * non-uniform time shapes, e.g. hard pulses in noncart
                      * sequences where the last time-shape sample can equal the
                      * full block duration rather than N*raster - raster/2). */
                     int rf_dur = wbi.rf_duration_us;
-                    if (rf_dur < 0) {
+                    if (rf_dur < 0)
+                    {
                         /* fallback: uniform-raster bin-centre convention */
                         int rf_raster_int = (int)(opts.rf_raster_us + 0.5f);
-                        rf_dur = wbi.rf_num_samples * rf_raster_int
-                                 - rf_raster_int / 2;
+                        rf_dur = wbi.rf_num_samples * rf_raster_int - rf_raster_int / 2;
                     }
-                    events[n_evt].kind     = 0; /* RF */
+                    events[n_evt].kind = 0; /* RF */
                     events[n_evt].start_us = t_walk + wbi.rf_delay_us;
-                    events[n_evt].end_us   = t_walk + wbi.rf_delay_us + rf_dur;
+                    events[n_evt].end_us = t_walk + wbi.rf_delay_us + rf_dur;
                     n_evt++;
                 }
-                if (wb_blk->has_adc && wbi.adc_def_id >= 0) {
+                if (wb_blk->has_adc && wbi.adc_def_id >= 0)
+                {
                     pulseqlib_adc_def ad = PULSEQLIB_ADC_DEF_INIT;
                     int adc_dur;
                     rc = pulseqlib_get_adc_def(coll, &ad, wbi.adc_def_id);
                     mu_assert(PULSEQLIB_SUCCEEDED(rc), "get_adc_def for walk");
                     adc_dur = (int)(ad.num_samples * ad.dwell_ns * 1e-3f);
-                    events[n_evt].kind     = 1; /* ADC */
+                    events[n_evt].kind = 1; /* ADC */
                     events[n_evt].start_us = t_walk + wbi.adc_delay_us;
-                    events[n_evt].end_us   = t_walk + wbi.adc_delay_us + adc_dur;
+                    events[n_evt].end_us = t_walk + wbi.adc_delay_us + adc_dur;
                     n_evt++;
                 }
                 t_walk += wbi.duration_us;
             }
 
             /* insertion-sort by start_us (stable) */
-            for (je = 1; je < n_evt; ++je) {
+            for (je = 1; je < n_evt; ++je)
+            {
                 gap_evt tmp = events[je];
                 int k = je - 1;
-                while (k >= 0 && events[k].start_us > tmp.start_us) {
+                while (k >= 0 && events[k].start_us > tmp.start_us)
+                {
                     events[k + 1] = events[k];
                     --k;
                 }
@@ -881,20 +944,28 @@ static void run_sequences_geninstructions_case(const seq_case* tc)
             }
 
             /* walk events — compute minimum RF->ADC and ADC->ADC gaps */
-            for (je = 0; je < n_evt; ++je) {
-                if (events[je].kind == 0) { /* RF */
+            for (je = 0; je < n_evt; ++je)
+            {
+                if (events[je].kind == 0)
+                { /* RF */
                     int k2;
-                    for (k2 = je + 1; k2 < n_evt; ++k2) {
-                        if (events[k2].kind == 1) { /* next ADC */
+                    for (k2 = je + 1; k2 < n_evt; ++k2)
+                    {
+                        if (events[k2].kind == 1)
+                        { /* next ADC */
                             int gap = events[k2].start_us - events[je].end_us;
                             if (walk_rf_adc < 0 || gap < walk_rf_adc)
                                 walk_rf_adc = gap;
                             break;
                         }
-                        if (events[k2].kind == 0) break; /* next RF first */
+                        if (events[k2].kind == 0)
+                            break; /* next RF first */
                     }
-                } else { /* ADC */
-                    if (je > 0 && events[je - 1].kind == 1) { /* prev ADC */
+                }
+                else
+                { /* ADC */
+                    if (je > 0 && events[je - 1].kind == 1)
+                    { /* prev ADC */
                         int gap = events[je].start_us - events[je - 1].end_us;
                         if (walk_adc_adc < 0 || gap < walk_adc_adc)
                             walk_adc_adc = gap;
@@ -953,30 +1024,31 @@ MU_TEST(test_sequences_geninstructions_mprage_nav_2d_3sl_3avg) { run_sequences_g
 /*  Phase 4: Frequency-modulation definition waveforms                */
 /* ------------------------------------------------------------------ */
 
-static void check_fmod_shift(const pulseqlib_collection* coll,
-    const seg_meta* meta,
-    const fmod_def_file* ref,
-    const fmod_plan_file* plan,
-    const scan_table_file* scan,
-    const float* shift,
-    int probe_idx,
-    const float* fov_rotation,
-    const char* label)
+static void check_fmod_shift(const pulseqlib_collection *coll,
+                             const seg_meta *meta,
+                             const fmod_def_file *ref,
+                             const fmod_plan_file *plan,
+                             const scan_table_file *scan,
+                             const float *shift,
+                             int probe_idx,
+                             const float *fov_rotation,
+                             const char *label)
 {
-    pulseqlib_freq_mod_collection* fmc = NULL;
+    pulseqlib_freq_mod_collection *fmc = NULL;
     int rc;
     int pos;
     int seen_defs[MAX_FMOD_DEFS] = {0};
     int used_plan_count = 0;
     int tr_scope_id = -1;
-    pulseqlib_freq_mod_library* lib;
-    int* used_plan;
+    pulseqlib_freq_mod_library *lib;
+    int *used_plan;
     int trkey_count = 0;
     int plan_seen[MAX_FMOD_PLAN_ENTRIES] = {0};
     int plan_first_def[MAX_FMOD_PLAN_ENTRIES] = {0};
     int plan_first_tr_scope[MAX_FMOD_PLAN_ENTRIES] = {0};
     float plan_first_rot[MAX_FMOD_PLAN_ENTRIES][9];
-    struct {
+    struct
+    {
         int def_id;
         int tr_scope_id;
         int plan_idx;
@@ -994,12 +1066,13 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
     if (meta && meta->fmod_build_mode_tr_scoped)
         mu_assert(lib->num_plan_instances >= ref->num_defs,
                   "tr_scoped mode should not collapse below def count");
-    used_plan = (int*)calloc((size_t)lib->num_plan_instances, sizeof(int));
+    used_plan = (int *)calloc((size_t)lib->num_plan_instances, sizeof(int));
     mu_assert(used_plan != NULL, "alloc failed for used_plan flags");
 
-    for (pos = 0; pos < scan->num_entries; ++pos) {
-        const scan_table_entry* se = &scan->entries[pos];
-        const short* waveform = NULL;
+    for (pos = 0; pos < scan->num_entries; ++pos)
+    {
+        const scan_table_entry *se = &scan->entries[pos];
+        const short *waveform = NULL;
         int ns = 0, s;
         float phase_rad = 0.0f;
         int has;
@@ -1008,19 +1081,20 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
             tr_scope_id++;
 
         has = pulseqlib_freq_mod_collection_get(fmc,
-            &waveform,
-            &ns,
-            &phase_rad,
-            0,
-            pos);
+                                                &waveform,
+                                                &ns,
+                                                &phase_rad,
+                                                0,
+                                                pos);
 
-        if (se->freq_mod_id <= 0) {
+        if (se->freq_mod_id <= 0)
+        {
             mu_assert(!has, "unexpected freq_mod at scan position");
             continue;
         }
 
         {
-            const fmod_def* fd;
+            const fmod_def *fd;
             int def_idx = se->freq_mod_id - 1;
             int plan_idx = lib->scan_to_plan[pos];
             int ref_plan_idx = (plan && pos < plan->scan_len) ? plan->scan_to_plan[pos] : -1;
@@ -1033,7 +1107,8 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
 
             mu_assert(plan_idx >= 0 && plan_idx < lib->num_plan_instances,
                       "invalid scan_to_plan mapping");
-            if (!used_plan[plan_idx]) {
+            if (!used_plan[plan_idx])
+            {
                 used_plan[plan_idx] = 1;
                 used_plan_count++;
             }
@@ -1045,23 +1120,25 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
              * (R^T @ v)[ri] = sum_ci R[ci][ri] * v[ci] = sum_ci rotmat[ci*3+ri] * v[ci]. */
             {
                 float u[3] = {shift[0], shift[1], shift[2]};
-                if (plan && ref_plan_idx >= 0 && ref_plan_idx < plan->num_plans) {
-                    const float* rm = plan->plans[ref_plan_idx].rotmat;
+                if (plan && ref_plan_idx >= 0 && ref_plan_idx < plan->num_plans)
+                {
+                    const float *rm = plan->plans[ref_plan_idx].rotmat;
                     int ri, ci;
                     float rot_u[3] = {0.0f, 0.0f, 0.0f};
                     for (ri = 0; ri < 3; ri++)
                         for (ci = 0; ci < 3; ci++)
                             rot_u[ri] += rm[ci * 3 + ri] * shift[ci];
-                    u[0] = rot_u[0]; u[1] = rot_u[1]; u[2] = rot_u[2];
+                    u[0] = rot_u[0];
+                    u[1] = rot_u[1];
+                    u[2] = rot_u[2];
                 }
 
                 /* API returns short DAC units (OMEGA_SCALE = 1/(4*FREQ_CONVERSION)).
                  * With the default FREQ_CONVERSION = 0.25, OMEGA_SCALE = 1.0 so
                  * short values ≈ round(expected_hz).  Allow ±1 for rounding. */
-                for (s = 0; s < ns; ++s) {
-                    float expected = fd->waveform_gx[s] * u[0]
-                                   + fd->waveform_gy[s] * u[1]
-                                   + fd->waveform_gz[s] * u[2];
+                for (s = 0; s < ns; ++s)
+                {
+                    float expected = fd->waveform_gx[s] * u[0] + fd->waveform_gy[s] * u[1] + fd->waveform_gz[s] * u[2];
                     int expected_hw = (int)(expected + 0.5f);
                     int actual_hw = (int)waveform[s];
                     mu_assert(abs(actual_hw - expected_hw) <= 1,
@@ -1069,8 +1146,9 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
                 }
             }
 
-            if (plan && plan->num_plans > 0 && ref_plan_idx >= 0) {
-                const fmod_plan_entry* pe;
+            if (plan && plan->num_plans > 0 && ref_plan_idx >= 0)
+            {
+                const fmod_plan_entry *pe;
                 float proj_phase;
                 float proj_tol;
                 float alpha;
@@ -1084,13 +1162,15 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
                  * shift vector.  Scale truth by alpha = dot(shift, probe)
                  * to match the C library output. */
                 alpha = 0.0f;
-                if (probe_idx >= 0 && probe_idx < plan->num_probes) {
+                if (probe_idx >= 0 && probe_idx < plan->num_probes)
+                {
                     int k;
                     for (k = 0; k < 3; ++k)
                         alpha += shift[k] * plan->probes[probe_idx][k];
                 }
 
-                for (s = 0; s < ns; ++s) {
+                for (s = 0; s < ns; ++s)
+                {
                     float pexp = pe->waveforms[probe_idx][s] * alpha;
                     int pexp_hw = (int)(pexp + 0.5f);
                     int act_hw = (int)waveform[s];
@@ -1100,23 +1180,30 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
 
                 proj_phase = pe->phase_total[probe_idx] * alpha;
                 proj_tol = (float)fabs(proj_phase) * 1e-4f;
-                if (proj_tol < 1e-8f) proj_tol = 1e-8f;
-                if ((float)fabs(phase_rad - proj_phase) > proj_tol) {
+                if (proj_tol < 1e-8f)
+                    proj_tol = 1e-8f;
+                if ((float)fabs(phase_rad - proj_phase) > proj_tol)
+                {
                     float lib_phase_base = (plan_idx >= 0 && plan_idx < lib->num_plan_instances)
-                        ? lib->plan_phase[plan_idx] : 0.0f;
+                                               ? lib->plan_phase[plan_idx]
+                                               : 0.0f;
                     float lib_phase_extra = (pos >= 0 && pos < lib->scan_table_len && lib->scan_phase_extra)
-                        ? lib->scan_phase_extra[pos] : 0.0f;
+                                                ? lib->scan_phase_extra[pos]
+                                                : 0.0f;
                     float iax = (pos >= 0 && pos < lib->scan_table_len && lib->scan_inactive_area_3ch)
-                        ? lib->scan_inactive_area_3ch[pos * 3 + 0] : 0.0f;
+                                    ? lib->scan_inactive_area_3ch[pos * 3 + 0]
+                                    : 0.0f;
                     float iay = (pos >= 0 && pos < lib->scan_table_len && lib->scan_inactive_area_3ch)
-                        ? lib->scan_inactive_area_3ch[pos * 3 + 1] : 0.0f;
+                                    ? lib->scan_inactive_area_3ch[pos * 3 + 1]
+                                    : 0.0f;
                     float iaz = (pos >= 0 && pos < lib->scan_table_len && lib->scan_inactive_area_3ch)
-                        ? lib->scan_inactive_area_3ch[pos * 3 + 2] : 0.0f;
+                                    ? lib->scan_inactive_area_3ch[pos * 3 + 2]
+                                    : 0.0f;
                     fprintf(stderr,
-                        "[fmod_phase_dbg][%s] pos=%d def=%d plan=%d lib=(tot=%g base=%g extra=%g) truth=%g ia=[%g %g %g] alpha=%g\n",
-                        label, pos, se->freq_mod_id, plan_idx,
-                        (double)phase_rad, (double)lib_phase_base, (double)lib_phase_extra,
-                        (double)proj_phase, (double)iax, (double)iay, (double)iaz, (double)alpha);
+                            "[fmod_phase_dbg][%s] pos=%d def=%d plan=%d lib=(tot=%g base=%g extra=%g) truth=%g ia=[%g %g %g] alpha=%g\n",
+                            label, pos, se->freq_mod_id, plan_idx,
+                            (double)phase_rad, (double)lib_phase_base, (double)lib_phase_extra,
+                            (double)proj_phase, (double)iax, (double)iay, (double)iaz, (double)alpha);
                 }
                 mu_assert((float)fabs(phase_rad - proj_phase) <= proj_tol,
                           "supplemental projected phase mismatch");
@@ -1129,27 +1216,34 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
             {
                 int key_scope = (meta && meta->fmod_build_mode_tr_scoped) ? tr_scope_id : 0;
                 int k, found = -1;
-                for (k = 0; k < trkey_count; ++k) {
+                for (k = 0; k < trkey_count; ++k)
+                {
                     int r;
                     int same_rot = 1;
                     if (trkey_rows[k].def_id != se->freq_mod_id ||
                         trkey_rows[k].tr_scope_id != key_scope)
                         continue;
-                    for (r = 0; r < 9; ++r) {
-                        if (fabsf(trkey_rows[k].rotmat[r] - se->rotmat[r]) > 1e-6f) {
+                    for (r = 0; r < 9; ++r)
+                    {
+                        if (fabsf(trkey_rows[k].rotmat[r] - se->rotmat[r]) > 1e-6f)
+                        {
                             same_rot = 0;
                             break;
                         }
                     }
-                    if (same_rot) {
+                    if (same_rot)
+                    {
                         found = k;
                         break;
                     }
                 }
 
-                if (found >= 0) {
+                if (found >= 0)
+                {
                     mu_assert_int_eq(trkey_rows[found].plan_idx, plan_idx);
-                } else if (trkey_count < MAX_SCAN_TABLE_ENTRIES) {
+                }
+                else if (trkey_count < MAX_SCAN_TABLE_ENTRIES)
+                {
                     int r;
                     trkey_rows[trkey_count].def_id = se->freq_mod_id;
                     trkey_rows[trkey_count].tr_scope_id = key_scope;
@@ -1159,18 +1253,24 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
                     trkey_count++;
                 }
 
-                if (plan_idx >= 0 && plan_idx < MAX_FMOD_PLAN_ENTRIES) {
+                if (plan_idx >= 0 && plan_idx < MAX_FMOD_PLAN_ENTRIES)
+                {
                     int r;
-                    if (!plan_seen[plan_idx]) {
+                    if (!plan_seen[plan_idx])
+                    {
                         plan_seen[plan_idx] = 1;
                         plan_first_def[plan_idx] = se->freq_mod_id;
                         plan_first_tr_scope[plan_idx] = key_scope;
                         for (r = 0; r < 9; ++r)
                             plan_first_rot[plan_idx][r] = se->rotmat[r];
-                    } else {
+                    }
+                    else
+                    {
                         int same_rot = 1;
-                        for (r = 0; r < 9; ++r) {
-                            if (fabsf(plan_first_rot[plan_idx][r] - se->rotmat[r]) > 1e-6f) {
+                        for (r = 0; r < 9; ++r)
+                        {
+                            if (fabsf(plan_first_rot[plan_idx][r] - se->rotmat[r]) > 1e-6f)
+                            {
                                 same_rot = 0;
                                 break;
                             }
@@ -1188,7 +1288,8 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
 
     {
         int d;
-        for (d = 0; d < ref->num_defs; ++d) {
+        for (d = 0; d < ref->num_defs; ++d)
+        {
             mu_assert(seen_defs[d], "expected freq_mod definition not referenced");
         }
 
@@ -1204,10 +1305,10 @@ static void check_fmod_shift(const pulseqlib_collection* coll,
     pulseqlib_freq_mod_collection_free(fmc);
 }
 
-static void run_freq_mod_definitions_case(const seq_case* tc)
+static void run_freq_mod_definitions_case(const seq_case *tc)
 {
     pulseqlib_opts opts;
-    pulseqlib_collection* coll = NULL;
+    pulseqlib_collection *coll = NULL;
     static seg_meta meta = SEG_META_INIT;
     static fmod_def_file ref = FMOD_DEF_FILE_INIT;
     static fmod_plan_file plan = FMOD_PLAN_FILE_INIT;
@@ -1220,20 +1321,20 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
 
     /* Three orthogonal shifts + one combined shift */
     float shifts[4][3] = {
-        {1.0e-3f, 0.0f,    0.0f   },  /* X only */
-        {0.0f,    2.0e-3f, 0.0f   },  /* Y only */
-        {0.0f,    0.0f,    3.0e-3f},  /* Z only */
-        {1.0e-3f, 2.0e-3f, 3.0e-3f}   /* combined */
+        {1.0e-3f, 0.0f, 0.0f},      /* X only */
+        {0.0f, 2.0e-3f, 0.0f},      /* Y only */
+        {0.0f, 0.0f, 3.0e-3f},      /* Z only */
+        {1.0e-3f, 2.0e-3f, 3.0e-3f} /* combined */
     };
 
     /* Three representative FOV rotations (ax, cor, sag) +
      * identity.  For blocks WITHOUT norot flag the rotation
      * has no effect — we verify invariance. */
     float rotations[4][9] = {
-        {1,0,0, 0,1,0, 0,0,1},   /* identity (axial) */
-        {1,0,0, 0,0,1, 0,-1,0},  /* coronal:  y->z, z->-y */
-        {0,0,-1, 0,1,0, 1,0,0},  /* sagittal: x->-z, z->x */
-        {0.6f,0.8f,0, -0.8f,0.6f,0, 0,0,1}  /* oblique 53° */
+        {1, 0, 0, 0, 1, 0, 0, 0, 1},             /* identity (axial) */
+        {1, 0, 0, 0, 0, 1, 0, -1, 0},            /* coronal:  y->z, z->-y */
+        {0, 0, -1, 0, 1, 0, 1, 0, 0},            /* sagittal: x->-z, z->x */
+        {0.6f, 0.8f, 0, -0.8f, 0.6f, 0, 0, 0, 1} /* oblique 53° */
     };
 
     gre_opts_init(&opts);
@@ -1244,27 +1345,29 @@ static void run_freq_mod_definitions_case(const seq_case* tc)
     ok = parse_meta(meta_path, &meta);
     mu_assert(ok, "failed to parse meta.txt");
 
-    build_case_path(fmod_path, sizeof(fmod_path), tc, "_freqmod_def.bin");
+    build_case_path(fmod_path, sizeof(fmod_path), tc, "_freqmod_def.truth");
     ok = parse_fmod_defs(fmod_path, &ref);
-    mu_assert(ok, "failed to parse freqmod_def.bin");
+    mu_assert(ok, "failed to parse freqmod_def.truth");
     mu_assert(ref.num_defs >= 1, "expected at least 1 freq_mod def");
 
-    build_case_path(fmod_plan_path, sizeof(fmod_plan_path), tc, "_freqmod_plan.bin");
+    build_case_path(fmod_plan_path, sizeof(fmod_plan_path), tc, "_freqmod_plan.truth");
     ok = parse_fmod_plan(fmod_plan_path, &plan);
-    mu_assert(ok, "failed to parse freqmod_plan.bin");
+    mu_assert(ok, "failed to parse freqmod_plan.truth");
     mu_assert(plan.num_probes >= 4, "freqmod plan must include x/y/z/oblique probes");
 
     /* Parse scan table to get total position span for robust freq-mod search. */
-    build_case_path(scan_path, sizeof(scan_path), tc, "_scan_table.bin");
+    build_case_path(scan_path, sizeof(scan_path), tc, "_scan_table.truth");
     ok = parse_scan_table(scan_path, &scan);
-    mu_assert(ok, "failed to parse scan_table.bin for freqmod positions");
+    mu_assert(ok, "failed to parse scan_table.truth for freqmod positions");
     mu_assert(scan.num_entries > 0, "scan_table has no entries for freqmod search");
 
     /* For each shift, test all rotations — results must be identical
      * because this sequence has no rotation events / norot blocks. */
-    for (t = 0; t < 4; ++t) {
+    for (t = 0; t < 4; ++t)
+    {
         int r;
-        for (r = 0; r < 4; ++r) {
+        for (r = 0; r < 4; ++r)
+        {
             check_fmod_shift(coll, &meta,
                              &ref,
                              &plan,
@@ -1385,15 +1488,14 @@ MU_TEST_SUITE(suite_sequences_geninstructions)
     MU_RUN_TEST(test_freq_mod_definitions_mprage_nav_2d_3sl_3avg);
 }
 
-
 /* ------------------------------------------------------------------ */
 /*  Phase 5: Scan table — block instance validation                   */
 /* ------------------------------------------------------------------ */
 
-static void run_scan_table_case(const seq_case* tc)
+static void run_scan_table_case(const seq_case *tc)
 {
     pulseqlib_opts opts;
-    pulseqlib_collection* coll = NULL;
+    pulseqlib_collection *coll = NULL;
     pulseqlib_collection_info cinfo = PULSEQLIB_COLLECTION_INFO_INIT;
     scan_table_file ref = SCAN_TABLE_FILE_INIT;
     seg_meta meta = SEG_META_INIT;
@@ -1425,7 +1527,9 @@ static void run_scan_table_case(const seq_case* tc)
     memset(subseq_seg_start, 0, sizeof(subseq_seg_start));
     memset(subseq_seg_end, 0, sizeof(subseq_seg_end));
     is_mprage = (strncmp(tc->name, "mprage_", 7) == 0 &&
-                 strncmp(tc->name, "mprage_nav_", 11) != 0) ? 1 : 0;
+                 strncmp(tc->name, "mprage_nav_", 11) != 0)
+                    ? 1
+                    : 0;
 
     gre_opts_init(&opts);
     rc = load_seq_with_averages(&coll, tc->seq_file, &opts, tc->num_averages);
@@ -1434,9 +1538,9 @@ static void run_scan_table_case(const seq_case* tc)
     rc = pulseqlib_get_collection_info(coll, &cinfo);
     mu_assert(PULSEQLIB_SUCCEEDED(rc), "get_collection_info in scan table test");
 
-    build_case_path(scan_path, sizeof(scan_path), tc, "_scan_table.bin");
+    build_case_path(scan_path, sizeof(scan_path), tc, "_scan_table.truth");
     ok = parse_scan_table(scan_path, &ref);
-    mu_assert(ok, "failed to parse scan_table.bin");
+    mu_assert(ok, "failed to parse scan_table.truth");
     mu_assert(ref.num_entries > 0, "scan_table has no entries");
 
     /* Parse meta to get segment_order for validation */
@@ -1452,12 +1556,14 @@ static void run_scan_table_case(const seq_case* tc)
     {
         int s;
         pulseqlib_subseq_info si = PULSEQLIB_SUBSEQ_INFO_INIT;
-        for (s = 0; s < cinfo.num_subsequences; ++s) {
+        for (s = 0; s < cinfo.num_subsequences; ++s)
+        {
             rc = pulseqlib_get_subseq_info(coll, &si, s);
             mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_subseq_info failed");
             subseq_seg_start[s] = si.segment_offset;
         }
-        for (s = 0; s < cinfo.num_subsequences; ++s) {
+        for (s = 0; s < cinfo.num_subsequences; ++s)
+        {
             if (s + 1 < cinfo.num_subsequences)
                 subseq_seg_end[s] = subseq_seg_start[s + 1];
             else
@@ -1472,9 +1578,11 @@ static void run_scan_table_case(const seq_case* tc)
      * For collections, each subsequence uses only its own segment-id range. */
     {
         int s;
-        for (s = 0; s < cinfo.num_subsequences; ++s) {
+        for (s = 0; s < cinfo.num_subsequences; ++s)
+        {
             int si;
-            for (si = 0; si < meta.num_segment_order_entries; ++si) {
+            for (si = 0; si < meta.num_segment_order_entries; ++si)
+            {
                 int seg = meta.segment_order[si];
                 int nblk;
                 int bi;
@@ -1483,7 +1591,8 @@ static void run_scan_table_case(const seq_case* tc)
                 nblk = meta.segment_num_blocks[seg];
                 mu_assert(seg >= 0 && seg < meta.num_segments,
                           "segment_order references invalid segment");
-                for (bi = 0; bi < nblk; ++bi) {
+                for (bi = 0; bi < nblk; ++bi)
+                {
                     mu_assert(pattern_len[s] < MAX_SCAN_TABLE_ENTRIES,
                               "segment pattern exceeds max entries");
                     pattern_seg_id[s][pattern_len[s]] = seg;
@@ -1498,10 +1607,11 @@ static void run_scan_table_case(const seq_case* tc)
     pulseqlib_cursor_reset(coll);
     pos = 0;
 
-    while (pulseqlib_cursor_next(coll) == PULSEQLIB_CURSOR_BLOCK) {
+    while (pulseqlib_cursor_next(coll) == PULSEQLIB_CURSOR_BLOCK)
+    {
         pulseqlib_block_instance inst = PULSEQLIB_BLOCK_INSTANCE_INIT;
         pulseqlib_cursor_info ci = PULSEQLIB_CURSOR_INFO_INIT;
-        const scan_table_entry* e;
+        const scan_table_entry *e;
         float tol;
         int i;
 
@@ -1515,7 +1625,8 @@ static void run_scan_table_case(const seq_case* tc)
 
         /* ---- Segment validation: pattern-based ---------------------- */
         /* Cross-check nav/trigger at segment starts */
-        if (ci.segment_start) {
+        if (ci.segment_start)
+        {
             pulseqlib_segment_info si = PULSEQLIB_SEGMENT_INFO_INIT;
             rc = pulseqlib_get_segment_info(coll, &si, ci.segment_id);
             mu_assert(PULSEQLIB_SUCCEEDED(rc),
@@ -1524,17 +1635,22 @@ static void run_scan_table_case(const seq_case* tc)
             mu_assert_int_eq(si.has_trigger, ci.has_trigger);
         }
 
-        if (is_mprage) {
+        if (is_mprage)
+        {
             pulseqlib_segment_info segi = PULSEQLIB_SEGMENT_INFO_INIT;
             rc = pulseqlib_get_segment_info(coll, &segi, ci.segment_id);
             mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_get_segment_info failed");
 
-            if (segi.pure_delay) {
+            if (segi.pure_delay)
+            {
                 int found = 0;
-                if (pure_seg_id < 0) {
+                if (pure_seg_id < 0)
+                {
                     pure_seg_id = ci.segment_id;
                     pure_seg_duration_us = segi.duration_us;
-                } else {
+                }
+                else
+                {
                     mu_assert_int_eq(pure_seg_id, ci.segment_id);
                     mu_assert_int_eq(pure_seg_duration_us, segi.duration_us);
                 }
@@ -1545,13 +1661,16 @@ static void run_scan_table_case(const seq_case* tc)
                 if (inst.duration_us != segi.duration_us)
                     saw_noncanonical_instance = 1;
 
-                for (i = 0; i < pure_inst_unique; ++i) {
-                    if (pure_inst_durations[i] == inst.duration_us) {
+                for (i = 0; i < pure_inst_unique; ++i)
+                {
+                    if (pure_inst_durations[i] == inst.duration_us)
+                    {
                         found = 1;
                         break;
                     }
                 }
-                if (!found && pure_inst_unique < (int)(sizeof(pure_inst_durations)/sizeof(pure_inst_durations[0]))) {
+                if (!found && pure_inst_unique < (int)(sizeof(pure_inst_durations) / sizeof(pure_inst_durations[0])))
+                {
                     pure_inst_durations[pure_inst_unique++] = inst.duration_us;
                 }
             }
@@ -1569,71 +1688,77 @@ static void run_scan_table_case(const seq_case* tc)
             char seg_msg[256];
             char wseg_msg[256];
 
-              snprintf(seg_msg, sizeof(seg_msg),
+            snprintf(seg_msg, sizeof(seg_msg),
                      "[%s] segment_id mismatch at pos %d: cursor=%d, fixture=%d, expected=%d",
                      tc->name, pos, ci.segment_id, e->segment_id, expected_seg);
-              mu_assert(ci.segment_id == expected_seg, seg_msg);
-              mu_assert(e->segment_id == expected_seg, seg_msg);
+            mu_assert(ci.segment_id == expected_seg, seg_msg);
+            mu_assert(e->segment_id == expected_seg, seg_msg);
 
-              snprintf(wseg_msg, sizeof(wseg_msg),
+            snprintf(wseg_msg, sizeof(wseg_msg),
                      "[%s] within_segment_idx out of range at pos %d: fixture=%d, segment=%d, nblk=%d",
                      tc->name, pos, e->within_segment_idx, expected_seg,
                      meta.segment_num_blocks[expected_seg]);
-              mu_assert(e->within_segment_idx >= 0 &&
-                      e->within_segment_idx < meta.segment_num_blocks[expected_seg],
+            mu_assert(e->within_segment_idx >= 0 &&
+                          e->within_segment_idx < meta.segment_num_blocks[expected_seg],
                       wseg_msg);
 
-              pattern_pos[sidx]++;
+            pattern_pos[sidx]++;
         }
 
         /* RF amplitude (relative tolerance or absolute for zero) */
         tol = (float)fabs(e->rf_amp_hz) * 1e-4f;
-        if (tol < 1e-6f) tol = 1e-6f;
+        if (tol < 1e-6f)
+            tol = 1e-6f;
         if ((float)fabs(inst.rf_amp_hz - e->rf_amp_hz) > tol)
             fprintf(stderr, "[scantable][%s] rf_amp @pos%d: ref=%.6g  lib=%.6g\n",
-                tc->name, pos, e->rf_amp_hz, inst.rf_amp_hz);
+                    tc->name, pos, e->rf_amp_hz, inst.rf_amp_hz);
         mu_assert((float)fabs(inst.rf_amp_hz - e->rf_amp_hz) <= tol,
                   "rf_amp_hz mismatch");
 
         /* RF phase */
         tol = (float)fabs(e->rf_phase_rad) * 1e-4f;
-        if (tol < 1e-8f) tol = 1e-8f;
+        if (tol < 1e-8f)
+            tol = 1e-8f;
         if ((float)fabs(inst.rf_phase_rad - e->rf_phase_rad) > tol)
             fprintf(stderr, "[scantable][%s] rf_phase @pos%d: ref=%.9g  lib=%.9g\n",
-                tc->name, pos, e->rf_phase_rad, inst.rf_phase_rad);
+                    tc->name, pos, e->rf_phase_rad, inst.rf_phase_rad);
         mu_assert((float)fabs(inst.rf_phase_rad - e->rf_phase_rad) <= tol,
                   "rf_phase_rad mismatch");
 
         /* RF freq */
         tol = (float)fabs(e->rf_freq_hz) * 1e-4f;
-        if (tol < 1e-6f) tol = 1e-6f;
+        if (tol < 1e-6f)
+            tol = 1e-6f;
         mu_assert((float)fabs(inst.rf_freq_hz - e->rf_freq_hz) <= tol,
                   "rf_freq_hz mismatch");
 
         /* GX amplitude */
         tol = (float)fabs(e->gx_amp_hz_per_m) * 1e-4f;
-        if (tol < 1e-6f) tol = 1e-6f;
-            if ((float)fabs(inst.gx_amp_hz_per_m - e->gx_amp_hz_per_m) > tol)
-                fprintf(stderr, "[scantable][%s] gx_amp @pos%d: ref=%.6g  lib=%.6g\n",
+        if (tol < 1e-6f)
+            tol = 1e-6f;
+        if ((float)fabs(inst.gx_amp_hz_per_m - e->gx_amp_hz_per_m) > tol)
+            fprintf(stderr, "[scantable][%s] gx_amp @pos%d: ref=%.6g  lib=%.6g\n",
                     tc->name, pos, e->gx_amp_hz_per_m, inst.gx_amp_hz_per_m);
-            mu_assert((float)fabs(inst.gx_amp_hz_per_m - e->gx_amp_hz_per_m) <= tol,
+        mu_assert((float)fabs(inst.gx_amp_hz_per_m - e->gx_amp_hz_per_m) <= tol,
                   "gx_amp mismatch");
 
         /* GY amplitude */
         tol = (float)fabs(e->gy_amp_hz_per_m) * 1e-4f;
-        if (tol < 1e-6f) tol = 1e-6f;
+        if (tol < 1e-6f)
+            tol = 1e-6f;
         if ((float)fabs(inst.gy_amp_hz_per_m - e->gy_amp_hz_per_m) > tol)
             fprintf(stderr, "[scantable][%s] gy_amp @pos%d: ref=%.6g  lib=%.6g\n",
-                tc->name, pos, e->gy_amp_hz_per_m, inst.gy_amp_hz_per_m);
+                    tc->name, pos, e->gy_amp_hz_per_m, inst.gy_amp_hz_per_m);
         mu_assert((float)fabs(inst.gy_amp_hz_per_m - e->gy_amp_hz_per_m) <= tol,
                   "gy_amp mismatch");
 
         /* GZ amplitude */
         tol = (float)fabs(e->gz_amp_hz_per_m) * 1e-4f;
-        if (tol < 1e-6f) tol = 1e-6f;
+        if (tol < 1e-6f)
+            tol = 1e-6f;
         if ((float)fabs(inst.gz_amp_hz_per_m - e->gz_amp_hz_per_m) > tol)
             fprintf(stderr, "[scantable][%s] gz_amp @pos%d: ref=%.6g  lib=%.6g\n",
-                tc->name, pos, e->gz_amp_hz_per_m, inst.gz_amp_hz_per_m);
+                    tc->name, pos, e->gz_amp_hz_per_m, inst.gz_amp_hz_per_m);
         mu_assert((float)fabs(inst.gz_amp_hz_per_m - e->gz_amp_hz_per_m) <= tol,
                   "gz_amp mismatch");
 
@@ -1642,13 +1767,15 @@ static void run_scan_table_case(const seq_case* tc)
 
         /* ADC phase */
         tol = (float)fabs(e->adc_phase_rad) * 1e-4f;
-        if (tol < 1e-8f) tol = 1e-8f;
+        if (tol < 1e-8f)
+            tol = 1e-8f;
         mu_assert((float)fabs(inst.adc_phase_rad - e->adc_phase_rad) <= tol,
                   "adc_phase_rad mismatch");
 
         /* ADC freq */
         tol = (float)fabs(e->adc_freq_hz) * 1e-4f;
-        if (tol < 1e-6f) tol = 1e-6f;
+        if (tol < 1e-6f)
+            tol = 1e-6f;
         mu_assert((float)fabs(inst.adc_freq_hz - e->adc_freq_hz) <= tol,
                   "adc_freq_hz mismatch");
 
@@ -1660,18 +1787,20 @@ static void run_scan_table_case(const seq_case* tc)
          * block table entry, not the canonical segment definition. */
         if (e->block_dur_us > 0 && inst.duration_us != e->block_dur_us)
             fprintf(stderr, "[scantable][%s] block_dur @pos%d: ref=%d  lib=%d\n",
-                tc->name, pos, e->block_dur_us, inst.duration_us);
+                    tc->name, pos, e->block_dur_us, inst.duration_us);
         if (e->block_dur_us > 0)
             mu_assert_int_eq(e->block_dur_us, inst.duration_us);
 
         /* Rotation matrix */
-        for (i = 0; i < 9; ++i) {
+        for (i = 0; i < 9; ++i)
+        {
             mu_assert((float)fabs(inst.rotmat[i] - e->rotmat[i]) < 1e-5f,
                       "rotmat mismatch");
         }
 
         /* ---- Trigger flag (per-block truth vs segment-level cursor) */
-        if (e->trigger_flag) {
+        if (e->trigger_flag)
+        {
             mu_assert(ci.has_trigger,
                       "cursor has_trigger should be set when truth trigger_flag=1");
             if (ci.segment_id >= 0 && ci.segment_id < MAX_SEGMENTS)
@@ -1679,7 +1808,8 @@ static void run_scan_table_case(const seq_case* tc)
         }
 
         /* ---- Freq-mod ID consistency ----------------------------- */
-        if (e->freq_mod_id > 0) {
+        if (e->freq_mod_id > 0)
+        {
             if (ci.segment_id >= 0 && ci.segment_id < MAX_SEGMENTS)
                 seg_fmod_seen[ci.segment_id] = 1;
         }
@@ -1703,10 +1833,12 @@ static void run_scan_table_case(const seq_case* tc)
      */
     {
         int seg;
-        for (seg = 0; seg < cinfo.num_segments && seg < MAX_SEGMENTS; ++seg) {
+        for (seg = 0; seg < cinfo.num_segments && seg < MAX_SEGMENTS; ++seg)
+        {
             pulseqlib_segment_info si = PULSEQLIB_SEGMENT_INFO_INIT;
             rc = pulseqlib_get_segment_info(coll, &si, seg);
-            if (PULSEQLIB_SUCCEEDED(rc) && seg_trigger_seen[seg]) {
+            if (PULSEQLIB_SUCCEEDED(rc) && seg_trigger_seen[seg])
+            {
                 mu_assert(si.has_trigger,
                           "segment_info.has_trigger should be set "
                           "when scan table has trigger_flag");
@@ -1714,7 +1846,8 @@ static void run_scan_table_case(const seq_case* tc)
         }
     }
 
-    if (is_mprage) {
+    if (is_mprage)
+    {
         fprintf(stderr, "[scantable][%s] pure_seg_id=%d  pure_inst_unique=%d  saw_noncanonical=%d\n",
                 tc->name, pure_seg_id, pure_inst_unique, saw_noncanonical_instance);
         mu_assert(pure_seg_id >= 0, "expected a pure-delay segment in MPRAGE scan loop");
@@ -1727,10 +1860,10 @@ static void run_scan_table_case(const seq_case* tc)
     pulseqlib_collection_free(coll);
 }
 
-static void run_collection_case(const seq_case* tc)
+static void run_collection_case(const seq_case *tc)
 {
     pulseqlib_opts opts;
-    pulseqlib_collection* coll = NULL;
+    pulseqlib_collection *coll = NULL;
     pulseqlib_collection_info cinfo = PULSEQLIB_COLLECTION_INFO_INIT;
     pulseqlib_subseq_info gre_info = PULSEQLIB_SUBSEQ_INFO_INIT;
     pulseqlib_subseq_info epi_info = PULSEQLIB_SUBSEQ_INFO_INIT;
@@ -1769,7 +1902,8 @@ static void run_collection_case(const seq_case* tc)
               "EPI subsequence should have a positive segment offset");
 
     pulseqlib_cursor_reset(coll);
-    while (pulseqlib_cursor_next(coll) == PULSEQLIB_CURSOR_BLOCK) {
+    while (pulseqlib_cursor_next(coll) == PULSEQLIB_CURSOR_BLOCK)
+    {
         rc = pulseqlib_cursor_get_info(coll, &ci);
         mu_assert(PULSEQLIB_SUCCEEDED(rc), "pulseqlib_cursor_get_info failed for collection case");
         mu_assert(ci.subseq_idx >= 0 && ci.subseq_idx < 2,
@@ -1786,14 +1920,14 @@ static void run_collection_case(const seq_case* tc)
 
     /* Duration: sum of block_dur_us from scan table fixture vs
      * cinfo.total_duration_us (now computed via scan-table walk). */
-    build_case_path(scan_path, sizeof(scan_path), tc, "_scan_table.bin");
+    build_case_path(scan_path, sizeof(scan_path), tc, "_scan_table.truth");
     ok = parse_scan_table(scan_path, &ref);
-    mu_assert(ok, "failed to parse scan_table.bin for duration check");
+    mu_assert(ok, "failed to parse scan_table.truth for duration check");
     expected_total_duration_us = 0.0f;
     for (i = 0; i < ref.num_entries; ++i)
         expected_total_duration_us += (float)ref.entries[i].block_dur_us;
     mu_assert_float_near("collection duration",
-        expected_total_duration_us, cinfo.total_duration_us, 1.0f);
+                         expected_total_duration_us, cinfo.total_duration_us, 1.0f);
 
     pulseqlib_collection_free(coll);
 }
@@ -1884,7 +2018,6 @@ MU_TEST_SUITE(suite_sequences_scanloop)
     MU_RUN_TEST(test_scan_table_mprage_nav_2d_3sl_1avg);
     MU_RUN_TEST(test_scan_table_mprage_nav_2d_3sl_3avg);
 }
-
 
 int test_sequences_main(void)
 {
