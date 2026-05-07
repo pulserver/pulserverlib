@@ -3998,10 +3998,10 @@ int check_max_grad(
         {
             diag->code = PULSEQLIB_ERR_MAX_GRAD_EXCEEDED;
             pulseqlib__diag_printf(diag,
-                                   "max grad exceeded: subseq=%d block=%d amp=%.4f limit=%.4f mT/m",
-                                   worst_subseq, worst_block,
+                                   "amp=%.2fmT/m>%.2fmT/m,s=%d,b=%d",
                                    (double)((float)sqrt((double)gsos_max) / hz_per_mt),
-                                   (double)(opts->max_grad_hz_per_m / hz_per_mt));
+                                   (double)(opts->max_grad_hz_per_m / hz_per_mt),
+                                   worst_subseq, worst_block);
         }
         return PULSEQLIB_ERR_MAX_GRAD_EXCEEDED;
     }
@@ -4077,8 +4077,8 @@ int check_grad_continuity(
                     {
                         diag->code = PULSEQLIB_ERR_GRAD_DISCONTINUITY;
                         pulseqlib__diag_printf(diag,
-                                               "grad discontinuity at subseq boundary: axis=%d step=%.4f limit=%.4f mT/m",
-                                               n, (double)(step / hz_per_mt), (double)(max_allowed / hz_per_mt));
+                                               "step=%.2fmT/m>%.2fmT/m,a=%d,bnd=1",
+                                               (double)(step / hz_per_mt), (double)(max_allowed / hz_per_mt), n);
                     }
                     coll->block_cursor = saved_cursor;
                     return PULSEQLIB_ERR_GRAD_DISCONTINUITY;
@@ -4192,9 +4192,9 @@ int check_grad_continuity(
                 {
                     diag->code = PULSEQLIB_ERR_GRAD_DISCONTINUITY;
                     pulseqlib__diag_printf(diag,
-                                           "grad discontinuity: axis=%d scan_pos=%d step=%.4f limit=%.4f mT/m",
-                                           n, coll->block_cursor.scan_table_position,
-                                           (double)(step / hz_per_mt), (double)(max_allowed / hz_per_mt));
+                                           "step=%.2fmT/m>%.2fmT/m,a=%d,p=%d",
+                                           (double)(step / hz_per_mt), (double)(max_allowed / hz_per_mt),
+                                           n, coll->block_cursor.scan_table_position);
                 }
                 coll->block_cursor = saved_cursor;
                 return PULSEQLIB_ERR_GRAD_DISCONTINUITY;
@@ -4222,8 +4222,8 @@ int check_grad_continuity(
             {
                 diag->code = PULSEQLIB_ERR_GRAD_DISCONTINUITY;
                 pulseqlib__diag_printf(diag,
-                                       "grad discontinuity at trailing edge: axis=%d step=%.4f limit=%.4f mT/m",
-                                       n, (double)(step / hz_per_mt), (double)(max_allowed / hz_per_mt));
+                                       "step=%.2fmT/m>%.2fmT/m,a=%d,tail=1",
+                                       (double)(step / hz_per_mt), (double)(max_allowed / hz_per_mt), n);
             }
             coll->block_cursor = saved_cursor;
             return PULSEQLIB_ERR_GRAD_DISCONTINUITY;
@@ -4291,8 +4291,8 @@ int check_max_slew(
                         {
                             diag->code = PULSEQLIB_ERR_MAX_SLEW_EXCEEDED;
                             pulseqlib__diag_printf(diag,
-                                                   "max slew exceeded: axis=%d def=%d slew=%.4f limit=%.4f Hz/m/s",
-                                                   n, d, (double)slew_phys, (double)slew_limit);
+                                                   "slew=%.2f>%.2fHz/m/s,a=%d,d=%d",
+                                                   (double)slew_phys, (double)slew_limit, n, d);
                         }
                         return PULSEQLIB_ERR_MAX_SLEW_EXCEEDED;
                     }
@@ -4489,12 +4489,10 @@ int pulseqlib_check_safety(
                                         diag->code = rc;
                                         pulseqlib__diag_printf(
                                             diag,
-                                            "mechanical resonance violation: ss=%d ctr=%d ax=%d f=%.3fHz amp=%.3fHz/m band=[%.3f,%.3f]Hz limit=%.3fHz/m",
-                                            s, u, axi,
+                                            "f=%.2fHz,a=%.2f>%.2fHz/m,ax=%d,ss=%d,tr=%d",
                                             (double)cf_hz, (double)ca_hz_per_m,
-                                            (double)forbidden_bands[b].freq_min_hz,
-                                            (double)forbidden_bands[b].freq_max_hz,
-                                            (double)forbidden_bands[b].max_amplitude_hz_per_m);
+                                            (double)forbidden_bands[b].max_amplitude_hz_per_m,
+                                            axi, s, u);
                                     }
                                     break;
                                 }
