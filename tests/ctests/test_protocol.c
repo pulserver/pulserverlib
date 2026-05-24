@@ -38,27 +38,27 @@ MU_TEST(test_param_lookup)
 }
 
 /* ================================================================== */
-/*  Test: user0 is absent                                             */
+/*  Test: user slots use Python-facing zero-based names               */
 /* ================================================================== */
 
-MU_TEST(test_no_user0)
+MU_TEST(test_user_slots)
 {
-    mu_assert_int_eq(-1, pulseqlib_param_find("user0_value"));
-    /* user1_value should exist */
-    mu_assert(pulseqlib_param_find("user1_value") >= 0, "user1_value should exist");
+    mu_assert_int_eq(PULSEQLIB_PARAM_USER1, pulseqlib_param_find("user0_value"));
+    mu_assert_int_eq(PULSEQLIB_PARAM_USER2, pulseqlib_param_find("user1_value"));
+    mu_assert_int_eq(PULSEQLIB_PARAM_USER17, pulseqlib_param_find("user16_value"));
 }
 
 /* ================================================================== */
 /*  Test: parse a preamble                                            */
 /* ================================================================== */
 
-static const char* PREAMBLE =
+static const char *PREAMBLE =
     "[NimPulseqGUI Protocol]\n"
     "TE: 5.0\n"
     "TR: 500.0\n"
     "nslices: 10\n"
     "FatSat: true\n"
-    "user3_value: 42.5\n"
+    "user0_value: 42.5\n"
     "[NimPulseqGUI Protocol End]\n";
 
 MU_TEST(test_parse)
@@ -72,31 +72,31 @@ MU_TEST(test_parse)
     mu_assert(rc == 5, "expected 5 parsed params");
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
-                         PULSEQLIB_PARAM_TE, &fval));
+                                                     PULSEQLIB_PARAM_TE, &fval));
     mu_assert(fabsf(fval - 5.0f) < 1e-6f, "TE value");
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
-                         PULSEQLIB_PARAM_TR, &fval));
+                                                     PULSEQLIB_PARAM_TR, &fval));
     mu_assert(fabsf(fval - 500.0f) < 1e-3f, "TR value");
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_int(&proto,
-                         PULSEQLIB_PARAM_NSLICES, &ival));
+                                                   PULSEQLIB_PARAM_NSLICES, &ival));
     mu_assert_int_eq(10, ival);
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_bool(&proto,
-                         PULSEQLIB_PARAM_FAT_SAT, &bval));
+                                                    PULSEQLIB_PARAM_FAT_SAT, &bval));
     mu_assert_int_eq(1, bval);
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
-                         PULSEQLIB_PARAM_USER3, &fval));
-    mu_assert(fabsf(fval - 42.5f) < 1e-6f, "user3 value");
+                                                     PULSEQLIB_PARAM_USER1, &fval));
+    mu_assert(fabsf(fval - 42.5f) < 1e-6f, "user0 value");
 }
 
 /* ================================================================== */
 /*  Test: parse with comment-prefix lines                             */
 /* ================================================================== */
 
-static const char* PREAMBLE_COMMENTED =
+static const char *PREAMBLE_COMMENTED =
     "# [NimPulseqGUI Protocol]\n"
     "# TE: 3.0\n"
     "# [NimPulseqGUI Protocol End]\n";
@@ -111,7 +111,7 @@ MU_TEST(test_parse_commented)
     mu_assert(rc == 1, "expected 1 parsed param");
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
-                         PULSEQLIB_PARAM_TE, &fval));
+                                                     PULSEQLIB_PARAM_TE, &fval));
     mu_assert(fabsf(fval - 3.0f) < 1e-6f, "TE from commented preamble");
 }
 
@@ -128,27 +128,27 @@ MU_TEST(test_setters)
     memset(&proto, 0, sizeof(proto));
 
     mu_assert_int_eq(0, pulseqlib_protocol_set_float(&proto,
-                         PULSEQLIB_PARAM_FOV, 240.0f));
+                                                     PULSEQLIB_PARAM_FOV, 240.0f));
     mu_assert_int_eq(0, pulseqlib_protocol_set_int(&proto,
-                         PULSEQLIB_PARAM_MATRIX, 256));
+                                                   PULSEQLIB_PARAM_MATRIX, 256));
     mu_assert_int_eq(0, pulseqlib_protocol_set_bool(&proto,
-                         PULSEQLIB_PARAM_SPOILER, 1));
+                                                    PULSEQLIB_PARAM_SPOILER, 1));
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
-                         PULSEQLIB_PARAM_FOV, &fval));
+                                                     PULSEQLIB_PARAM_FOV, &fval));
     mu_assert(fabsf(fval - 240.0f) < 1e-6f, "fov");
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_int(&proto,
-                         PULSEQLIB_PARAM_MATRIX, &ival));
+                                                   PULSEQLIB_PARAM_MATRIX, &ival));
     mu_assert_int_eq(256, ival);
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_bool(&proto,
-                         PULSEQLIB_PARAM_SPOILER, &bval));
+                                                    PULSEQLIB_PARAM_SPOILER, &bval));
     mu_assert_int_eq(1, bval);
 
     /* Type mismatch: getting float from int slot should fail */
     mu_assert_int_eq(-1, pulseqlib_protocol_get_float(&proto,
-                          PULSEQLIB_PARAM_MATRIX, &fval));
+                                                      PULSEQLIB_PARAM_MATRIX, &fval));
 }
 
 /* ================================================================== */
@@ -175,11 +175,11 @@ MU_TEST(test_roundtrip)
     mu_assert(rc == 3, "round-trip should parse 3 params");
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&p2,
-                         PULSEQLIB_PARAM_TE, &fval));
+                                                     PULSEQLIB_PARAM_TE, &fval));
     mu_assert(fabsf(fval - 3.5f) < 1e-3f, "TE round-trip");
 
     mu_assert_int_eq(0, pulseqlib_protocol_get_int(&p2,
-                         PULSEQLIB_PARAM_NSLICES, &ival));
+                                                   PULSEQLIB_PARAM_NSLICES, &ival));
     mu_assert_int_eq(20, ival);
 }
 
@@ -187,13 +187,13 @@ MU_TEST(test_roundtrip)
 /*  Test: rich schema format "type|value|min|max|incr|unit"           */
 /* ================================================================== */
 
-static const char* PREAMBLE_RICH =
+static const char *PREAMBLE_RICH =
     "[NimPulseqGUI Protocol]\n"
     "TE: float|5.0|0.5|100.0|0.1|ms\n"
     "TR: float|500.0|10.0|10000.0|1.0|ms\n"
     "nslices: int|10|1|256|1|slices\n"
     "FatSat: bool|1\n"
-    "user3_value: float|42.5|-100.0|100.0|0.5|\n"
+    "user0_value: float|42.5|-100.0|100.0|0.5|\n"
     "[NimPulseqGUI Protocol End]\n";
 
 MU_TEST(test_parse_rich)
@@ -202,14 +202,14 @@ MU_TEST(test_parse_rich)
     int rc, idx;
     float fval;
     int ival, bval;
-    const pulseqlib_protocol_value* pv;
+    const pulseqlib_protocol_value *pv;
 
     rc = pulseqlib_protocol_parse(&proto, PREAMBLE_RICH);
     mu_assert(rc == 5, "expected 5 parsed params (rich)");
 
     /* TE: value + schema */
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
-                         PULSEQLIB_PARAM_TE, &fval));
+                                                     PULSEQLIB_PARAM_TE, &fval));
     mu_assert(fabsf(fval - 5.0f) < 1e-6f, "TE value (rich)");
 
     idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_TE);
@@ -223,7 +223,7 @@ MU_TEST(test_parse_rich)
 
     /* TR: value + schema */
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
-                         PULSEQLIB_PARAM_TR, &fval));
+                                                     PULSEQLIB_PARAM_TR, &fval));
     mu_assert(fabsf(fval - 500.0f) < 1e-3f, "TR value (rich)");
 
     idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_TR);
@@ -233,7 +233,7 @@ MU_TEST(test_parse_rich)
 
     /* NSlices: int with schema */
     mu_assert_int_eq(0, pulseqlib_protocol_get_int(&proto,
-                         PULSEQLIB_PARAM_NSLICES, &ival));
+                                                   PULSEQLIB_PARAM_NSLICES, &ival));
     mu_assert_int_eq(10, ival);
 
     idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_NSLICES);
@@ -245,25 +245,25 @@ MU_TEST(test_parse_rich)
 
     /* FatSat: bool (no range schema, but has_schema=0 since bool has no min/max) */
     mu_assert_int_eq(0, pulseqlib_protocol_get_bool(&proto,
-                         PULSEQLIB_PARAM_FAT_SAT, &bval));
+                                                    PULSEQLIB_PARAM_FAT_SAT, &bval));
     mu_assert_int_eq(1, bval);
 
-    /* user3_value: float with schema, empty unit */
+    /* user0_value: float with schema, empty unit */
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
-                         PULSEQLIB_PARAM_USER3, &fval));
-    mu_assert(fabsf(fval - 42.5f) < 1e-6f, "user3 (rich)");
+                                                     PULSEQLIB_PARAM_USER1, &fval));
+    mu_assert(fabsf(fval - 42.5f) < 1e-6f, "user0 (rich)");
 
-    idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_USER3);
+    idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_USER1);
     pv = &proto.values[idx];
     mu_assert_int_eq(1, pv->has_schema);
-    mu_assert(fabsf(pv->range_min - (-100.0f)) < 1e-4f, "user3 min");
+    mu_assert(fabsf(pv->range_min - (-100.0f)) < 1e-4f, "user0 min");
 }
 
 /* ================================================================== */
 /*  Test: rich + simple mixed (backward compat)                       */
 /* ================================================================== */
 
-static const char* PREAMBLE_MIXED =
+static const char *PREAMBLE_MIXED =
     "[NimPulseqGUI Protocol]\n"
     "TE: float|5.0|0.5|100.0|0.1|ms\n"
     "TR: 500.0\n"
@@ -289,7 +289,7 @@ MU_TEST(test_parse_mixed)
 
     /* TR is simple — no schema, mode defaults to TYPEIN */
     mu_assert_int_eq(0, pulseqlib_protocol_get_float(&proto,
-                         PULSEQLIB_PARAM_TR, &fval));
+                                                     PULSEQLIB_PARAM_TR, &fval));
     mu_assert(fabsf(fval - 500.0f) < 1e-3f, "TR simple");
     idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_TR);
     mu_assert_int_eq(0, proto.values[idx].has_schema);
@@ -299,12 +299,12 @@ MU_TEST(test_parse_mixed)
     idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_NSLICES);
     mu_assert_int_eq(1, proto.values[idx].has_schema);
     mu_assert_int_eq(0, pulseqlib_protocol_get_int(&proto,
-                         PULSEQLIB_PARAM_NSLICES, &ival));
+                                                   PULSEQLIB_PARAM_NSLICES, &ival));
     mu_assert_int_eq(10, ival);
 
     /* FatSat is simple */
     mu_assert_int_eq(0, pulseqlib_protocol_get_bool(&proto,
-                         PULSEQLIB_PARAM_FAT_SAT, &bval));
+                                                    PULSEQLIB_PARAM_FAT_SAT, &bval));
     mu_assert_int_eq(1, bval);
     idx = pulseqlib_protocol_find(&proto, PULSEQLIB_PARAM_FAT_SAT);
     mu_assert_int_eq(0, proto.values[idx].has_schema);
@@ -314,7 +314,7 @@ MU_TEST(test_parse_mixed)
 /*  Test: dropdown wire format with mode + options                    */
 /* ================================================================== */
 
-static const char* PREAMBLE_DROPDOWN =
+static const char *PREAMBLE_DROPDOWN =
     "[NimPulseqGUI Protocol]\n"
     "TE: float|dropdown|12.0|5.0|80.0|1.0|ms|8.0|12.0|16.0\n"
     "TR: float|typein|500.0|10.0|10000.0|1.0|ms\n"
@@ -327,7 +327,7 @@ MU_TEST(test_parse_dropdown)
 {
     pulseqlib_protocol proto;
     int rc, idx;
-    const pulseqlib_protocol_value* pv;
+    const pulseqlib_protocol_value *pv;
 
     rc = pulseqlib_protocol_parse(&proto, PREAMBLE_DROPDOWN);
     mu_assert(rc == 5, "expected 5 parsed params (dropdown)");
@@ -394,7 +394,7 @@ MU_TEST(test_parse_dropdown)
 MU_TEST_SUITE(protocol_suite)
 {
     MU_RUN_TEST(test_param_lookup);
-    MU_RUN_TEST(test_no_user0);
+    MU_RUN_TEST(test_user_slots);
     MU_RUN_TEST(test_parse);
     MU_RUN_TEST(test_parse_commented);
     MU_RUN_TEST(test_setters);
