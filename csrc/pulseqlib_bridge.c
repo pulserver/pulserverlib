@@ -57,11 +57,11 @@ extern int kill(pid_t, int);
 /* Wire-level bridge log. Writes to
  * $PULSERVER_BASE_DIR/log/pulserver.log when PULSERVER_BASE_DIR is set,
  * otherwise to /tmp/pulserver.log. Silent on fopen failure. */
-static void bridge_log(const char* fmt, ...)
+static void bridge_log(const char *fmt, ...)
 {
-    FILE* fp;
+    FILE *fp;
     char path[512];
-    const char* base;
+    const char *base;
     va_list ap;
 
     base = getenv("PULSERVER_BASE_DIR");
@@ -70,20 +70,23 @@ static void bridge_log(const char* fmt, ...)
     else
         snprintf(path, sizeof(path), "/tmp/pulserver.log");
     fp = fopen(path, "a");
-    if (!fp) return;
+    if (!fp)
+        return;
     va_start(ap, fmt);
     vfprintf(fp, fmt, ap);
     va_end(ap);
     fclose(fp);
 }
 
-static int bridge_env_timeout(const char* name, int default_sec)
+static int bridge_env_timeout(const char *name, int default_sec)
 {
-    const char* s = getenv(name);
+    const char *s = getenv(name);
     int v;
-    if (!s || !*s) return default_sec;
+    if (!s || !*s)
+        return default_sec;
     v = atoi(s);
-    if (v <= 0) return default_sec;
+    if (v <= 0)
+        return default_sec;
     return v;
 }
 
@@ -125,7 +128,8 @@ static int read_line_to(int fd, char *buf, int bufsz, int timeout_sec)
     struct timeval now;
     int rs;
 
-    if (timeout_sec <= 0) timeout_sec = PULSEQLIB_BRIDGE_READ_TIMEOUT_DEFAULT_SEC;
+    if (timeout_sec <= 0)
+        timeout_sec = PULSEQLIB_BRIDGE_READ_TIMEOUT_DEFAULT_SEC;
     gettimeofday(&deadline, NULL);
     deadline.tv_sec += timeout_sec;
 
@@ -140,18 +144,25 @@ static int read_line_to(int fd, char *buf, int bufsz, int timeout_sec)
             buf[pos] = '\0';
             return PULSEQLIB_BRIDGE_RC_TIMEOUT;
         }
-        tv.tv_sec  = deadline.tv_sec  - now.tv_sec;
+        tv.tv_sec = deadline.tv_sec - now.tv_sec;
         tv.tv_usec = deadline.tv_usec - now.tv_usec;
-        if (tv.tv_usec < 0) { tv.tv_sec -= 1; tv.tv_usec += 1000000; }
+        if (tv.tv_usec < 0)
+        {
+            tv.tv_sec -= 1;
+            tv.tv_usec += 1000000;
+        }
 
         FD_ZERO(&rfds);
         FD_SET(fd, &rfds);
         rs = select(fd + 1, &rfds, NULL, NULL, &tv);
-        if (rs < 0) {
-            if (errno == EINTR) continue;
+        if (rs < 0)
+        {
+            if (errno == EINTR)
+                continue;
             return -1;
         }
-        if (rs == 0) {
+        if (rs == 0)
+        {
             buf[pos] = '\0';
             return PULSEQLIB_BRIDGE_RC_TIMEOUT;
         }
@@ -266,7 +277,7 @@ static int bridge_do_open(pulseqlib_bridge *b, const char *exe_path,
     if (pid == 0)
     {
         /* Child process */
-        const char* log_dir;
+        const char *log_dir;
         char stderr_path[512];
         int stderr_fd;
 
@@ -292,9 +303,11 @@ static int bridge_do_open(pulseqlib_bridge *b, const char *exe_path,
                      "/tmp/pypulseq_host.stderr.log");
         stderr_fd = open(stderr_path,
                          O_WRONLY | O_CREAT | O_APPEND, 0644);
-        if (stderr_fd >= 0) {
+        if (stderr_fd >= 0)
+        {
             dup2(stderr_fd, STDERR_FILENO);
-            if (stderr_fd != STDERR_FILENO) close(stderr_fd);
+            if (stderr_fd != STDERR_FILENO)
+                close(stderr_fd);
         }
 
         execv(exe_path, (char *const *)argv);
@@ -497,14 +510,16 @@ int pulseqlib_bridge_list_protocol(pulseqlib_bridge *b,
         return -1;
 
     bridge_log("[BRIDGE] >LIST_PROTOCOL\n");
-    if (write_str(b->to_child, "LIST_PROTOCOL\n") < 0) {
+    if (write_str(b->to_child, "LIST_PROTOCOL\n") < 0)
+    {
         bridge_log("[BRIDGE] write LIST_PROTOCOL failed errno=%d\n", errno);
         return -1;
     }
 
     /* Child responds: "PROTOCOL\n" then the preamble block */
     rc = read_line(b->from_child, resp_line, (int)sizeof(resp_line));
-    if (rc < 0) {
+    if (rc < 0)
+    {
         bridge_log("[BRIDGE] <LIST_PROTOCOL %s\n",
                    rc == PULSEQLIB_BRIDGE_RC_TIMEOUT ? "TIMEOUT" : "EOF/ERROR");
         return -1;
@@ -514,7 +529,8 @@ int pulseqlib_bridge_list_protocol(pulseqlib_bridge *b,
         return -1;
 
     len = read_preamble_block(b->from_child, preamble, (int)sizeof(preamble));
-    if (len <= 0) {
+    if (len <= 0)
+    {
         bridge_log("[BRIDGE] <LIST_PROTOCOL preamble read failed len=%d\n", len);
         return -1;
     }
@@ -546,18 +562,21 @@ int pulseqlib_bridge_validate(pulseqlib_bridge *b,
         return -1;
 
     bridge_log("[BRIDGE] >VALIDATE\n");
-    if (write_str(b->to_child, "VALIDATE\n") < 0) {
+    if (write_str(b->to_child, "VALIDATE\n") < 0)
+    {
         bridge_log("[BRIDGE] write VALIDATE failed errno=%d\n", errno);
         return -1;
     }
-    if (send_protocol(b, proto) < 0) {
+    if (send_protocol(b, proto) < 0)
+    {
         bridge_log("[BRIDGE] send_protocol (VALIDATE) failed\n");
         return -1;
     }
 
     /* Response: "VALID <duration> <info>" or "INVALID <info>" */
     rc = read_line(b->from_child, resp, (int)sizeof(resp));
-    if (rc < 0) {
+    if (rc < 0)
+    {
         bridge_log("[BRIDGE] <VALIDATE %s\n",
                    rc == PULSEQLIB_BRIDGE_RC_TIMEOUT ? "TIMEOUT" : "EOF/ERROR");
         return -1;
@@ -616,11 +635,13 @@ int pulseqlib_bridge_generate(pulseqlib_bridge *b,
     sprintf(cmd, "GENERATE %s\n", output_path);
 
     bridge_log("[BRIDGE] >GENERATE %s\n", output_path);
-    if (write_str(b->to_child, cmd) < 0) {
+    if (write_str(b->to_child, cmd) < 0)
+    {
         bridge_log("[BRIDGE] write GENERATE failed errno=%d\n", errno);
         return -1;
     }
-    if (send_protocol(b, proto) < 0) {
+    if (send_protocol(b, proto) < 0)
+    {
         bridge_log("[BRIDGE] send_protocol (GENERATE) failed\n");
         return -1;
     }
@@ -630,7 +651,8 @@ int pulseqlib_bridge_generate(pulseqlib_bridge *b,
     gen_timeout = bridge_env_timeout("PULSERVER_BRIDGE_GENERATE_TIMEOUT_SEC",
                                      PULSEQLIB_BRIDGE_READ_TIMEOUT_GENERATE_SEC);
     rc = read_line_to(b->from_child, resp, (int)sizeof(resp), gen_timeout);
-    if (rc < 0) {
+    if (rc < 0)
+    {
         bridge_log("[BRIDGE] <GENERATE %s (timeout=%ds)\n",
                    rc == PULSEQLIB_BRIDGE_RC_TIMEOUT ? "TIMEOUT" : "EOF/ERROR",
                    gen_timeout);
