@@ -378,6 +378,7 @@ static int try_parse_rich(const char *valstr,
     else if (strcmp(field, "bool") == 0)
     {
         pv->type = PULSEQLIB_PTYPE_BOOL;
+        pv->mode = PULSEQLIB_MODE_TYPEIN; /* default visible; bool wire format has no mode tag */
         /* Field 1: value */
         if (next_pipe_field(&p, field, sizeof(field)) < 0)
             return 0;
@@ -387,6 +388,7 @@ static int try_parse_rich(const char *valstr,
     else if (strcmp(field, "stringlist") == 0)
     {
         pv->type = PULSEQLIB_PTYPE_STRINGLIST;
+        pv->mode = PULSEQLIB_MODE_DROPDOWN; /* stringlists are dropdown selectors */
         /* Field 1: selected index */
         if (next_pipe_field(&p, field, sizeof(field)) < 0)
             return 0;
@@ -415,6 +417,7 @@ static int try_parse_rich(const char *valstr,
     else if (strcmp(field, "description") == 0)
     {
         pv->type = PULSEQLIB_PTYPE_DESCRIPTION;
+        pv->mode = PULSEQLIB_MODE_TYPEIN; /* description is informational; mark visible */
         /* Field 1: text (rest of line after first pipe) */
         strncpy(pv->v.desc, p, PULSEQLIB_PROTOCOL_DESC_MAX - 1);
         pv->v.desc[PULSEQLIB_PROTOCOL_DESC_MAX - 1] = '\0';

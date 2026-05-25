@@ -3953,9 +3953,18 @@ int check_max_grad(
     if (diag)
         pulseqlib_diagnostic_init(diag);
 
-    /* ---- max gradient amplitude (GSOS) check ---- */
+    /* ---- max gradient amplitude (GSOS) check ----
+     *
+     * `opts->max_grad_hz_per_m` is the per-axis limit already derated by sqrt(3)
+     * upstream (in pulserver_init_opts) so that, under an arbitrary rotation,
+     * no single physical axis exceeds the scanner's hardware gmax. The vector
+     * magnitude (GSOS) of the *unrotated* waveform, however, is the quantity
+     * that bounds every rotated axis component; hence the proper GSOS bound is
+     * sqrt(3) * per-axis-derated = physical gmax. Compare GSOS^2 against
+     * 3 * (per-axis derated)^2.
+     */
     gsos_max = 0.0f;
-    limit_sq = opts->max_grad_hz_per_m * opts->max_grad_hz_per_m;
+    limit_sq = 3.0f * opts->max_grad_hz_per_m * opts->max_grad_hz_per_m;
     worst_subseq = 0;
     worst_block = 0;
 
@@ -3996,11 +4005,13 @@ int check_max_grad(
         hz_per_mt = opts->gamma_hz_per_t * 0.001f;
         if (diag)
         {
+            float physical_limit_hz_per_m =
+                (float)sqrt(3.0) * opts->max_grad_hz_per_m;
             diag->code = PULSEQLIB_ERR_MAX_GRAD_EXCEEDED;
             pulseqlib__diag_printf(diag,
                                    "amp=%.2fmT/m>%.2fmT/m,s=%d,b=%d",
                                    (double)((float)sqrt((double)gsos_max) / hz_per_mt),
-                                   (double)(opts->max_grad_hz_per_m / hz_per_mt),
+                                   (double)(physical_limit_hz_per_m / hz_per_mt),
                                    worst_subseq, worst_block);
         }
         return PULSEQLIB_ERR_MAX_GRAD_EXCEEDED;
@@ -4262,7 +4273,7 @@ int check_max_slew(
     if (diag)
         pulseqlib_diagnostic_init(diag);
 
-    slew_limit = opts->max_slew_hz_per_m_per_s / (float)sqrt(3.0);
+    slew_limit = opts->max_slew_hz_per_m_per_s;
 
     for (s = 0; s < coll->num_subsequences; ++s)
     {
