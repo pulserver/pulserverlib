@@ -4254,12 +4254,27 @@ int check_max_slew(
     pulseqlib_diagnostic *diag,
     const pulseqlib_opts *opts)
 {
-    int s, d, n, grad_id, shot;
-    float slew_limit, slew_phys;
+    /* ---- max slew rate (GSOS) check ----
+     *
+     * `opts->max_slew_hz_per_m_per_s` is the per-axis limit already derated by
+     * sqrt(3) upstream (in pulserver_init_opts), mirroring max_grad.  The GSOS
+     * bound (vector magnitude of per-axis slew rates) therefore corresponds to
+     * sqrt(3) * derated = physical slew limit.  Compare GSOS_slew^2 against
+     * 3 * (derated)^2.
+     *
+     * Slew per axis at each block = slew_rate_normalised * amplitude, where
+     * slew_rate_normalised (1/s) comes from grad_definitions and amplitude from
+     * grad_table (the per-block-instance value).  This mirrors check_max_grad
+     * which also iterates block_table for per-instance amplitudes.
+     */
+    int s, b, n, raw_id, def_idx, shot_idx;
+    float slew_sq, slew_sq_max, limit_sq, amp;
+    float axis_slew[3];
+    int raw_ids[3];
+    int worst_subseq, worst_block;
     const pulseqlib_sequence_descriptor *desc;
-    const pulseqlib_block_definition *bdef;
+    const pulseqlib_block_table_element *bte;
     const pulseqlib_grad_definition *gdef;
-    int grad_ids[3];
 
     if (!coll || !opts)
     {
@@ -4273,43 +4288,66 @@ int check_max_slew(
     if (diag)
         pulseqlib_diagnostic_init(diag);
 
-    slew_limit = opts->max_slew_hz_per_m_per_s;
+    slew_sq_max = 0.0f;
+    limit_sq = 3.0f * opts->max_slew_hz_per_m_per_s * opts->max_slew_hz_per_m_per_s;
+    worst_subseq = 0;
+    worst_block = 0;
 
     for (s = 0; s < coll->num_subsequences; ++s)
     {
         desc = &coll->descriptors[s];
 
-        for (d = 0; d < desc->num_unique_blocks; ++d)
+        for (b = 0; b < desc->num_blocks; ++b)
         {
-            bdef = &desc->block_definitions[d];
-            grad_ids[0] = bdef->gx_id;
-            grad_ids[1] = bdef->gy_id;
-            grad_ids[2] = bdef->gz_id;
+            bte = &desc->block_table[b];
+            raw_ids[0] = bte->gx_id;
+            raw_ids[1] = bte->gy_id;
+            raw_ids[2] = bte->gz_id;
 
             for (n = 0; n < 3; ++n)
             {
-                grad_id = grad_ids[n];
-                if (grad_id < 0 || grad_id >= desc->num_unique_grads)
+                axis_slew[n] = 0.0f;
+                raw_id = raw_ids[n];
+                if (raw_id < 0 || raw_id >= desc->grad_table_size)
                     continue;
 
-                gdef = &desc->grad_definitions[grad_id];
-                for (shot = 0; shot < gdef->num_shots; ++shot)
-                {
-                    slew_phys = gdef->slew_rate[shot] * gdef->max_amplitude[shot];
-                    if (slew_phys > slew_limit)
-                    {
-                        if (diag)
-                        {
-                            diag->code = PULSEQLIB_ERR_MAX_SLEW_EXCEEDED;
-                            pulseqlib__diag_printf(diag,
-                                                   "slew=%.2f>%.2fHz/m/s,a=%d,d=%d",
-                                                   (double)slew_phys, (double)slew_limit, n, d);
-                        }
-                        return PULSEQLIB_ERR_MAX_SLEW_EXCEEDED;
-                    }
-                }
+                def_idx = desc->grad_table[raw_id].id;
+                shot_idx = desc->grad_table[raw_id].shot_index;
+                amp = desc->grad_table[raw_id].amplitude;
+                if (amp < 0.0f)
+                    amp = -amp;
+
+                if (def_idx < 0 || def_idx >= desc->num_unique_grads)
+                    continue;
+
+                gdef = &desc->grad_definitions[def_idx];
+                if (shot_idx >= 0 && shot_idx < gdef->num_shots)
+                    axis_slew[n] = gdef->slew_rate[shot_idx] * amp;
+            }
+
+            slew_sq = axis_slew[0] * axis_slew[0] + axis_slew[1] * axis_slew[1] + axis_slew[2] * axis_slew[2];
+            if (slew_sq > slew_sq_max)
+            {
+                slew_sq_max = slew_sq;
+                worst_subseq = s;
+                worst_block = b;
             }
         }
+    }
+
+    if (slew_sq_max > limit_sq)
+    {
+        if (diag)
+        {
+            float physical_limit = (float)sqrt(3.0) * opts->max_slew_hz_per_m_per_s;
+            diag->code = PULSEQLIB_ERR_MAX_SLEW_EXCEEDED;
+            pulseqlib__diag_printf(diag,
+                                   "slew_rss=%.2f>%.2fHz/m/s,s=%d,b=%d",
+                                   (double)sqrt((double)slew_sq_max),
+                                   (double)physical_limit,
+                                   worst_subseq, worst_block);
+        }
+        return PULSEQLIB_ERR_MAX_SLEW_EXCEEDED;
     }
 
     return PULSEQLIB_SUCCESS;

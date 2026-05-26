@@ -353,16 +353,16 @@ int pulseqlib__compute_variable_grad_flags(pulseqlib_sequence_descriptor *desc)
     {
         /* Per-position tracking arrays (stack-allocated for tr_size <= 64,
          * heap otherwise).  For typical sequences tr_size is small (< 32). */
-        float fa[3 * 64];    /* first_amp[pos*3 + axis] */
-        int   sv[3 * 64];    /* seen[pos*3 + axis]      */
+        float fa[3 * 64]; /* first_amp[pos*3 + axis] */
+        int sv[3 * 64];   /* seen[pos*3 + axis]      */
         float *pfa = fa;
-        int   *psv = sv;
-        int    heap = 0;
+        int *psv = sv;
+        int heap = 0;
 
         if (tr_size > 64)
         {
             pfa = (float *)PULSEQLIB_ALLOC((size_t)(tr_size * 3) * sizeof(float));
-            psv = (int   *)PULSEQLIB_ALLOC((size_t)(tr_size * 3) * sizeof(int));
+            psv = (int *)PULSEQLIB_ALLOC((size_t)(tr_size * 3) * sizeof(int));
             if (!pfa || !psv)
             {
                 PULSEQLIB_FREE(pfa);
@@ -425,7 +425,8 @@ int pulseqlib__compute_variable_grad_flags(pulseqlib_sequence_descriptor *desc)
             }
 
             tr_pos++;
-            if (tr_pos >= tr_size) tr_pos = 0;
+            if (tr_pos >= tr_size)
+                tr_pos = 0;
         }
 
         if (heap)
@@ -434,20 +435,6 @@ int pulseqlib__compute_variable_grad_flags(pulseqlib_sequence_descriptor *desc)
             PULSEQLIB_FREE(psv);
         }
     }
-
-#ifndef PULSEQLIB_NO_VGF_DIAG
-    /* Diagnostic: print variable_grad_flags to stderr for verification */
-    {
-        int _p;
-        fprintf(stderr, "[VGF] tr_size=%d flags:", tr_size);
-        for (_p = 0; _p < tr_size; ++_p)
-            fprintf(stderr, " [%d]=(%d,%d,%d)", _p,
-                    desc->variable_grad_flags[_p*3+0],
-                    desc->variable_grad_flags[_p*3+1],
-                    desc->variable_grad_flags[_p*3+2]);
-        fprintf(stderr, "\n");
-    }
-#endif
 
     return PULSEQLIB_SUCCESS;
 }
