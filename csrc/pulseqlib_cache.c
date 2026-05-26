@@ -14,7 +14,7 @@
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER 0x01020304
 #define PULSEQLIB_CACHE_VERSION_MAJOR 1
-#define PULSEQLIB_CACHE_VERSION_MINOR 3
+#define PULSEQLIB_CACHE_VERSION_MINOR 4
 
 #define PULSEQLIB_CACHE_SECTION_CHECK 1
 #define PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS 2
@@ -151,6 +151,8 @@ static int write_descriptor(FILE *f, const pulseqlib_sequence_descriptor *d)
     if (!write4(f, &d->enable_pmc, 1))
         return 0;
     if (!write4(f, &d->ignore_averages, 1))
+        return 0;
+    if (!write4(f, &d->num_gain_cal_readouts, 1))
         return 0;
     if (!write4(f, &d->num_passes, 1))
         return 0;
@@ -589,12 +591,14 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
         return 0;
     if (!read4(f, &d->ignore_averages, 1))
         return 0;
+    if (!read4(f, &d->num_gain_cal_readouts, 1))
+        return 0;
     if (!read4(f, &d->num_passes, 1))
         return 0;
     if (!read4(f, &d->vendor, 1))
         return 0;
     if (do_swap)
-        swap4_array(&d->num_prep_blocks, 11);
+        swap4_array(&d->num_prep_blocks, 12);
     if (!read4(f, d->fov, 3))
         return 0;
     if (!read4(f, d->matrix, 3))

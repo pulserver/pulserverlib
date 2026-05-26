@@ -629,6 +629,8 @@ static void read_definitions(pulseqlib__seq_file* seq)
             seq->reserved_definitions_library.enable_pmc = atoi(value);
         } else if (strcmp(key, "IgnoreAverages") == 0) {
             seq->reserved_definitions_library.ignore_averages = atoi(value);
+        } else if (strcmp(key, "NumGainCalibrationReadouts") == 0) {
+            seq->reserved_definitions_library.num_gain_cal_readouts = atoi(value);
         }
     }
 }

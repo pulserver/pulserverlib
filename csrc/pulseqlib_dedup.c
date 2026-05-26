@@ -1551,6 +1551,7 @@ int pulseqlib__get_unique_blocks(pulseqlib_sequence_descriptor *desc, const puls
     desc->ignore_fov_shift = seq->reserved_definitions_library.ignore_fov_shift;
     desc->enable_pmc = seq->reserved_definitions_library.enable_pmc;
     desc->ignore_averages = seq->reserved_definitions_library.ignore_averages;
+    desc->num_gain_cal_readouts = seq->reserved_definitions_library.num_gain_cal_readouts;
     desc->vendor = seq->opts.vendor;
 
     /* encoding-space definitions */

@@ -662,10 +662,11 @@ typedef struct pulseqlib_subseq_info
     int num_passes;            /**< number of inner-loop passes (>=1)   */
     int num_averages;          /**< number of averages (>=1)            */
     int num_canonical_trs;     /**< unique shot-ID combinations (>=1)   */
+    int num_gain_cal_readouts; /**< calibration readouts for APS2 gain cal (pislquant) */
 } pulseqlib_subseq_info;
 
 #define PULSEQLIB_SUBSEQ_INFO_INIT { \
-    0.0f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1}
+    0.0f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0}
 
 /* ================================================================== */
 /*  Segment info (replaces per-segment getters)                       */

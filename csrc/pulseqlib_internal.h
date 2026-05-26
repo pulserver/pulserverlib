@@ -450,6 +450,7 @@ typedef struct pulseqlib_sequence_descriptor {
     int ignore_fov_shift;
     int enable_pmc;
     int ignore_averages;
+    int num_gain_cal_readouts;  /**< calibration readouts for APS2 receive gain (pislquant) */
     int num_passes;
     int pass_len;           /**< blocks per pass (= num_blocks when single-pass) */
     int num_averages;       /**< number of averages (1 if ignore_averages)       */
@@ -534,7 +535,7 @@ typedef struct pulseqlib_sequence_descriptor {
 } pulseqlib_sequence_descriptor;
 
 #define PULSEQLIB_SEQUENCE_DESCRIPTOR_INIT { \
-    0, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 1, 0, 1, 0, \
+    0, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0, 0, 0, 1, 0, 1, 0, \
     {0,0,0}, {0,0,0}, {0,0,0}, {0,0,0}, \
     0, NULL, 0, NULL, \
     0, NULL, 0, NULL, \
@@ -883,6 +884,7 @@ typedef struct pulseqlib__reserved_definitions {
     int ignore_fov_shift;
     int enable_pmc;
     int ignore_averages;
+    int num_gain_cal_readouts;  /**< calibration readouts for APS2 receive gain (pislquant) */
 } pulseqlib__reserved_definitions;
 
 typedef struct pulseqlib__global_label_table {

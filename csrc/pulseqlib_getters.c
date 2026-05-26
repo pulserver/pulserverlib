@@ -3110,6 +3110,7 @@ int pulseqlib_get_subseq_info(const pulseqlib_collection *coll,
     info->num_label_columns = pulseqlib__get_num_label_columns(coll, subseq_idx);
     info->num_passes = coll->descriptors[subseq_idx].num_passes;
     info->num_averages = coll->descriptors[subseq_idx].num_averages;
+    info->num_gain_cal_readouts = coll->descriptors[subseq_idx].num_gain_cal_readouts;
 
     /* Compute num_canonical_trs (unique shot-ID combinations). */
     {
