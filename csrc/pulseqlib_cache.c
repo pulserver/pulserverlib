@@ -14,7 +14,7 @@
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER 0x01020304
 #define PULSEQLIB_CACHE_VERSION_MAJOR 1
-#define PULSEQLIB_CACHE_VERSION_MINOR 4
+#define PULSEQLIB_CACHE_VERSION_MINOR 5
 
 #define PULSEQLIB_CACHE_SECTION_CHECK 1
 #define PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS 2
@@ -558,6 +558,19 @@ static int write_descriptor(FILE *f, const pulseqlib_sequence_descriptor *d)
             return 0;
         if (!write4(f, d->scan_table_avg_id, d->scan_table_len))
             return 0;
+    }
+
+    /* variable grad flags */
+    {
+        int vgf_len = (d->variable_grad_flags && d->tr_descriptor.tr_size > 0)
+                      ? d->tr_descriptor.tr_size * 3 : 0;
+        if (!write4(f, &vgf_len, 1))
+            return 0;
+        if (vgf_len > 0)
+        {
+            if (!write4(f, d->variable_grad_flags, vgf_len))
+                return 0;
+        }
     }
 
     return 1;
@@ -1250,6 +1263,29 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
         d->scan_table_tr_id = NULL;
         d->scan_table_seg_id = NULL;
         d->scan_table_avg_id = NULL;
+    }
+
+    /* variable grad flags */
+    {
+        int vgf_len;
+        if (fread(&vgf_len, sizeof(int), 1, f) != 1)
+            return 0;
+        if (do_swap)
+            swap4(&vgf_len);
+        if (vgf_len > 0)
+        {
+            d->variable_grad_flags = (int *)PULSEQLIB_ALLOC((size_t)vgf_len * sizeof(int));
+            if (!d->variable_grad_flags)
+                return 0;
+            if (fread(d->variable_grad_flags, sizeof(int), (size_t)vgf_len, f) != (size_t)vgf_len)
+                return 0;
+            if (do_swap)
+                swap4_array(d->variable_grad_flags, vgf_len);
+        }
+        else
+        {
+            d->variable_grad_flags = NULL;
+        }
     }
 
     return 1;

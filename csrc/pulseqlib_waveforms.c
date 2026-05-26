@@ -324,11 +324,9 @@ static int compute_position_max_amplitudes_filtered(
  */
 int pulseqlib__compute_variable_grad_flags(pulseqlib_sequence_descriptor *desc)
 {
-    int tr_size, n, pos, block_idx, raw_id;
+    int tr_size, n, pos, si, raw_id, tr_pos;
     const pulseqlib_block_table_element *bte;
     const pulseqlib_grad_table_element *gte;
-    float first_amp[3]; /* per axis: amplitude from first TR */
-    int seen[3];        /* per axis: 1 if first TR recorded */
 
     if (!desc)
         return PULSEQLIB_ERR_NULL_POINTER;
@@ -342,7 +340,7 @@ int pulseqlib__compute_variable_grad_flags(pulseqlib_sequence_descriptor *desc)
         desc->variable_grad_flags = NULL;
     }
 
-    if (tr_size <= 0 || desc->num_blocks <= 0)
+    if (tr_size <= 0 || desc->scan_table_len <= 0)
         return PULSEQLIB_SUCCESS;
 
     n = tr_size * 3;
@@ -352,51 +350,105 @@ int pulseqlib__compute_variable_grad_flags(pulseqlib_sequence_descriptor *desc)
     for (pos = 0; pos < n; ++pos)
         desc->variable_grad_flags[pos] = 0;
 
-    for (pos = 0; pos < tr_size; ++pos)
     {
-        first_amp[0] = 0.0f;
-        first_amp[1] = 0.0f;
-        first_amp[2] = 0.0f;
-        seen[0] = 0;
-        seen[1] = 0;
-        seen[2] = 0;
+        /* Per-position tracking arrays (stack-allocated for tr_size <= 64,
+         * heap otherwise).  For typical sequences tr_size is small (< 32). */
+        float fa[3 * 64];    /* first_amp[pos*3 + axis] */
+        int   sv[3 * 64];    /* seen[pos*3 + axis]      */
+        float *pfa = fa;
+        int   *psv = sv;
+        int    heap = 0;
 
-        for (block_idx = pos; block_idx < desc->num_blocks;
-             block_idx += tr_size)
+        if (tr_size > 64)
         {
-            bte = &desc->block_table[block_idx];
-
-            /* axis 0 = gx, 1 = gy, 2 = gz */
+            pfa = (float *)PULSEQLIB_ALLOC((size_t)(tr_size * 3) * sizeof(float));
+            psv = (int   *)PULSEQLIB_ALLOC((size_t)(tr_size * 3) * sizeof(int));
+            if (!pfa || !psv)
             {
-                int axis;
-                int raw_ids[3];
-                raw_ids[0] = bte->gx_id;
-                raw_ids[1] = bte->gy_id;
-                raw_ids[2] = bte->gz_id;
+                PULSEQLIB_FREE(pfa);
+                PULSEQLIB_FREE(psv);
+                PULSEQLIB_FREE(desc->variable_grad_flags);
+                desc->variable_grad_flags = NULL;
+                return PULSEQLIB_ERR_ALLOC_FAILED;
+            }
+            heap = 1;
+        }
 
-                for (axis = 0; axis < 3; ++axis)
+        for (pos = 0; pos < tr_size * 3; ++pos)
+        {
+            pfa[pos] = 0.0f;
+            psv[pos] = 0;
+        }
+
+        /* Walk the scan table.  scan_table_tr_start[si] == 1 marks the first
+         * block of a new TR; we use this to reset the within-TR position.
+         * This uses the full expanded scan table rather than the deduplicated
+         * block table, so that per-TR gradient amplitude variation (e.g. phase
+         * encoding steps) is correctly detected even after deduplication. */
+        tr_pos = 0;
+        for (si = 0; si < desc->scan_table_len; ++si)
+        {
+            /* Reset position counter at the start of each new TR */
+            if (desc->scan_table_tr_start && desc->scan_table_tr_start[si])
+                tr_pos = 0;
+
+            {
+                int bt_idx = desc->scan_table_block_idx[si];
+                if (tr_pos < tr_size && bt_idx >= 0 && bt_idx < desc->num_blocks)
                 {
-                    raw_id = raw_ids[axis];
-                    if (raw_id >= 0 && raw_id < desc->grad_table_size)
+                    int axis;
+                    int raw_ids[3];
+                    bte = &desc->block_table[bt_idx];
+                    raw_ids[0] = bte->gx_id;
+                    raw_ids[1] = bte->gy_id;
+                    raw_ids[2] = bte->gz_id;
+
+                    for (axis = 0; axis < 3; ++axis)
                     {
-                        gte = &desc->grad_table[raw_id];
-                        if (!seen[axis])
+                        raw_id = raw_ids[axis];
+                        if (raw_id >= 0 && raw_id < desc->grad_table_size)
                         {
-                            first_amp[axis] = gte->amplitude;
-                            seen[axis] = 1;
-                        }
-                        else
-                        {
-                            if (gte->amplitude != first_amp[axis])
+                            int idx = tr_pos * 3 + axis;
+                            gte = &desc->grad_table[raw_id];
+                            if (!psv[idx])
                             {
-                                desc->variable_grad_flags[pos * 3 + axis] = 1;
+                                pfa[idx] = gte->amplitude;
+                                psv[idx] = 1;
+                            }
+                            else if (gte->amplitude != pfa[idx])
+                            {
+                                desc->variable_grad_flags[tr_pos * 3 + axis] = 1;
                             }
                         }
                     }
                 }
             }
+
+            tr_pos++;
+            if (tr_pos >= tr_size) tr_pos = 0;
+        }
+
+        if (heap)
+        {
+            PULSEQLIB_FREE(pfa);
+            PULSEQLIB_FREE(psv);
         }
     }
+
+#ifndef PULSEQLIB_NO_VGF_DIAG
+    /* Diagnostic: print variable_grad_flags to stderr for verification */
+    {
+        int _p;
+        fprintf(stderr, "[VGF] tr_size=%d flags:", tr_size);
+        for (_p = 0; _p < tr_size; ++_p)
+            fprintf(stderr, " [%d]=(%d,%d,%d)", _p,
+                    desc->variable_grad_flags[_p*3+0],
+                    desc->variable_grad_flags[_p*3+1],
+                    desc->variable_grad_flags[_p*3+2]);
+        fprintf(stderr, "\n");
+    }
+#endif
+
     return PULSEQLIB_SUCCESS;
 }
 
