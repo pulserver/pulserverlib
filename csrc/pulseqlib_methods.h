@@ -591,6 +591,12 @@ extern "C"
                                    int seg_idx);
 
     /**
+     * @brief Return 1 if any block in the segment has X/Y/Z gradient, else 0.
+     */
+    int pulseqlib_segment_has_grad(const pulseqlib_collection *coll,
+                                   int seg_idx);
+
+    /**
      * @brief Fill a pulseqlib_block_info for one block within a segment.
      *
      * Replaces all block-level has_xxx / get_xxx accessor pairs.

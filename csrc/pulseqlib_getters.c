@@ -114,6 +114,21 @@ static int get_grad_id_by_axis(const pulseqlib_block_definition *bdef, int axis)
     }
 }
 
+static int get_grad_event_id_by_axis(const pulseqlib_block_table_element *bte, int axis)
+{
+    switch (axis)
+    {
+    case PULSEQLIB_GRAD_AXIS_X:
+        return bte->gx_id;
+    case PULSEQLIB_GRAD_AXIS_Y:
+        return bte->gy_id;
+    case PULSEQLIB_GRAD_AXIS_Z:
+        return bte->gz_id;
+    default:
+        return -1;
+    }
+}
+
 static const pulseqlib_block_table_element *resolve_block_table_via_max_energy(
     const pulseqlib_sequence_descriptor *desc,
     const pulseqlib_tr_segment *seg,
@@ -137,15 +152,13 @@ static const pulseqlib_block_table_element *resolve_block_table_via_max_energy(
     return &desc->block_table[block_table_idx];
 }
 
-/* Resolve the grad_definition index through the canonical segment block
- * definition (stable across average-expanded ONCE filtering). */
-static int resolve_grad_def_via_segment_def(
+static int resolve_grad_def_via_max_energy_instance(
     const pulseqlib_sequence_descriptor *desc,
     const pulseqlib_tr_segment *seg,
     int local_blk, int axis)
 {
-    const pulseqlib_block_definition *bdef;
-    int block_def_id;
+    const pulseqlib_block_table_element *bte;
+    int grad_event_id;
     int grad_def_id;
 
     if (!desc || !seg)
@@ -153,12 +166,15 @@ static int resolve_grad_def_via_segment_def(
     if (local_blk < 0 || local_blk >= seg->num_blocks)
         return -1;
 
-    block_def_id = seg->unique_block_indices[local_blk];
-    if (block_def_id < 0 || block_def_id >= desc->num_unique_blocks)
+    bte = resolve_block_table_via_max_energy(desc, seg, local_blk);
+    if (!bte)
         return -1;
 
-    bdef = &desc->block_definitions[block_def_id];
-    grad_def_id = get_grad_id_by_axis(bdef, axis);
+    grad_event_id = get_grad_event_id_by_axis(bte, axis);
+    if (grad_event_id < 0 || grad_event_id >= desc->grad_table_size)
+        return -1;
+
+    grad_def_id = desc->grad_table[grad_event_id].id;
     if (grad_def_id < 0 || grad_def_id >= desc->num_unique_grads)
         return -1;
 
@@ -538,7 +554,6 @@ int pulseqlib_get_rf_array(
 
         /* Hard-copy base stats */
         (*out_pulses)[n] = rfdef->stats;
-
         /* Patch event-specific amplitude-dependent stats from rf_table. */
         act_amp = desc->rf_table[bte->rf_id].amplitude;
         (*out_pulses)[n].act_amplitude_hz = (act_amp >= 0.0f)
@@ -1597,7 +1612,7 @@ static int pulseqlib__block_has_grad(
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return -1;
 
-    grad_id = resolve_grad_def_via_segment_def(desc, seg, local_blk, axis);
+    grad_id = resolve_grad_def_via_max_energy_instance(desc, seg, local_blk, axis);
     return (grad_id != -1) ? 1 : 0;
 }
 
@@ -1615,7 +1630,7 @@ static int pulseqlib__block_grad_is_trapezoid(
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return -1;
 
-    grad_id = resolve_grad_def_via_segment_def(desc, seg, local_blk, axis);
+    grad_id = resolve_grad_def_via_max_energy_instance(desc, seg, local_blk, axis);
     if (grad_id == -1)
         return -1;
 
@@ -1642,7 +1657,7 @@ static int pulseqlib__get_grad_num_samples(
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return -1;
 
-    grad_id = resolve_grad_def_via_segment_def(desc, seg, local_blk, axis);
+    grad_id = resolve_grad_def_via_max_energy_instance(desc, seg, local_blk, axis);
     if (grad_id == -1)
         return -1;
 
@@ -1680,7 +1695,7 @@ static int pulseqlib__get_grad_num_shots(
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return -1;
 
-    grad_id = resolve_grad_def_via_segment_def(desc, seg, local_blk, axis);
+    grad_id = resolve_grad_def_via_max_energy_instance(desc, seg, local_blk, axis);
     if (grad_id == -1)
         return -1;
 
@@ -1700,7 +1715,7 @@ static int pulseqlib__get_grad_delay_us(
     if (!pulseqlib__resolve_block(&desc, &seg, &local_blk, coll, seg_idx, blk_idx))
         return -1;
 
-    grad_id = resolve_grad_def_via_segment_def(desc, seg, local_blk, axis);
+    grad_id = resolve_grad_def_via_max_energy_instance(desc, seg, local_blk, axis);
     if (grad_id == -1)
         return -1;
 
@@ -3160,6 +3175,30 @@ int pulseqlib_get_segment_info(const pulseqlib_collection *coll,
     info->adc_adc_gap_us = pulseqlib__get_segment_adc_adc_gap_us(coll, seg_idx);
 
     return PULSEQLIB_SUCCESS;
+}
+
+int pulseqlib_segment_has_grad(const pulseqlib_collection *coll,
+                               int seg_idx)
+{
+    pulseqlib_segment_info si = PULSEQLIB_SEGMENT_INFO_INIT;
+    pulseqlib_block_info bi = PULSEQLIB_BLOCK_INFO_INIT;
+    int blk;
+
+    if (!coll)
+        return 0;
+    if (!PULSEQLIB_SUCCEEDED(pulseqlib_get_segment_info(coll, &si, seg_idx)))
+        return 0;
+
+    for (blk = 0; blk < si.num_blocks; ++blk)
+    {
+        if (!PULSEQLIB_SUCCEEDED(pulseqlib_get_block_info(coll, &bi, seg_idx, blk)))
+            continue;
+
+        if (bi.has_grad[0] || bi.has_grad[1] || bi.has_grad[2])
+            return 1;
+    }
+
+    return 0;
 }
 
 int pulseqlib_get_block_info(const pulseqlib_collection *coll,

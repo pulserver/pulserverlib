@@ -405,7 +405,10 @@ static int compute_grad_shot_indices(
 {
     int num_rows = seq->grad_library_size;
     int def_idx, i, j;
-    int shape_id, found, shot_count;
+    int shape_id, shot_count;
+    int shot_shapes[PULSEQLIB_MAX_GRAD_SHOTS];
+    int found_idx;
+    int tmp;
 
     if (num_rows <= 0 || num_unique_grads <= 0)
         return PULSEQLIB_SUCCESS;
@@ -433,25 +436,56 @@ static int compute_grad_shot_indices(
                 continue;
             shape_id = (int)seq->grad_library[i][4];
 
-            found = 0;
+            found_idx = -1;
+            for (j = 0; j < shot_count; ++j)
+            {
+                if (shot_shapes[j] == shape_id)
+                {
+                    found_idx = j;
+                    break;
+                }
+            }
+            if (found_idx < 0)
+            {
+                if (shot_count >= PULSEQLIB_MAX_GRAD_SHOTS)
+                    return PULSEQLIB_ERR_TOO_MANY_GRAD_SHOTS;
+                shot_shapes[shot_count] = shape_id;
+                shot_count++;
+            }
+        }
+
+        for (i = 1; i < shot_count; ++i)
+        {
+            tmp = shot_shapes[i];
+            j = i - 1;
+            while (j >= 0 && shot_shapes[j] > tmp)
+            {
+                shot_shapes[j + 1] = shot_shapes[j];
+                j--;
+            }
+            shot_shapes[j + 1] = tmp;
+        }
+
+        for (i = 0; i < shot_count; ++i)
+            grad_defs[def_idx].shot_shape_ids[i] = shot_shapes[i];
+
+        for (i = 0; i < num_rows; ++i)
+        {
+            if (grad_table[i].id != def_idx)
+                continue;
+            shape_id = (int)seq->grad_library[i][4];
+            found_idx = -1;
             for (j = 0; j < shot_count; ++j)
             {
                 if (grad_defs[def_idx].shot_shape_ids[j] == shape_id)
                 {
-                    found = 1;
-                    grad_table[i].shot_index = j;
+                    found_idx = j;
                     break;
                 }
             }
-            if (!found)
-            {
-                if (shot_count >= PULSEQLIB_MAX_GRAD_SHOTS)
-                    return PULSEQLIB_ERR_TOO_MANY_GRAD_SHOTS;
-                grad_table[i].shot_index = shot_count;
-                grad_defs[def_idx].shot_shape_ids[shot_count] = shape_id;
-                shot_count++;
-            }
+            grad_table[i].shot_index = (found_idx >= 0) ? found_idx : 0;
         }
+
         grad_defs[def_idx].num_shots = shot_count > 0 ? shot_count : 1;
     }
     return PULSEQLIB_SUCCESS;
@@ -747,7 +781,6 @@ static int compute_rf_stats(
     pulseqlib_rf_definition *rd;
 
     const float DTY_THRESHOLD = 0.2236f;
-    const float MPW_THRESHOLD = 1e-5f;
 
     int nn;
     float dw = 10.0f;
@@ -799,7 +832,9 @@ static int compute_rf_stats(
         fft_ready = 1;
     }
     if (!fft_ready)
+    {
         goto fail;
+    }
 
     decomp_mag.num_samples = 0;
     decomp_mag.num_uncompressed_samples = 0;
@@ -851,7 +886,6 @@ static int compute_rf_stats(
                 }
             }
         }
-
         mag_id = rd->mag_shape_id;
         phase_id = rd->phase_shape_id;
         time_id = rd->time_shape_id;
@@ -1057,9 +1091,8 @@ static int compute_rf_stats(
                                           time_us_uniform, num_uniform,
                                           time_us, rf_re, rf_im, num_samples);
 
-        /* compute stats — use double accumulators + trapezoid integration
-         * on the NATIVE (un-interpolated) time grid to match MATLAB
-         * trapz(rf.t, rf.signal) byte-exactly when stored as float32. */
+        /* Compute signed complex integral once — used for both area and flip_angle.
+         * Trapezoidal rule on the NATIVE (un-interpolated) time grid. */
         {
             double dre = 0.0, dim = 0.0;
             if (has_time && time_us && num_samples >= 2)
@@ -1081,8 +1114,16 @@ static int compute_rf_stats(
                     dim += 0.5 * dt * ((double)rf_im[i] + (double)rf_im[i + 1]);
                 }
             }
-            sum_signed = (float)sqrt(dre * dre + dim * dim);
-            /* Keep area as magnitude of the complex integral. */
+            /* area = signed real part = ∫h_norm dt [s] */
+            sum_signed = (float)dre;
+
+            /* flip angle = γ|∫B1 dt| [rad]; stored in flip_angle_deg (misnamed) */
+            {
+                double mag_d = sqrt(dre * dre + dim * dim);
+                rd->stats.flip_angle_deg = (float)(2.0 * 3.14159265358979323846
+                                                   * (double)rd->stats.base_amplitude_hz
+                                                   * mag_d); /* radians */
+            }
         }
         /* width / power / duty stats still need the uniform grid */
         sum_abs = 0.0f;
@@ -1098,7 +1139,7 @@ static int compute_rf_stats(
             sum_sq += rf_abs * rf_abs;
             if (rf_abs > DTY_THRESHOLD)
                 time_above_threshold += 1.0f;
-            if (rf_abs >= MPW_THRESHOLD)
+            if (rf_abs > DTY_THRESHOLD)
             {
                 temp_pw += 1.0f;
             }
@@ -1112,44 +1153,16 @@ static int compute_rf_stats(
         if (temp_pw > maxpw)
             maxpw = temp_pw;
 
-        rd->stats.area = sum_signed;
+        rd->stats.area      = sum_signed;
         rd->stats.abs_width = sum_abs / num_uniform;
         rd->stats.eff_width = sum_sq / num_uniform;
-        rd->stats.duty_cycle = time_above_threshold / num_uniform;
-        {
-            /* Compute the signed integral in double using trapezoidal rule
-             * on the NATIVE time grid (matches MATLAB trapz(rf.t,rf.signal)).
-             * Store flip_angle in RADIANS in stats.flip_angle_deg
-             * (misnamed historically; consumers apply rad->deg). */
-            double dre = 0.0, dim = 0.0;
-            if (has_time && time_us && num_samples >= 2)
-            {
-                for (i = 0; i < num_samples - 1; ++i)
-                {
-                    double dt = ((double)time_us[i + 1] - (double)time_us[i]) * 1e-6;
-                    dre += 0.5 * dt * ((double)rf_re[i] + (double)rf_re[i + 1]);
-                    dim += 0.5 * dt * ((double)rf_im[i] + (double)rf_im[i + 1]);
-                }
-            }
-            else
-            {
-                double dt = (double)rf_raster_us * 1e-6;
-                for (i = 0; i < num_samples - 1; ++i)
-                {
-                    dre += 0.5 * dt * ((double)rf_re[i] + (double)rf_re[i + 1]);
-                    dim += 0.5 * dt * ((double)rf_im[i] + (double)rf_im[i + 1]);
-                }
-            }
-            {
-                double mag_d = sqrt(dre * dre + dim * dim);
-                double flip_rad_d = 2.0 * 3.14159265358979323846 * (double)rd->stats.base_amplitude_hz * mag_d;
-                rd->stats.flip_angle_deg = (float)flip_rad_d; /* actually radians */
-            }
-        }
-        rd->stats.max_pulse_width = maxpw / num_uniform;
-        if (rd->stats.duty_cycle < rd->stats.max_pulse_width)
-            rd->stats.duty_cycle = rd->stats.max_pulse_width;
 
+        /* dtycyc = fraction of samples above DTY_THRESHOLD / res
+         * maxpw  = longest consecutive run above DTY_THRESHOLD / res */
+        if (time_above_threshold < maxpw)
+            time_above_threshold = maxpw;
+        rd->stats.duty_cycle      = time_above_threshold / (float)num_uniform;
+        rd->stats.max_pulse_width = maxpw / (float)num_uniform;
         /* b1sq power: integral |B1_norm(t)|^2 dt (normalised waveform, units: s) */
         rd->stats.total_b1sq_power = sum_sq * rf_raster_us * 1e-6f;
 
@@ -1646,8 +1659,9 @@ int pulseqlib__get_unique_blocks(pulseqlib_sequence_descriptor *desc, const puls
     if (seq->grad_library_size > 0)
     {
         num_unique_grad = deduplicate_grad_library(seq, tmp_grad_defs, tmp_grad_tab);
-        desc->num_unique_grads = num_unique_grad;
         desc->grad_table_size = seq->grad_library_size;
+
+        desc->num_unique_grads = num_unique_grad;
 
         result = compute_grad_shot_indices(seq, tmp_grad_defs, tmp_grad_tab, num_unique_grad);
         if (PULSEQLIB_FAILED(result))
