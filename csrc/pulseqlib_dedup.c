@@ -405,10 +405,7 @@ static int compute_grad_shot_indices(
 {
     int num_rows = seq->grad_library_size;
     int def_idx, i, j;
-    int shape_id, shot_count;
-    int shot_shapes[PULSEQLIB_MAX_GRAD_SHOTS];
-    int found_idx;
-    int tmp;
+    int shape_id, found, shot_count;
 
     if (num_rows <= 0 || num_unique_grads <= 0)
         return PULSEQLIB_SUCCESS;
@@ -436,56 +433,25 @@ static int compute_grad_shot_indices(
                 continue;
             shape_id = (int)seq->grad_library[i][4];
 
-            found_idx = -1;
-            for (j = 0; j < shot_count; ++j)
-            {
-                if (shot_shapes[j] == shape_id)
-                {
-                    found_idx = j;
-                    break;
-                }
-            }
-            if (found_idx < 0)
-            {
-                if (shot_count >= PULSEQLIB_MAX_GRAD_SHOTS)
-                    return PULSEQLIB_ERR_TOO_MANY_GRAD_SHOTS;
-                shot_shapes[shot_count] = shape_id;
-                shot_count++;
-            }
-        }
-
-        for (i = 1; i < shot_count; ++i)
-        {
-            tmp = shot_shapes[i];
-            j = i - 1;
-            while (j >= 0 && shot_shapes[j] > tmp)
-            {
-                shot_shapes[j + 1] = shot_shapes[j];
-                j--;
-            }
-            shot_shapes[j + 1] = tmp;
-        }
-
-        for (i = 0; i < shot_count; ++i)
-            grad_defs[def_idx].shot_shape_ids[i] = shot_shapes[i];
-
-        for (i = 0; i < num_rows; ++i)
-        {
-            if (grad_table[i].id != def_idx)
-                continue;
-            shape_id = (int)seq->grad_library[i][4];
-            found_idx = -1;
+            found = 0;
             for (j = 0; j < shot_count; ++j)
             {
                 if (grad_defs[def_idx].shot_shape_ids[j] == shape_id)
                 {
-                    found_idx = j;
+                    found = 1;
+                    grad_table[i].shot_index = j;
                     break;
                 }
             }
-            grad_table[i].shot_index = (found_idx >= 0) ? found_idx : 0;
+            if (!found)
+            {
+                if (shot_count >= PULSEQLIB_MAX_GRAD_SHOTS)
+                    return PULSEQLIB_ERR_TOO_MANY_GRAD_SHOTS;
+                grad_table[i].shot_index = shot_count;
+                grad_defs[def_idx].shot_shape_ids[shot_count] = shape_id;
+                shot_count++;
+            }
         }
-
         grad_defs[def_idx].num_shots = shot_count > 0 ? shot_count : 1;
     }
     return PULSEQLIB_SUCCESS;
@@ -1120,9 +1086,7 @@ static int compute_rf_stats(
             /* flip angle = γ|∫B1 dt| [rad]; stored in flip_angle_deg (misnamed) */
             {
                 double mag_d = sqrt(dre * dre + dim * dim);
-                rd->stats.flip_angle_deg = (float)(2.0 * 3.14159265358979323846
-                                                   * (double)rd->stats.base_amplitude_hz
-                                                   * mag_d); /* radians */
+                rd->stats.flip_angle_deg = (float)(2.0 * 3.14159265358979323846 * (double)rd->stats.base_amplitude_hz * mag_d); /* radians */
             }
         }
         /* width / power / duty stats still need the uniform grid */
@@ -1153,7 +1117,7 @@ static int compute_rf_stats(
         if (temp_pw > maxpw)
             maxpw = temp_pw;
 
-        rd->stats.area      = sum_signed;
+        rd->stats.area = sum_signed;
         rd->stats.abs_width = sum_abs / num_uniform;
         rd->stats.eff_width = sum_sq / num_uniform;
 
@@ -1161,7 +1125,7 @@ static int compute_rf_stats(
          * maxpw  = longest consecutive run above DTY_THRESHOLD / res */
         if (time_above_threshold < maxpw)
             time_above_threshold = maxpw;
-        rd->stats.duty_cycle      = time_above_threshold / (float)num_uniform;
+        rd->stats.duty_cycle = time_above_threshold / (float)num_uniform;
         rd->stats.max_pulse_width = maxpw / (float)num_uniform;
         /* b1sq power: integral |B1_norm(t)|^2 dt (normalised waveform, units: s) */
         rd->stats.total_b1sq_power = sum_sq * rf_raster_us * 1e-6f;
