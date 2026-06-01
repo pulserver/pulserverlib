@@ -535,12 +535,9 @@ int pulseqlib_get_rf_array(
     n = 0;
     for (i = 0; i < count; ++i)
     {
-        int blk_idx = use_scan_table
-                          ? desc->scan_table_block_idx[start + i]
-                          : (start + i);
+        int blk_idx = use_scan_table ? desc->scan_table_block_idx[start + i] : (start + i);
         int rf_def_id;
         float act_amp;
-        float ratio;
 
         bte = &desc->block_table[blk_idx];
         if (bte->rf_id < 0 || bte->rf_id >= desc->rf_table_size)
@@ -554,21 +551,14 @@ int pulseqlib_get_rf_array(
 
         /* Hard-copy base stats */
         (*out_pulses)[n] = rfdef->stats;
+
         /* Patch event-specific amplitude-dependent stats from rf_table. */
         act_amp = desc->rf_table[bte->rf_id].amplitude;
-        (*out_pulses)[n].act_amplitude_hz = (act_amp >= 0.0f)
-                                                ? act_amp
-                                                : -act_amp;
+        (*out_pulses)[n].act_amplitude_hz = (act_amp >= 0.0f) ? act_amp : -act_amp;
+
         /* base_amplitude_hz retains definition-level nominal amplitude
          * from the hard-copy above (rfdef->stats.base_amplitude_hz). */
-
-        ratio = 0.0f;
-        if (rfdef->stats.base_amplitude_hz > 0.0f)
-        {
-            ratio = (*out_pulses)[n].act_amplitude_hz /
-                    rfdef->stats.base_amplitude_hz;
-        }
-        (*out_pulses)[n].flip_angle_deg = rfdef->stats.flip_angle_deg * ratio;
+        (*out_pulses)[n].flip_angle_deg = rfdef->stats.flip_angle_deg;
 
         /* Set repetition count */
         (*out_pulses)[n].num_instances = num_instances;
