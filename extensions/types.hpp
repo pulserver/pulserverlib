@@ -90,7 +90,7 @@ struct ScanTimeInfo {
 // ── RF statistics ───────────────────────────────────────────────────
 
 struct RfStats {
-    float flip_angle_deg   = 0.0f;
+    float flip_angle_rad   = 0.0f;
     float area             = 0.0f;
     float abs_width        = 0.0f;
     float eff_width        = 0.0f;
@@ -104,7 +104,7 @@ struct RfStats {
 
     static RfStats from_c(const pulseqlib_rf_stats& c) {
         RfStats s;
-        s.flip_angle_deg   = c.flip_angle_deg;
+        s.flip_angle_rad   = c.flip_angle_rad;
         s.area             = c.area;
         s.abs_width        = c.abs_width;
         s.eff_width        = c.eff_width;
