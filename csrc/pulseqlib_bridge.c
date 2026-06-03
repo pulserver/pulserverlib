@@ -55,8 +55,8 @@ extern int kill(pid_t, int);
 #include <stdarg.h>
 
 /* Wire-level bridge log. Writes to
- * $PULSERVER_BASE_DIR/log/pulserver.log when PULSERVER_BASE_DIR is set,
- * otherwise to /tmp/pulserver.log. Silent on fopen failure. */
+ * $PULSERVER_BASE_DIR/log/pulserver<pid>.log when PULSERVER_BASE_DIR is set,
+ * otherwise to /tmp/pulserver<pid>.log. Silent on fopen failure. */
 static void bridge_log(const char *fmt, ...)
 {
     FILE *fp;
@@ -66,9 +66,9 @@ static void bridge_log(const char *fmt, ...)
 
     base = getenv("PULSERVER_BASE_DIR");
     if (base && base[0])
-        snprintf(path, sizeof(path), "%s/log/pulserver.log", base);
+        snprintf(path, sizeof(path), "%s/log/pulserver%d.log", base, (int)getpid());
     else
-        snprintf(path, sizeof(path), "/tmp/pulserver.log");
+        snprintf(path, sizeof(path), "/tmp/pulserver%d.log", (int)getpid());
     fp = fopen(path, "a");
     if (!fp)
         return;
