@@ -819,7 +819,7 @@ static int compute_rf_stats(
         last = -1;
 
         rd->stats.num_samples = 0;
-        rd->stats.flip_angle_deg = 0.0f;
+        rd->stats.flip_angle_rad = 0.0f;
         rd->stats.base_amplitude_hz = 0.0f;
         rd->stats.area = 0.0f;
         rd->stats.abs_width = 0.0f;
@@ -1083,10 +1083,10 @@ static int compute_rf_stats(
             /* area = signed real part = ∫h_norm dt [s] */
             sum_signed = (float)dre;
 
-            /* flip angle = γ|∫B1 dt| [rad]; stored in flip_angle_deg (misnamed) */
+            /* flip angle = γ|∫B1 dt| [rad]; stored in flip_angle_rad */
             {
                 double mag_d = sqrt(dre * dre + dim * dim);
-                rd->stats.flip_angle_deg = (float)(2.0 * 3.14159265358979323846 * (double)rd->stats.base_amplitude_hz * mag_d); /* radians */
+                rd->stats.flip_angle_rad = (float)(2.0 * 3.14159265358979323846 * (double)rd->stats.base_amplitude_hz * mag_d); /* radians */
             }
         }
         /* width / power / duty stats still need the uniform grid */

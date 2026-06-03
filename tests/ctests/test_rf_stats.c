@@ -52,7 +52,7 @@ MU_TEST(test_rf180_block_pulse_stats)
     mu_assert_float_near("max_pw",     1.0f,    stats.max_pulse_width,  1e-4f);
 
     mu_assert_float_near("base_amp_hz", 500.0f, stats.base_amplitude_hz, 1.0f);
-    mu_assert_float_near("flip_angle",  (float)M_PI, stats.flip_angle_deg, 0.01f);
+    mu_assert_float_near("flip_angle",  (float)M_PI, stats.flip_angle_rad, 0.01f);
 
     mu_assert_float_near("duration_us", 999.0f, stats.duration_us, 2.0f);
     mu_assert(abs(stats.isodelay_us - 499) <= 2, "isodelay_us");
@@ -305,7 +305,7 @@ MU_TEST(test_cp_8ch_matches_1ch_180deg)
     mu_assert_float_near("8ch CP base_amp_hz",
         500.0f, stats8.base_amplitude_hz, 5.0f);
     mu_assert_float_near("8ch CP flip_angle",
-        (float)M_PI, stats8.flip_angle_deg, 0.01f);
+        (float)M_PI, stats8.flip_angle_rad, 0.01f);
     mu_assert_float_near("8ch CP duration_us",
         999.0f, stats8.duration_us, 2.0f);
 

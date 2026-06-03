@@ -824,7 +824,7 @@ int pulseqlib_get_sequence_parameters(
                             ratio_d = amp / (double)rd->stats.base_amplitude_hz;
                         }
                         {
-                            double fa_d = (double)rd->stats.flip_angle_deg * ratio_d * (180.0 / 3.14159265358979323846);
+                            double fa_d = (double)rd->stats.flip_angle_rad * ratio_d * (180.0 / 3.14159265358979323846);
                             float fa = (float)fa_d;
                             if (fa > fa_max)
                                 fa_max = fa;

@@ -416,7 +416,7 @@ int pulseqlib__calc_segment_timing(
                                 {
                                     float ratio = (float)fabs((double)rte->amplitude) /
                                                   rdef->stats.base_amplitude_hz;
-                                    float actual_flip = rdef->stats.flip_angle_deg * ratio;
+                                    float actual_flip = rdef->stats.flip_angle_rad * ratio * (180.0f / (float)M_PI);
                                     if (actual_flip > 162.0f && actual_flip < 198.0f)
                                         use = PULSEQLIB_RF_USE_REFOCUSING;
                                 }
@@ -457,19 +457,19 @@ int pulseqlib__calc_segment_timing(
                             {
                                 int use = rte->rf_use;
                                 if (use == PULSEQLIB_RF_USE_UNKNOWN)
-                                {
-                                    rdef = &desc->rf_definitions[rf_def_id];
-                                    if (rdef->stats.base_amplitude_hz > 0.0f)
                                     {
-                                        float ratio = (float)fabs((double)rte->amplitude) /
-                                                      rdef->stats.base_amplitude_hz;
-                                        float actual_flip = rdef->stats.flip_angle_deg * ratio;
-                                        if (actual_flip > 162.0f && actual_flip < 198.0f)
-                                            use = PULSEQLIB_RF_USE_REFOCUSING;
+                                        rdef = &desc->rf_definitions[rf_def_id];
+                                        if (rdef->stats.base_amplitude_hz > 0.0f)
+                                        {
+                                            float ratio = (float)fabs((double)rte->amplitude) /
+                                                          rdef->stats.base_amplitude_hz;
+                                            float actual_flip = rdef->stats.flip_angle_rad * ratio * (180.0f / (float)M_PI);
+                                            if (actual_flip > 162.0f && actual_flip < 198.0f)
+                                                use = PULSEQLIB_RF_USE_REFOCUSING;
+                                        }
                                     }
-                                }
-                                if (use == PULSEQLIB_RF_USE_REFOCUSING)
-                                {
+                                    if (use == PULSEQLIB_RF_USE_REFOCUSING)
+                                    {
                                     float iso_us;
                                     int iso_sample;
                                     rdef = &desc->rf_definitions[rf_def_id];
@@ -725,7 +725,7 @@ int pulseqlib__calc_segment_timing(
                     {
                         float ratio = (float)fabs((double)rte->amplitude) /
                                       rdef->stats.base_amplitude_hz;
-                        float actual_flip = rdef->stats.flip_angle_deg * ratio;
+                        float actual_flip = rdef->stats.flip_angle_rad * ratio * (180.0f / (float)M_PI);
                         if (actual_flip > 162.0f && actual_flip < 198.0f)
                             use = PULSEQLIB_RF_USE_REFOCUSING;
                         else

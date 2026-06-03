@@ -123,7 +123,7 @@ typedef struct pulseqlib_opts
  */
 typedef struct pulseqlib_rf_stats
 {
-    float flip_angle_deg;    /**< nominal flip angle (degrees)           */
+    float flip_angle_rad;    /**< nominal flip angle (radians)           */
     float act_amplitude_hz;  /**< actual |gamma*B1| amplitude (Hz)       */
     float area;              /**< integral of |B1(t)| dt  (a.u.)        */
     float abs_width;         /**< fraction of duration with |B1|>0      */

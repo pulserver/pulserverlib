@@ -558,7 +558,7 @@ int pulseqlib_get_rf_array(
 
         /* base_amplitude_hz retains definition-level nominal amplitude
          * from the hard-copy above (rfdef->stats.base_amplitude_hz). */
-        (*out_pulses)[n].flip_angle_deg = rfdef->stats.flip_angle_deg;
+        (*out_pulses)[n].flip_angle_rad = rfdef->stats.flip_angle_rad;
 
         /* Set repetition count */
         (*out_pulses)[n].num_instances = num_instances;

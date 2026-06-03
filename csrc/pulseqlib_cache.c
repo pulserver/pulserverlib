@@ -244,7 +244,7 @@ static int write_descriptor(FILE *f, const pulseqlib_sequence_descriptor *d)
             return 0;
         if (!write4(f, &d->rf_definitions[i].num_channels, 1))
             return 0;
-        if (!write4(f, &d->rf_definitions[i].stats.flip_angle_deg, 1))
+        if (!write4(f, &d->rf_definitions[i].stats.flip_angle_rad, 1))
             return 0;
         if (!write4(f, &d->rf_definitions[i].stats.area, 1))
             return 0;
@@ -694,7 +694,7 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
             return 0;
         if (do_swap)
             swap4_array(&d->rf_definitions[i].id, 6);
-        if (!read4(f, &d->rf_definitions[i].stats.flip_angle_deg, 1))
+        if (!read4(f, &d->rf_definitions[i].stats.flip_angle_rad, 1))
             return 0;
         if (!read4(f, &d->rf_definitions[i].stats.area, 1))
             return 0;
@@ -717,7 +717,7 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
         if (!read4(f, &d->rf_definitions[i].stats.num_samples, 1))
             return 0;
         if (do_swap)
-            swap4_array(&d->rf_definitions[i].stats.flip_angle_deg, 11);
+            swap4_array(&d->rf_definitions[i].stats.flip_angle_rad, 11);
         /* v20: multiband/power fields */
         if (!read4(f, &d->rf_definitions[i].stats.num_bands, 1))
             return 0;
