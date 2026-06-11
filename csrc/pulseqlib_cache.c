@@ -803,7 +803,10 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
         if (!read4(f, gd->last_value, PULSEQLIB_MAX_GRAD_SHOTS))
             return 0;
         if (do_swap)
-            swap4_array(gd->shot_shape_ids, 8 * PULSEQLIB_MAX_GRAD_SHOTS);
+            /* 7 contiguous MAX_GRAD_SHOTS arrays end the struct
+             * (shot_shape_ids .. last_value); swapping 8 ran one array
+             * past the allocation for the final element. */
+            swap4_array(gd->shot_shape_ids, 7 * PULSEQLIB_MAX_GRAD_SHOTS);
     }
 
     /* gradient table */
@@ -1154,11 +1157,19 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
             swap4_array(d->segment_table.cooldown_segment_table, d->segment_table.num_cooldown_segments);
     }
 
-    /* label table */
+    /* label table.
+     * These reads MUST honour do_swap like everything above: unswapped
+     * counts on a big-endian reader (IPG) misalign the rest of the stream
+     * and silently corrupt the heap while still returning success. */
     if (fread(&d->label_num_columns, sizeof(int), 1, f) != 1)
         return 0;
     if (fread(&d->label_num_entries, sizeof(int), 1, f) != 1)
         return 0;
+    if (do_swap)
+    {
+        swap4(&d->label_num_columns);
+        swap4(&d->label_num_entries);
+    }
     if (d->label_num_entries > 0)
     {
         d->label_table = (int *)PULSEQLIB_ALLOC(
@@ -1168,6 +1179,9 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
         if (fread(d->label_table, sizeof(int),
                   (size_t)d->label_num_entries * (size_t)d->label_num_columns, f) != (size_t)d->label_num_entries * (size_t)d->label_num_columns)
             return 0;
+        if (do_swap)
+            swap4_array(d->label_table,
+                        d->label_num_entries * d->label_num_columns);
     }
     else
     {
@@ -1175,11 +1189,15 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
     }
     if (fread(&d->label_limits, sizeof(pulseqlib_label_limits), 1, f) != 1)
         return 0;
+    if (do_swap)
+        swap4_array(&d->label_limits, (int)(sizeof(pulseqlib_label_limits) / 4));
 
     /* generic definitions */
     d->num_definitions = 0;
     d->definitions = NULL;
-    if (fread(&d->num_definitions, sizeof(int), 1, f) == 1 && d->num_definitions > 0)
+    if (fread(&d->num_definitions, sizeof(int), 1, f) == 1 && do_swap)
+        swap4(&d->num_definitions);
+    if (d->num_definitions > 0)
     {
         d->definitions = (pulseqlib__definition *)PULSEQLIB_ALLOC(
             (size_t)d->num_definitions * sizeof(pulseqlib__definition));
@@ -1193,6 +1211,8 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
             memset(d->definitions[i].name, 0, PULSEQLIB__DEFINITION_NAME_LENGTH);
             if (fread(&name_len, sizeof(int), 1, f) != 1)
                 return 0;
+            if (do_swap)
+                swap4(&name_len);
             if (name_len > 0 && name_len < PULSEQLIB__DEFINITION_NAME_LENGTH)
             {
                 if (fread(d->definitions[i].name, 1, (size_t)name_len, f) != (size_t)name_len)
@@ -1201,6 +1221,8 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
             }
             if (fread(&d->definitions[i].value_size, sizeof(int), 1, f) != 1)
                 return 0;
+            if (do_swap)
+                swap4(&d->definitions[i].value_size);
             if (d->definitions[i].value_size > 0)
             {
                 int j;
@@ -1214,6 +1236,8 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
                     d->definitions[i].value[j] = NULL;
                     if (fread(&vlen, sizeof(int), 1, f) != 1)
                         return 0;
+                    if (do_swap)
+                        swap4(&vlen);
                     if (vlen > 0)
                     {
                         d->definitions[i].value[j] = (char *)PULSEQLIB_ALLOC((size_t)(vlen + 1));
