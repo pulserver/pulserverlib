@@ -965,6 +965,17 @@ extern "C"
     void pulseqlib_cursor_mark(pulseqlib_collection *coll);
 
     /**
+     * @brief Rewind the cursor to the absolute start of the collection.
+     *
+     * Unlike pulseqlib_cursor_reset() (which is a relative rewind-to-mark),
+     * this resets sequence_index as well, so a collection whose cursor has
+     * already reached PULSEQLIB_CURSOR_DONE can be traversed again from the
+     * top.  Use before replaying a loaded collection from a fresh RSP entry
+     * point.
+     */
+    void pulseqlib_cursor_rewind(pulseqlib_collection *coll);
+
+    /**
      * @brief Get the resolved block instance at the current cursor position.
      * @return PULSEQLIB_SUCCESS on success, error code if cursor is done.
      */
