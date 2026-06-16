@@ -2595,7 +2595,7 @@ int pulseqlib_cursor_next(pulseqlib_collection *coll)
     return PULSEQLIB_CURSOR_BLOCK;
 }
 
-void pulseqlib_cursor_reset(pulseqlib_collection *coll)
+void pulseqlib_cursor_rewind(pulseqlib_collection *coll)
 {
     pulseqlib_block_cursor *cursor;
 
@@ -2606,22 +2606,22 @@ void pulseqlib_cursor_reset(pulseqlib_collection *coll)
     cursor->from_last_reset = 0;
 }
 
-void pulseqlib_cursor_rewind(pulseqlib_collection *coll)
+void pulseqlib_cursor_reset(pulseqlib_collection *coll)
 {
     if (!coll)
         return;
 
     /* Full rewind to the absolute start of the collection (pristine load
-     * state {0, -1, 0}).  Unlike pulseqlib_cursor_reset(), this also clears
+     * state {0, -1, 0}).  Unlike pulseqlib_cursor_rewind(), this also clears
      * sequence_index, so a collection whose cursor has already run to its
      * terminal PULSEQLIB_CURSOR_DONE state (sequence_index == num_subsequences)
      * can be replayed from the top.  Required when one loaded collection is
      * traversed by more than one RSP entry point (e.g. aps2 then scan, which
      * reuse s_sc_coll because the SIM framework does not call psdcleanup
      * between entry points). */
-    coll->block_cursor.sequence_index     = 0;
-    coll->block_cursor.scan_table_position = -1;  /* -1 = before first block */
-    coll->block_cursor.from_last_reset     = 0;
+    coll->block_cursor.sequence_index = 0;
+    coll->block_cursor.scan_table_position = -1; /* -1 = before first block */
+    coll->block_cursor.from_last_reset = 0;
 }
 
 void pulseqlib_cursor_mark(pulseqlib_collection *coll)

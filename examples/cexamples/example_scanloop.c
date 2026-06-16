@@ -15,7 +15,7 @@
  *   5. PMC-enabled subsequences: at main-TR boundaries, update the
  *      freq-mod library with the new position; after NAV segments,
  *      evaluate motion and optionally rescan the TR via
- *      pulseqlib_cursor_reset().
+ *      pulseqlib_cursor_rewind().
  *
  * Compile:
  *   cc -I../../csrc example_scanloop.c ../../csrc/pulseqlib_*.c -lm -o scanloop
@@ -30,12 +30,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CHECK(rc, diag)                                 \
-    do {                                                \
-        if (PULSEQLIB_FAILED(rc)) {                     \
-            vendor_report_error(rc, (diag));             \
-            goto fail;                                  \
-        }                                               \
+#define CHECK(rc, diag)                      \
+    do                                       \
+    {                                        \
+        if (PULSEQLIB_FAILED(rc))            \
+        {                                    \
+            vendor_report_error(rc, (diag)); \
+            goto fail;                       \
+        }                                    \
     } while (0)
 
 /* ================================================================== */
@@ -56,19 +58,22 @@
  * example_geninstructions.c).  The normalised waveform shapes do
  * not change — only the amplitude scalar is updated each TR.
  */
-static void vendor_set_block(const pulseqlib_block_instance* inst,
-                             const float* fmod_waveform,
+static void vendor_set_block(const pulseqlib_block_instance *inst,
+                             const float *fmod_waveform,
                              int fmod_nsamples,
                              float fmod_phase_rad)
 {
-    (void)inst; (void)fmod_waveform; (void)fmod_nsamples; (void)fmod_phase_rad;
+    (void)inst;
+    (void)fmod_waveform;
+    (void)fmod_nsamples;
+    (void)fmod_phase_rad;
 }
 
 /** @brief Set FOV rotation matrix for the next segment play. */
-static void vendor_set_rotation(const float* rot) { (void)rot; }
+static void vendor_set_rotation(const float *rot) { (void)rot; }
 
 /** @brief Arm the physio trigger gate for the next segment play. */
-static void vendor_set_trigger(void) { }
+static void vendor_set_trigger(void) {}
 
 /** @brief Issue hardware play for the prepared segment. */
 static void vendor_play_segment(int seg_idx) { (void)seg_idx; }
@@ -79,7 +84,7 @@ static void vendor_play_segment(int seg_idx) { (void)seg_idx; }
  * In a real driver this receives a motion estimate, updates the
  * shift / rotation, and returns 0 = accepted or 1 = rescan.
  */
-static int vendor_get_pmc_feedback(float* shift)
+static int vendor_get_pmc_feedback(float *shift)
 {
     shift[2] += 0.001f;
     return 0;
@@ -89,23 +94,24 @@ static int vendor_get_pmc_feedback(float* shift)
 /*  Main                                                              */
 /* ================================================================== */
 
-int main(int argc, char** argv)
+int main(int argc, char **argv)
 {
-    const char*           seq_path;
-    pulseqlib_opts        opts = PULSEQLIB_OPTS_INIT;
-    pulseqlib_diagnostic  diag = PULSEQLIB_DIAGNOSTIC_INIT;
-    pulseqlib_collection* coll = NULL;
+    const char *seq_path;
+    pulseqlib_opts opts = PULSEQLIB_OPTS_INIT;
+    pulseqlib_diagnostic diag = PULSEQLIB_DIAGNOSTIC_INIT;
+    pulseqlib_collection *coll = NULL;
     int rc, nsub;
 
     /* Patient-table / prescription shift (metres). */
-    float fovshift[3]    = {0.05f, 0.0f, 0.0f};
+    float fovshift[3] = {0.05f, 0.0f, 0.0f};
     /* FOV rotation matrix (3x3 row-major, logical -> physical). */
-    float fovrotation[9] = {1,0,0, 0,1,0, 0,0,1};
+    float fovrotation[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
 
     /* Per-subsequence freq-mod collection (opaque, heap-allocated). */
-    pulseqlib_freq_mod_collection* freqmods = NULL;
+    pulseqlib_freq_mod_collection *freqmods = NULL;
 
-    if (argc < 2) {
+    if (argc < 2)
+    {
         fprintf(stderr, "Usage: %s <sequence.seq>\n", argv[0]);
         return 1;
     }
@@ -117,7 +123,8 @@ int main(int argc, char** argv)
     /*  1. Prefer scanloop cache, fallback to full parse              */
     /* ============================================================== */
     rc = pulseqlib_load_scanloop_cache(&coll, seq_path);
-    if (PULSEQLIB_FAILED(rc)) {
+    if (PULSEQLIB_FAILED(rc))
+    {
         rc = pulseqlib_read(&coll, &diag, seq_path, &opts, 1, 1, 0, 1);
         CHECK(rc, &diag);
     }
@@ -142,7 +149,8 @@ int main(int argc, char** argv)
         rc = pulseqlib_freq_mod_collection_read_cache(
             &freqmods, cache_path, coll, fovshift);
 
-        if (PULSEQLIB_FAILED(rc)) {
+        if (PULSEQLIB_FAILED(rc))
+        {
             /* Cache miss or stale: build from scratch and store. */
             rc = pulseqlib_build_freq_mod_collection(
                 &freqmods, coll, fovshift, fovrotation);
@@ -153,7 +161,9 @@ int main(int argc, char** argv)
             CHECK(rc, &diag);
 
             printf("  freq-mod: built + cached\n");
-        } else {
+        }
+        else
+        {
             printf("  freq-mod: loaded from cache\n");
         }
     }
@@ -162,32 +172,37 @@ int main(int argc, char** argv)
     /*  3. Scan loop                                                  */
     /* ============================================================== */
     {
-        int n          = 0;   /* global block counter         */
-        int prev_seg   = -1;  /* previous segment id          */
-        int rescan     = 0;   /* 1 = PMC requests TR rescan   */
+        int n = 0;         /* global block counter         */
+        int prev_seg = -1; /* previous segment id          */
+        int rescan = 0;    /* 1 = PMC requests TR rescan   */
 
         pulseqlib_cursor_reset(coll);
 
-        while (pulseqlib_cursor_next(coll) == PULSEQLIB_CURSOR_BLOCK) {
-            pulseqlib_cursor_info    ci   = PULSEQLIB_CURSOR_INFO_INIT;
+        while (pulseqlib_cursor_next(coll) == PULSEQLIB_CURSOR_BLOCK)
+        {
+            pulseqlib_cursor_info ci = PULSEQLIB_CURSOR_INFO_INIT;
             pulseqlib_block_instance inst = PULSEQLIB_BLOCK_INSTANCE_INIT;
-            const float* fmod_waveform = NULL;
-            int   fmod_nsamples = 0;
-            float fmod_phase    = 0.0f;
+            const float *fmod_waveform = NULL;
+            int fmod_nsamples = 0;
+            float fmod_phase = 0.0f;
 
             rc = pulseqlib_cursor_get_info(coll, &ci);
-            if (PULSEQLIB_FAILED(rc)) goto fail;
+            if (PULSEQLIB_FAILED(rc))
+                goto fail;
 
             /* ------------------------------------------------------ */
             /*  PMC: at main-TR start, update freq-mod and rescan     */
             /* ------------------------------------------------------ */
-            if (ci.pmc && ci.tr_start) {
+            if (ci.pmc && ci.tr_start)
+            {
                 rc = pulseqlib_update_freq_mod_collection(
                     freqmods, ci.subseq_idx, fovshift);
-                if (PULSEQLIB_FAILED(rc)) goto fail;
+                if (PULSEQLIB_FAILED(rc))
+                    goto fail;
 
-                if (rescan) {
-                    pulseqlib_cursor_reset(coll);
+                if (rescan)
+                {
+                    pulseqlib_cursor_rewind(coll);
                     rescan = 0;
                     continue;
                 }
@@ -197,7 +212,8 @@ int main(int argc, char** argv)
             /* ------------------------------------------------------ */
             /*  New segment: play the previous one, set up the next   */
             /* ------------------------------------------------------ */
-            if (ci.segment_id != prev_seg) {
+            if (ci.segment_id != prev_seg)
+            {
                 if (prev_seg >= 0)
                     vendor_play_segment(prev_seg);
 
@@ -212,7 +228,8 @@ int main(int argc, char** argv)
             /*  Get block + freq-mod, program hardware                */
             /* ------------------------------------------------------ */
             rc = pulseqlib_get_block_instance(coll, &inst);
-            if (PULSEQLIB_FAILED(rc)) goto fail;
+            if (PULSEQLIB_FAILED(rc))
+                goto fail;
 
             if (freqmods)
                 pulseqlib_freq_mod_collection_get(
@@ -226,7 +243,8 @@ int main(int argc, char** argv)
             /* ------------------------------------------------------ */
             /*  Segment end: play + PMC feedback after NAV            */
             /* ------------------------------------------------------ */
-            if (ci.segment_end) {
+            if (ci.segment_end)
+            {
                 vendor_play_segment(ci.segment_id);
                 prev_seg = -1;
 
@@ -246,7 +264,9 @@ int main(int argc, char** argv)
     return 0;
 
 fail:
-    if (freqmods) pulseqlib_freq_mod_collection_free(freqmods);
-    if (coll) pulseqlib_collection_free(coll);
+    if (freqmods)
+        pulseqlib_freq_mod_collection_free(freqmods);
+    if (coll)
+        pulseqlib_collection_free(coll);
     return 1;
 }
