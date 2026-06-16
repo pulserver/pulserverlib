@@ -14,7 +14,7 @@
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER 0x01020304
 #define PULSEQLIB_CACHE_VERSION_MAJOR 1
-#define PULSEQLIB_CACHE_VERSION_MINOR 5
+#define PULSEQLIB_CACHE_VERSION_MINOR 6
 
 #define PULSEQLIB_CACHE_SECTION_CHECK 1
 #define PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS 2
@@ -489,6 +489,10 @@ static int write_descriptor(FILE *f, const pulseqlib_sequence_descriptor *d)
             if (!write4(f, seg->norot_flag, seg->num_blocks))
                 return 0;
             if (!write4(f, seg->nopos_flag, seg->num_blocks))
+                return 0;
+            if (!write4(f, seg->has_freq_mod, seg->num_blocks))
+                return 0;
+            if (!write4(f, seg->has_adc, seg->num_blocks))
                 return 0;
         }
         if (!write4(f, &seg->trigger_id, 1))
@@ -1086,8 +1090,10 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
                     return 0;
                 if (!read4(f, seg->nopos_flag, n))
                     return 0;
-                memset(seg->has_freq_mod, 0, (size_t)n * sizeof(int));
-                memset(seg->has_adc, 0, (size_t)n * sizeof(int));
+                if (!read4(f, seg->has_freq_mod, n))
+                    return 0;
+                if (!read4(f, seg->has_adc, n))
+                    return 0;
                 if (do_swap)
                 {
                     swap4_array(seg->unique_block_indices, n);
@@ -1095,6 +1101,8 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
                     swap4_array(seg->has_rotation, n);
                     swap4_array(seg->norot_flag, n);
                     swap4_array(seg->nopos_flag, n);
+                    swap4_array(seg->has_freq_mod, n);
+                    swap4_array(seg->has_adc, n);
                 }
             }
             if (!read4(f, &seg->trigger_id, 1))
