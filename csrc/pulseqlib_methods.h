@@ -953,12 +953,12 @@ extern "C"
      * pulseqlib_cursor_mark() call (or since the start of the current
      * subsequence if no mark was set).  Typically used for PMC rescan.
      */
-    void pulseqlib_cursor_reset(pulseqlib_collection *coll);
+    void pulseqlib_cursor_rewind(pulseqlib_collection *coll);
 
     /**
      * @brief Bookmark the current cursor position.
      *
-     * Sets the rewind anchor so that a subsequent pulseqlib_cursor_reset()
+     * Sets the rewind anchor so that a subsequent pulseqlib_cursor_rewind()
      * returns to this position.  Call at each TR boundary to enable
      * single-TR rescans.
      */
@@ -967,13 +967,13 @@ extern "C"
     /**
      * @brief Rewind the cursor to the absolute start of the collection.
      *
-     * Unlike pulseqlib_cursor_reset() (which is a relative rewind-to-mark),
+     * Unlike pulseqlib_cursor_rewind() (which is a relative rewind-to-mark),
      * this resets sequence_index as well, so a collection whose cursor has
      * already reached PULSEQLIB_CURSOR_DONE can be traversed again from the
      * top.  Use before replaying a loaded collection from a fresh RSP entry
      * point.
      */
-    void pulseqlib_cursor_rewind(pulseqlib_collection *coll);
+    void pulseqlib_cursor_reset(pulseqlib_collection *coll);
 
     /**
      * @brief Get the resolved block instance at the current cursor position.
