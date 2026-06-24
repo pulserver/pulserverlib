@@ -39,6 +39,7 @@
 #define PULSEQLIB_ERR_SIGNATURE_MISSING          -55
 #define PULSEQLIB_ERR_ADC_DEFINITION_CONFLICT    -56
 #define PULSEQLIB_ERR_INDEX                      -57
+#define PULSEQLIB_ERR_MISSING_KSPACE_ANCHOR      -58
 
 /* TR detection errors (-100 to -199) */
 #define PULSEQLIB_ERR_TR_NO_BLOCKS          -100

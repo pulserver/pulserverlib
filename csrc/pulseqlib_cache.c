@@ -14,7 +14,7 @@
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER 0x01020304
 #define PULSEQLIB_CACHE_VERSION_MAJOR 1
-#define PULSEQLIB_CACHE_VERSION_MINOR 6
+#define PULSEQLIB_CACHE_VERSION_MINOR 7 /* +serialized segment timing anchors (rf/adc k-space refs) */
 
 #define PULSEQLIB_CACHE_SECTION_CHECK 1
 #define PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS 2
@@ -499,6 +499,31 @@ static int write_descriptor(FILE *f, const pulseqlib_sequence_descriptor *d)
             return 0;
         if (!write4(f, &seg->is_nav, 1))
             return 0;
+
+        /* Segment timing anchors (k-space refs: RF isocenter, ADC kzero, plus
+         * the gap edges). calc_segment_timing builds these during parse, so they
+         * are live here. They MUST be serialized: the geninstructions/scanloop
+         * cache load paths do not rebuild them (no trajectory available), and
+         * freq-mod requires the exact isocenter/kzero. All fields are 4-byte, so
+         * the structs serialize as packed word arrays. */
+        if (!write4(f, &seg->timing.num_rf_anchors, 1))
+            return 0;
+        if (seg->timing.num_rf_anchors > 0)
+        {
+            if (!write4(f, seg->timing.rf_anchors,
+                        seg->timing.num_rf_anchors *
+                            (int)(sizeof(pulseqlib_segment_rf_anchor) / 4)))
+                return 0;
+        }
+        if (!write4(f, &seg->timing.num_adc_anchors, 1))
+            return 0;
+        if (seg->timing.num_adc_anchors > 0)
+        {
+            if (!write4(f, seg->timing.adc_anchors,
+                        seg->timing.num_adc_anchors *
+                            (int)(sizeof(pulseqlib_segment_adc_anchor) / 4)))
+                return 0;
+        }
     }
 
     /* segment table */
@@ -1113,6 +1138,45 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
                 return 0;
             if (do_swap)
                 swap4(&seg->is_nav);
+
+            /* Segment timing anchors (k-space refs), serialized by
+             * write_descriptor. (num_*_anchors / *_anchors were zeroed above.) */
+            if (!read4(f, &seg->timing.num_rf_anchors, 1))
+                return 0;
+            if (do_swap)
+                swap4(&seg->timing.num_rf_anchors);
+            if (seg->timing.num_rf_anchors > 0)
+            {
+                int nw = seg->timing.num_rf_anchors *
+                         (int)(sizeof(pulseqlib_segment_rf_anchor) / 4);
+                seg->timing.rf_anchors = (pulseqlib_segment_rf_anchor *)
+                    PULSEQLIB_ALLOC((size_t)seg->timing.num_rf_anchors *
+                                    sizeof(pulseqlib_segment_rf_anchor));
+                if (!seg->timing.rf_anchors)
+                    return 0;
+                if (!read4(f, seg->timing.rf_anchors, nw))
+                    return 0;
+                if (do_swap)
+                    swap4_array(seg->timing.rf_anchors, nw);
+            }
+            if (!read4(f, &seg->timing.num_adc_anchors, 1))
+                return 0;
+            if (do_swap)
+                swap4(&seg->timing.num_adc_anchors);
+            if (seg->timing.num_adc_anchors > 0)
+            {
+                int nw = seg->timing.num_adc_anchors *
+                         (int)(sizeof(pulseqlib_segment_adc_anchor) / 4);
+                seg->timing.adc_anchors = (pulseqlib_segment_adc_anchor *)
+                    PULSEQLIB_ALLOC((size_t)seg->timing.num_adc_anchors *
+                                    sizeof(pulseqlib_segment_adc_anchor));
+                if (!seg->timing.adc_anchors)
+                    return 0;
+                if (!read4(f, seg->timing.adc_anchors, nw))
+                    return 0;
+                if (do_swap)
+                    swap4_array(seg->timing.adc_anchors, nw);
+            }
         }
     }
 

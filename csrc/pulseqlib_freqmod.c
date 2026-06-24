@@ -643,6 +643,7 @@ static int build_freq_mod_library(
     const pulseqlib_sequence_descriptor *desc;
     pulseqlib_freq_mod_library *lib = NULL;
     int n, count, result;
+    int fail_code = PULSEQLIB_ERR_ALLOC_FAILED; /* build_fail return; overridden for specific failures */
 
     /* Per-event working arrays (sized to count) */
     int *block_indices = NULL; /* [count] block_table indices            */
@@ -894,11 +895,14 @@ static int build_freq_mod_library(
             {
                 active_end_us = rf_end_us;
             }
-            ref_time_us = (float)rdef->stats.isodelay_us;
-
-            /* Prefer segment RF-anchor isocenter when available. */
+            /* RF zero-phase reference = segment RF-anchor isocenter. REQUIRED:
+             * the former `rdef->stats.isodelay_us` fallback is deceiving (it
+             * silently substitutes a different reference when anchors are absent
+             * on the cache path), so a missing anchor is a HARD FAIL. With the
+             * timing anchors serialized in the cache (write/read_descriptor),
+             * every load path carries them, so this never triggers in practice. */
             {
-                int scan_p;
+                int scan_p, found = 0;
                 for (scan_p = 0; scan_p < desc->scan_table_len; ++scan_p)
                 {
                     if (desc->scan_table_block_idx[scan_p] == blk_idx)
@@ -931,6 +935,7 @@ static int build_freq_mod_library(
                                         if (iso_rel > (active_end_us - active_start_us))
                                             iso_rel = active_end_us - active_start_us;
                                         ref_time_us = iso_rel;
+                                        found = 1;
                                         break;
                                     }
                                 }
@@ -938,6 +943,11 @@ static int build_freq_mod_library(
                         }
                         break;
                     }
+                }
+                if (!found)
+                {
+                    fail_code = PULSEQLIB_ERR_MISSING_KSPACE_ANCHOR;
+                    goto build_fail;
                 }
             }
         }
@@ -952,11 +962,14 @@ static int build_freq_mod_library(
                                    (float)adef->dwell_time * 1e-3f;
                 active_start_us = (float)adef->delay;
                 active_end_us = active_start_us + adc_dur_us;
-                ref_time_us = adc_dur_us * 0.5f; /* default: midpoint */
 
-                /* Override with accurate kzero from segment timing anchors. */
+                /* ADC zero-phase reference = segment ADC-anchor kzero (echo).
+                 * REQUIRED: the former `adc_dur*0.5` midpoint fallback is a guess
+                 * (the true echo/kzero needs the k-space trajectory and cannot be
+                 * reconstructed here), so a missing anchor is a HARD FAIL. The
+                 * serialized cache anchors make this unreachable in practice. */
                 {
-                    int scan_p;
+                    int scan_p, found = 0;
                     for (scan_p = 0; scan_p < desc->scan_table_len; ++scan_p)
                     {
                         if (desc->scan_table_block_idx[scan_p] == blk_idx)
@@ -991,6 +1004,7 @@ static int build_freq_mod_library(
                                             if (kz_rel > adc_dur_us)
                                                 kz_rel = adc_dur_us;
                                             ref_time_us = kz_rel;
+                                            found = 1;
                                             break;
                                         }
                                     }
@@ -998,6 +1012,11 @@ static int build_freq_mod_library(
                             }
                             break;
                         }
+                    }
+                    if (!found)
+                    {
+                        fail_code = PULSEQLIB_ERR_MISSING_KSPACE_ANCHOR;
+                        goto build_fail;
                     }
                 }
             }
@@ -1809,7 +1828,7 @@ build_fail:
     {
         freq_mod_library_free(lib);
     }
-    return PULSEQLIB_ERR_ALLOC_FAILED;
+    return fail_code;
 }
 
 /* ================================================================== */
