@@ -13,15 +13,21 @@
 /* ================================================================== */
 
 #define PULSEQLIB_CACHE_ENDIAN_MARKER 0x01020304
-#define PULSEQLIB_CACHE_VERSION_MAJOR 1
-#define PULSEQLIB_CACHE_VERSION_MINOR 7 /* +serialized segment timing anchors (rf/adc k-space refs) */
+#define PULSEQLIB_CACHE_VERSION_MAJOR 2
+#define PULSEQLIB_CACHE_VERSION_MINOR 0
+#define PULSEQLIB_CACHE_VERSION_REVISION 0
 
-#define PULSEQLIB_CACHE_SECTION_CHECK 1
-#define PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS 2
-#define PULSEQLIB_CACHE_SECTION_SCANLOOP 3
-#define PULSEQLIB_CACHE_SECTION_TRAJECTORY 4
-#define PULSEQLIB_CACHE_SECTION_SEQUENCEDESCRIPTION 5
-#define PULSEQLIB_CACHE_SECTION_FREQMOD 6
+/* Per-consumer sections. Each carries its own distinct payload.
+ * COMMON establishes the collection + descriptor framing; ROTATIONS, SHAPES
+ * and SCANLOOP augment the descriptors already allocated by COMMON, so COMMON
+ * must always be read first. */
+#define PULSEQLIB_CACHE_SECTION_COMMON 1
+#define PULSEQLIB_CACHE_SECTION_ROTATIONS 2
+#define PULSEQLIB_CACHE_SECTION_SHAPES 3
+#define PULSEQLIB_CACHE_SECTION_SCANLOOP 4
+#define PULSEQLIB_CACHE_SECTION_FREQMOD 5
+#define PULSEQLIB_CACHE_SECTION_TRAJECTORY 6
+#define PULSEQLIB_CACHE_SECTION_SEQDESC 7
 
 typedef struct pulseqlib_cache_section_entry
 {
@@ -126,11 +132,14 @@ static int get_seq_file_sizes(const char *first_file_path,
     return 1;
 }
 
-/* ------ Serialize a single sequence descriptor ------ */
+/* ------ Serialize the COMMON region of a descriptor ------ */
+/* Everything EXCEPT raw shape sample arrays, rotation matrices, scan_table
+ * and variable_grad_flags (those live in the SHAPES/ROTATIONS/SCANLOOP
+ * sections). Field order is otherwise identical to the legacy descriptor. */
 
-static int write_descriptor(FILE *f, const pulseqlib_sequence_descriptor *d)
+static int write_common(FILE *f, const pulseqlib_sequence_descriptor *d)
 {
-    int i, n;
+    int i;
     int ival;
 
     /* scalars */
@@ -402,12 +411,7 @@ static int write_descriptor(FILE *f, const pulseqlib_sequence_descriptor *d)
         }
     }
 
-    /* rotations */
-    if (!write4(f, &d->num_rotations, 1))
-        return 0;
-    for (i = 0; i < d->num_rotations; ++i)
-        if (!write4(f, d->rotation_matrices[i], 9))
-            return 0;
+    /* rotations: emitted in the ROTATIONS section (write_rotations) */
 
     /* triggers — serialize long/short as int for portability */
     if (!write4(f, &d->num_triggers, 1))
@@ -429,20 +433,7 @@ static int write_descriptor(FILE *f, const pulseqlib_sequence_descriptor *d)
             return 0;
     }
 
-    /* shapes */
-    if (!write4(f, &d->num_shapes, 1))
-        return 0;
-    for (i = 0; i < d->num_shapes; ++i)
-    {
-        if (!write4(f, &d->shapes[i].num_uncompressed_samples, 1))
-            return 0;
-        if (!write4(f, &d->shapes[i].num_samples, 1))
-            return 0;
-        n = d->shapes[i].num_samples;
-        if (n > 0 && d->shapes[i].samples)
-            if (!write4(f, d->shapes[i].samples, n))
-                return 0;
-    }
+    /* shapes: emitted in the SHAPES section (write_shapes) */
 
     /* TR descriptor (10 fields: 9 int + 1 float) */
     if (!write4(f, &d->tr_descriptor.num_prep_blocks, 1))
@@ -574,6 +565,54 @@ static int write_descriptor(FILE *f, const pulseqlib_sequence_descriptor *d)
         }
     }
 
+    /* scan_table + variable_grad_flags: emitted in the SCANLOOP section
+     * (write_scanloop) */
+
+    return 1;
+}
+
+/* ------ Serialize the ROTATIONS region of a descriptor ------ */
+
+static int write_rotations(FILE *f, const pulseqlib_sequence_descriptor *d)
+{
+    int i;
+
+    if (!write4(f, &d->num_rotations, 1))
+        return 0;
+    for (i = 0; i < d->num_rotations; ++i)
+        if (!write4(f, d->rotation_matrices[i], 9))
+            return 0;
+
+    return 1;
+}
+
+/* ------ Serialize the SHAPES region of a descriptor ------ */
+
+static int write_shapes(FILE *f, const pulseqlib_sequence_descriptor *d)
+{
+    int i, n;
+
+    if (!write4(f, &d->num_shapes, 1))
+        return 0;
+    for (i = 0; i < d->num_shapes; ++i)
+    {
+        if (!write4(f, &d->shapes[i].num_uncompressed_samples, 1))
+            return 0;
+        if (!write4(f, &d->shapes[i].num_samples, 1))
+            return 0;
+        n = d->shapes[i].num_samples;
+        if (n > 0 && d->shapes[i].samples)
+            if (!write4(f, d->shapes[i].samples, n))
+                return 0;
+    }
+
+    return 1;
+}
+
+/* ------ Serialize the SCANLOOP region of a descriptor ------ */
+
+static int write_scanloop(FILE *f, const pulseqlib_sequence_descriptor *d)
+{
     /* scan table */
     if (!write4(f, &d->scan_table_len, 1))
         return 0;
@@ -605,9 +644,9 @@ static int write_descriptor(FILE *f, const pulseqlib_sequence_descriptor *d)
     return 1;
 }
 
-/* ------ Deserialize a single sequence descriptor ------ */
+/* ------ Deserialize the COMMON region of a descriptor ------ */
 
-static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swap)
+static int read_common(FILE *f, pulseqlib_sequence_descriptor *d, int do_swap)
 {
     int i, n;
     int ival;
@@ -937,25 +976,7 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
         }
     }
 
-    /* rotations */
-    if (!read4(f, &d->num_rotations, 1))
-        return 0;
-    if (do_swap)
-        swap4(&d->num_rotations);
-    if (d->num_rotations > 0)
-    {
-        d->rotation_matrices = (float (*)[9])PULSEQLIB_ALLOC(
-            (size_t)d->num_rotations * 9 * sizeof(float));
-        if (!d->rotation_matrices)
-            return 0;
-        for (i = 0; i < d->num_rotations; ++i)
-        {
-            if (!read4(f, d->rotation_matrices[i], 9))
-                return 0;
-            if (do_swap)
-                swap4_array(d->rotation_matrices[i], 9);
-        }
-    }
+    /* rotations: read from the ROTATIONS section (read_rotations) */
 
     /* triggers */
     if (!read4(f, &d->num_triggers, 1))
@@ -994,39 +1015,7 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
         }
     }
 
-    /* shapes */
-    if (!read4(f, &d->num_shapes, 1))
-        return 0;
-    if (do_swap)
-        swap4(&d->num_shapes);
-    if (d->num_shapes > 0)
-    {
-        d->shapes = (pulseqlib_shape_arbitrary *)PULSEQLIB_ALLOC(
-            (size_t)d->num_shapes * sizeof(pulseqlib_shape_arbitrary));
-        if (!d->shapes)
-            return 0;
-        for (i = 0; i < d->num_shapes; ++i)
-        {
-            d->shapes[i].samples = NULL;
-            if (!read4(f, &d->shapes[i].num_uncompressed_samples, 1))
-                return 0;
-            if (!read4(f, &d->shapes[i].num_samples, 1))
-                return 0;
-            if (do_swap)
-                swap4_array(&d->shapes[i].num_uncompressed_samples, 2);
-            n = d->shapes[i].num_samples;
-            if (n > 0)
-            {
-                d->shapes[i].samples = (float *)PULSEQLIB_ALLOC((size_t)n * sizeof(float));
-                if (!d->shapes[i].samples)
-                    return 0;
-                if (!read4(f, d->shapes[i].samples, n))
-                    return 0;
-                if (do_swap)
-                    swap4_array(d->shapes[i].samples, n);
-            }
-        }
-    }
+    /* shapes: read from the SHAPES section (read_shapes) */
 
     /* TR descriptor */
     if (!read4(f, &d->tr_descriptor.num_prep_blocks, 1))
@@ -1140,7 +1129,7 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
                 swap4(&seg->is_nav);
 
             /* Segment timing anchors (k-space refs), serialized by
-             * write_descriptor. (num_*_anchors / *_anchors were zeroed above.) */
+             * write_common. (num_*_anchors / *_anchors were zeroed above.) */
             if (!read4(f, &seg->timing.num_rf_anchors, 1))
                 return 0;
             if (do_swap)
@@ -1324,6 +1313,86 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
         }
     }
 
+    /* scan_table + variable_grad_flags: read from the SCANLOOP section
+     * (read_scanloop) */
+
+    return 1;
+}
+
+/* ------ Deserialize the ROTATIONS region into an existing descriptor ------ */
+
+static int read_rotations(FILE *f, pulseqlib_sequence_descriptor *d, int do_swap)
+{
+    int i;
+
+    if (!read4(f, &d->num_rotations, 1))
+        return 0;
+    if (do_swap)
+        swap4(&d->num_rotations);
+    if (d->num_rotations > 0)
+    {
+        d->rotation_matrices = (float (*)[9])PULSEQLIB_ALLOC(
+            (size_t)d->num_rotations * 9 * sizeof(float));
+        if (!d->rotation_matrices)
+            return 0;
+        for (i = 0; i < d->num_rotations; ++i)
+        {
+            if (!read4(f, d->rotation_matrices[i], 9))
+                return 0;
+            if (do_swap)
+                swap4_array(d->rotation_matrices[i], 9);
+        }
+    }
+
+    return 1;
+}
+
+/* ------ Deserialize the SHAPES region into an existing descriptor ------ */
+
+static int read_shapes(FILE *f, pulseqlib_sequence_descriptor *d, int do_swap)
+{
+    int i, n;
+
+    if (!read4(f, &d->num_shapes, 1))
+        return 0;
+    if (do_swap)
+        swap4(&d->num_shapes);
+    if (d->num_shapes > 0)
+    {
+        d->shapes = (pulseqlib_shape_arbitrary *)PULSEQLIB_ALLOC(
+            (size_t)d->num_shapes * sizeof(pulseqlib_shape_arbitrary));
+        if (!d->shapes)
+            return 0;
+        for (i = 0; i < d->num_shapes; ++i)
+        {
+            d->shapes[i].samples = NULL;
+            if (!read4(f, &d->shapes[i].num_uncompressed_samples, 1))
+                return 0;
+            if (!read4(f, &d->shapes[i].num_samples, 1))
+                return 0;
+            if (do_swap)
+                swap4_array(&d->shapes[i].num_uncompressed_samples, 2);
+            n = d->shapes[i].num_samples;
+            if (n > 0)
+            {
+                d->shapes[i].samples = (float *)PULSEQLIB_ALLOC((size_t)n * sizeof(float));
+                if (!d->shapes[i].samples)
+                    return 0;
+                if (!read4(f, d->shapes[i].samples, n))
+                    return 0;
+                if (do_swap)
+                    swap4_array(d->shapes[i].samples, n);
+            }
+        }
+    }
+
+    return 1;
+}
+
+/* ------ Deserialize the SCANLOOP region into an existing descriptor ------ */
+
+static int read_scanloop(FILE *f, pulseqlib_sequence_descriptor *d, int do_swap)
+{
     /* scan table */
     if (fread(&d->scan_table_len, sizeof(int), 1, f) != 1)
         return 0;
@@ -1389,8 +1458,8 @@ static int read_descriptor(FILE *f, pulseqlib_sequence_descriptor *d, int do_swa
 
 /* ------ Write collection payload (header handled by caller) ------ */
 
-static int write_collection_payload(FILE *f,
-                                    const pulseqlib_collection *coll)
+static int write_common_payload(FILE *f,
+                                const pulseqlib_collection *coll)
 {
     int i;
 
@@ -1441,10 +1510,10 @@ static int write_collection_payload(FILE *f,
         }
     }
 
-    /* per-subsequence descriptors */
+    /* per-subsequence COMMON descriptors */
     for (i = 0; i < coll->num_subsequences; ++i)
     {
-        if (!write_descriptor(f, &coll->descriptors[i]))
+        if (!write_common(f, &coll->descriptors[i]))
         {
             return 0;
         }
@@ -1453,7 +1522,46 @@ static int write_collection_payload(FILE *f,
     return 1;
 }
 
+/* ------ Augment-section payloads (ROTATIONS / SHAPES / SCANLOOP) ------ */
+/* These carry no collection scalars; they write a num_subsequences token
+ * (validated on read) then one per-descriptor region. They rely on COMMON
+ * having been written/read first. */
+
+typedef int (*desc_writer_fn)(FILE *, const pulseqlib_sequence_descriptor *);
+
+static int write_augment_payload(FILE *f,
+                                 const pulseqlib_collection *coll,
+                                 desc_writer_fn wfn)
+{
+    int i;
+
+    if (!write4(f, &coll->num_subsequences, 1))
+        return 0;
+    for (i = 0; i < coll->num_subsequences; ++i)
+        if (!wfn(f, &coll->descriptors[i]))
+            return 0;
+
+    return 1;
+}
+
+static int write_rotations_payload(FILE *f, const pulseqlib_collection *coll)
+{
+    return write_augment_payload(f, coll, write_rotations);
+}
+
+static int write_shapes_payload(FILE *f, const pulseqlib_collection *coll)
+{
+    return write_augment_payload(f, coll, write_shapes);
+}
+
+static int write_scanloop_payload(FILE *f, const pulseqlib_collection *coll)
+{
+    return write_augment_payload(f, coll, write_scanloop);
+}
+
 /* ------ Write full collection to sectioned cache ------ */
+
+typedef int (*payload_writer_fn)(FILE *, const pulseqlib_collection *);
 
 static int write_cache(const char *cache_path,
                        const pulseqlib_collection *coll,
@@ -1461,10 +1569,20 @@ static int write_cache(const char *cache_path,
 {
     FILE *f;
     int marker, vendor;
-    int version_major, version_minor;
+    int version_major, version_minor, version_revision;
     int num_sections, i;
     long entries_pos, end_pos;
-    pulseqlib_cache_section_entry entries[3];
+    pulseqlib_cache_section_entry entries[4];
+    static const int section_ids[4] = {
+        PULSEQLIB_CACHE_SECTION_COMMON,
+        PULSEQLIB_CACHE_SECTION_ROTATIONS,
+        PULSEQLIB_CACHE_SECTION_SHAPES,
+        PULSEQLIB_CACHE_SECTION_SCANLOOP};
+    static const payload_writer_fn writers[4] = {
+        write_common_payload,
+        write_rotations_payload,
+        write_shapes_payload,
+        write_scanloop_payload};
 
     f = fopen(cache_path, "wb");
     if (!f)
@@ -1474,7 +1592,8 @@ static int write_cache(const char *cache_path,
     vendor = PULSEQLIB_VENDOR;
     version_major = PULSEQLIB_CACHE_VERSION_MAJOR;
     version_minor = PULSEQLIB_CACHE_VERSION_MINOR;
-    num_sections = 3;
+    version_revision = PULSEQLIB_CACHE_VERSION_REVISION;
+    num_sections = 4;
 
     if (!write4(f, &marker, 1))
     {
@@ -1487,6 +1606,11 @@ static int write_cache(const char *cache_path,
         return 0;
     }
     if (!write4(f, &version_minor, 1))
+    {
+        fclose(f);
+        return 0;
+    }
+    if (!write4(f, &version_revision, 1))
     {
         fclose(f);
         return 0;
@@ -1514,7 +1638,7 @@ static int write_cache(const char *cache_path,
         return 0;
     }
 
-    for (i = 0; i < num_sections; ++i)
+    for (i = 0; i < num_sections * 3; ++i)
     {
         int zero = 0;
         if (!write4(f, &zero, 1))
@@ -1522,47 +1646,31 @@ static int write_cache(const char *cache_path,
             fclose(f);
             return 0;
         }
-        if (!write4(f, &zero, 1))
-        {
-            fclose(f);
-            return 0;
-        }
-        if (!write4(f, &zero, 1))
-        {
-            fclose(f);
-            return 0;
-        }
     }
 
-    entries[0].section_id = PULSEQLIB_CACHE_SECTION_CHECK;
-    entries[1].section_id = PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS;
-    entries[2].section_id = PULSEQLIB_CACHE_SECTION_SCANLOOP;
-
+    /* Each section carries its own distinct payload. */
     for (i = 0; i < num_sections; ++i)
     {
-        long start;
-        long stop;
-
+        long start, stop;
         start = ftell(f);
         if (start < 0)
         {
             fclose(f);
             return 0;
         }
-        entries[i].offset = (int)start;
-
-        if (!write_collection_payload(f, coll))
+        if (!writers[i](f, coll))
         {
             fclose(f);
             return 0;
         }
-
         stop = ftell(f);
         if (stop < 0)
         {
             fclose(f);
             return 0;
         }
+        entries[i].section_id = section_ids[i];
+        entries[i].offset = (int)start;
         entries[i].size = (int)(stop - start);
     }
 
@@ -1609,9 +1717,9 @@ static int write_cache(const char *cache_path,
 
 /* ------ Read collection payload from sectioned cache ------ */
 
-static int read_collection_payload(FILE *f,
-                                   pulseqlib_collection *coll,
-                                   int do_swap)
+static int read_common_payload(FILE *f,
+                               pulseqlib_collection *coll,
+                               int do_swap)
 {
     int i;
 
@@ -1677,10 +1785,10 @@ static int read_collection_payload(FILE *f,
             swap4_array(&coll->subsequence_info[i].sequence_index, 4);
     }
 
-    /* per-subsequence descriptors */
+    /* per-subsequence COMMON descriptors */
     for (i = 0; i < coll->num_subsequences; ++i)
     {
-        if (!read_descriptor(f, &coll->descriptors[i], do_swap))
+        if (!read_common(f, &coll->descriptors[i], do_swap))
         {
             /* clean up already-read descriptors */
             int j;
@@ -1702,19 +1810,68 @@ static int read_collection_payload(FILE *f,
     return 1;
 }
 
-/* ------ Read full collection from sectioned cache ------ */
+/* ------ Augment-section readers (ROTATIONS / SHAPES / SCANLOOP) ------ */
+/* Read a num_subsequences token (validated against COMMON) then one
+ * per-descriptor region into the already-allocated descriptors. COMMON must
+ * have been read into coll first. */
 
-static int read_cache(const char *cache_path,
-                      pulseqlib_collection *coll,
-                      int expected_seq_file_size,
-                      int required_section,
-                      int enforce_source_size)
+typedef int (*desc_reader_fn)(FILE *, pulseqlib_sequence_descriptor *, int);
+
+static int read_augment_payload(FILE *f, pulseqlib_collection *coll,
+                                int do_swap, desc_reader_fn rfn)
+{
+    int i, ns;
+
+    if (!coll->descriptors)
+        return 0; /* COMMON must be read first */
+    if (!read4(f, &ns, 1))
+        return 0;
+    if (do_swap)
+        swap4(&ns);
+    if (ns != coll->num_subsequences)
+        return 0;
+    for (i = 0; i < coll->num_subsequences; ++i)
+        if (!rfn(f, &coll->descriptors[i], do_swap))
+            return 0;
+
+    return 1;
+}
+
+static int read_rotations_payload(FILE *f, pulseqlib_collection *coll, int do_swap)
+{
+    return read_augment_payload(f, coll, do_swap, read_rotations);
+}
+
+static int read_shapes_payload(FILE *f, pulseqlib_collection *coll, int do_swap)
+{
+    return read_augment_payload(f, coll, do_swap, read_shapes);
+}
+
+static int read_scanloop_payload(FILE *f, pulseqlib_collection *coll, int do_swap)
+{
+    return read_augment_payload(f, coll, do_swap, read_scanloop);
+}
+
+/* ------ Read a set of sections from a sectioned cache ------ */
+/* readers[k] is invoked for the section section_ids[k], in the order given,
+ * after seeking to that section's payload. COMMON must be listed first when
+ * any augment section is requested. */
+
+typedef int (*payload_reader_fn)(FILE *, pulseqlib_collection *, int);
+
+static int read_sections(const char *cache_path,
+                         pulseqlib_collection *coll,
+                         int expected_seq_file_size,
+                         int enforce_source_size,
+                         const int *section_ids,
+                         const payload_reader_fn *readers,
+                         int n_req)
 {
     FILE *f;
     int marker, vendor, stored_size, num_sections;
-    int version_major, version_minor;
-    int do_swap, i, found;
-    pulseqlib_cache_section_entry section;
+    int version_major, version_minor, version_revision;
+    int do_swap, i, k;
+    pulseqlib_cache_section_entry entries[16];
 
     f = fopen(cache_path, "rb");
     if (!f)
@@ -1748,13 +1905,20 @@ static int read_cache(const char *cache_path,
         fclose(f);
         return 0;
     }
+    if (!read4(f, &version_revision, 1))
+    {
+        fclose(f);
+        return 0;
+    }
     if (do_swap)
     {
         swap4(&version_major);
         swap4(&version_minor);
+        swap4(&version_revision);
     }
     if (version_major != PULSEQLIB_CACHE_VERSION_MAJOR ||
-        version_minor != PULSEQLIB_CACHE_VERSION_MINOR)
+        version_minor != PULSEQLIB_CACHE_VERSION_MINOR ||
+        version_revision != PULSEQLIB_CACHE_VERSION_REVISION)
     {
         fclose(f);
         return 0;
@@ -1799,66 +1963,91 @@ static int read_cache(const char *cache_path,
         return 0;
     }
 
-    found = 0;
-    memset(&section, 0, sizeof(section));
     for (i = 0; i < num_sections; ++i)
     {
-        pulseqlib_cache_section_entry entry;
-        if (!read4(f, &entry.section_id, 1))
+        if (!read4(f, &entries[i].section_id, 1))
         {
             fclose(f);
             return 0;
         }
-        if (!read4(f, &entry.offset, 1))
+        if (!read4(f, &entries[i].offset, 1))
         {
             fclose(f);
             return 0;
         }
-        if (!read4(f, &entry.size, 1))
+        if (!read4(f, &entries[i].size, 1))
         {
             fclose(f);
             return 0;
         }
         if (do_swap)
         {
-            swap4(&entry.section_id);
-            swap4(&entry.offset);
-            swap4(&entry.size);
+            swap4(&entries[i].section_id);
+            swap4(&entries[i].offset);
+            swap4(&entries[i].size);
         }
-        if (entry.section_id == required_section)
+    }
+
+    for (k = 0; k < n_req; ++k)
+    {
+        int found = 0;
+        pulseqlib_cache_section_entry section;
+        memset(&section, 0, sizeof(section));
+        for (i = 0; i < num_sections; ++i)
         {
-            section = entry;
-            found = 1;
+            if (entries[i].section_id == section_ids[k])
+            {
+                section = entries[i];
+                found = 1;
+            }
         }
-    }
-
-    if (!found || section.offset <= 0 || section.size <= 0)
-    {
-        fclose(f);
-        return 0;
-    }
-
-    if (fseek(f, (long)section.offset, SEEK_SET) != 0)
-    {
-        fclose(f);
-        return 0;
-    }
-
-    if (!read_collection_payload(f, coll, do_swap))
-    {
-        fclose(f);
-        return 0;
+        if (!found || section.offset <= 0 || section.size <= 0)
+        {
+            fclose(f);
+            return 0;
+        }
+        if (fseek(f, (long)section.offset, SEEK_SET) != 0)
+        {
+            fclose(f);
+            return 0;
+        }
+        if (!readers[k](f, coll, do_swap))
+        {
+            fclose(f);
+            return 0;
+        }
     }
 
     fclose(f);
     return 1;
 }
 
+/* ------ Read the full descriptor (all four PSD-internal sections) ------ */
+
+static int read_full_cache(const char *cache_path,
+                           pulseqlib_collection *coll,
+                           int expected_seq_file_size,
+                           int enforce_source_size)
+{
+    static const int ids[4] = {
+        PULSEQLIB_CACHE_SECTION_COMMON,
+        PULSEQLIB_CACHE_SECTION_ROTATIONS,
+        PULSEQLIB_CACHE_SECTION_SHAPES,
+        PULSEQLIB_CACHE_SECTION_SCANLOOP};
+    static const payload_reader_fn readers[4] = {
+        read_common_payload,
+        read_rotations_payload,
+        read_shapes_payload,
+        read_scanloop_payload};
+    return read_sections(cache_path, coll, expected_seq_file_size,
+                         enforce_source_size, ids, readers, 4);
+}
+
 /* ================================================================== */
 /*  Public wrappers (called from pulseqlib_core.c)                    */
 /* ================================================================== */
 
-int pulseqlib__write_cache(const pulseqlib_collection *coll,
+int pulseqlib__write_cache(pulseqlib_collection *coll,
                            const char *seq_path)
 {
     char *cache_path;
@@ -1882,8 +2071,25 @@ int pulseqlib__write_cache(const pulseqlib_collection *coll,
         return 0;
     }
 
+    /* Write the four base sections (COMMON/ROTATIONS/SHAPES/SCANLOOP). */
     ok = write_cache(cache_path, coll, (int)sz);
     PULSEQLIB_FREE(cache_path);
+    if (!ok)
+        return 0;
+
+    /* Append the remaining static sections. The whole .pge is a pure function
+     * of the loaded collection (shift/rotation independent), so it is produced
+     * here in one shot at load time. These are best-effort: each consumer
+     * treats its section as optional, so a failure does not invalidate the
+     * base cache and not every sequence has every section. */
+    (void)pulseqlib_write_trajectory_cache_from_collection(coll, seq_path);
+    (void)pulseqlib_write_freq_mod_cache_from_collection(coll, seq_path);
+    /* SEQDESC is an opt-in component (PULSEQLIB_BUILD_SEQDESC); only emit it
+     * when the seqdesc writer is compiled into this build. */
+#ifdef PULSEQLIB_HAVE_SEQDESC
+    (void)pulseqlib_write_sequence_description_cache(coll, seq_path);
+#endif
+
     return ok;
 }
 
@@ -1908,11 +2114,7 @@ int pulseqlib__try_read_cache(pulseqlib_collection *coll,
         return 0;
     }
 
-    ok = read_cache(cache_path,
-                    coll,
-                    (int)sz,
-                    PULSEQLIB_CACHE_SECTION_CHECK,
-                    1);
+    ok = read_full_cache(cache_path, coll, (int)sz, 1);
     PULSEQLIB_FREE(cache_path);
     return ok;
 }
@@ -1942,11 +2144,7 @@ int pulseqlib_load_cache(pulseqlib_collection *coll,
         return PULSEQLIB_ERR_NULL_POINTER;
     if (source_size <= 0)
         return PULSEQLIB_ERR_INVALID_ARGUMENT;
-    return read_cache(path,
-                      coll,
-                      source_size,
-                      PULSEQLIB_CACHE_SECTION_CHECK,
-                      1)
+    return read_full_cache(path, coll, source_size, 1)
                ? PULSEQLIB_SUCCESS
                : PULSEQLIB_ERR_FILE_READ_FAILED;
 }
@@ -1954,7 +2152,9 @@ int pulseqlib_load_cache(pulseqlib_collection *coll,
 static int load_cache_from_seq_path(
     pulseqlib_collection **out_coll,
     const char *seq_path,
-    int section_id,
+    const int *section_ids,
+    const payload_reader_fn *readers,
+    int n_req,
     int enforce_source_size)
 {
     pulseqlib_collection *coll;
@@ -1987,11 +2187,13 @@ static int load_cache_from_seq_path(
         return PULSEQLIB_ERR_FILE_NOT_FOUND;
     }
 
-    ok = read_cache(cache_path,
-                    coll,
-                    source_size < 0 ? 0 : (int)source_size,
-                    section_id,
-                    enforce_source_size);
+    ok = read_sections(cache_path,
+                       coll,
+                       source_size < 0 ? 0 : (int)source_size,
+                       enforce_source_size,
+                       section_ids,
+                       readers,
+                       n_req);
     PULSEQLIB_FREE(cache_path);
     if (!ok)
     {
@@ -2003,34 +2205,34 @@ static int load_cache_from_seq_path(
     return PULSEQLIB_SUCCESS;
 }
 
-int pulseqlib_load_check_cache(
-    pulseqlib_collection **out_coll,
-    const char *seq_path)
-{
-    return load_cache_from_seq_path(out_coll,
-                                    seq_path,
-                                    PULSEQLIB_CACHE_SECTION_CHECK,
-                                    1);
-}
-
+/* Pulsegen: COMMON + SHAPES (no rotations, no scan loop). */
 int pulseqlib_load_geninstructions_cache(
     pulseqlib_collection **out_coll,
     const char *seq_path)
 {
-    return load_cache_from_seq_path(out_coll,
-                                    seq_path,
-                                    PULSEQLIB_CACHE_SECTION_GENINSTRUCTIONS,
-                                    0);
+    static const int ids[2] = {
+        PULSEQLIB_CACHE_SECTION_COMMON,
+        PULSEQLIB_CACHE_SECTION_SHAPES};
+    static const payload_reader_fn readers[2] = {
+        read_common_payload,
+        read_shapes_payload};
+    return load_cache_from_seq_path(out_coll, seq_path, ids, readers, 2, 0);
 }
 
+/* Scan: COMMON + ROTATIONS + SCANLOOP (no shapes). */
 int pulseqlib_load_scanloop_cache(
     pulseqlib_collection **out_coll,
     const char *seq_path)
 {
-    return load_cache_from_seq_path(out_coll,
-                                    seq_path,
-                                    PULSEQLIB_CACHE_SECTION_SCANLOOP,
-                                    0);
+    static const int ids[3] = {
+        PULSEQLIB_CACHE_SECTION_COMMON,
+        PULSEQLIB_CACHE_SECTION_ROTATIONS,
+        PULSEQLIB_CACHE_SECTION_SCANLOOP};
+    static const payload_reader_fn readers[3] = {
+        read_common_payload,
+        read_rotations_payload,
+        read_scanloop_payload};
+    return load_cache_from_seq_path(out_coll, seq_path, ids, readers, 3, 0);
 }
 
 int pulseqlib_clear_cache(const char *seq_path)
@@ -2054,7 +2256,7 @@ int pulseqlib_clear_cache(const char *seq_path)
 }
 
 /* ================================================================== */
-/*  Freq-mod unified cache (section 6 of .pge)                        */
+/*  Freq-mod unified cache (FREQMOD section of .pge)                  */
 /* ================================================================== */
 
 int pulseqlib_write_freq_mod_cache(
@@ -2064,7 +2266,7 @@ int pulseqlib_write_freq_mod_cache(
     char *cache_path;
     FILE *f;
     int marker, num_sections;
-    int version_major, version_minor, vendor, stored_size;
+    int version_major, version_minor, version_revision, vendor, stored_size;
     int do_swap;
     long entries_pos, data_start, data_end, hdr_ns_pos;
     int i, found_idx;
@@ -2101,6 +2303,8 @@ int pulseqlib_write_freq_mod_cache(
         goto fm_write_fail;
     if (!read4(f, &version_minor, 1))
         goto fm_write_fail;
+    if (!read4(f, &version_revision, 1))
+        goto fm_write_fail;
     if (!read4(f, &vendor, 1))
         goto fm_write_fail;
     if (!read4(f, &stored_size, 1))
@@ -2112,6 +2316,7 @@ int pulseqlib_write_freq_mod_cache(
     {
         swap4(&version_major);
         swap4(&version_minor);
+        swap4(&version_revision);
         swap4(&vendor);
         swap4(&stored_size);
         swap4(&num_sections);
@@ -2139,7 +2344,7 @@ int pulseqlib_write_freq_mod_cache(
         }
     }
 
-    /* Check if section 6 already exists */
+    /* Check if the freq-mod section already exists */
     found_idx = -1;
     for (i = 0; i < num_sections; ++i)
     {
@@ -2209,7 +2414,7 @@ int pulseqlib_load_freq_mod_cache(
     char *cache_path;
     FILE *f;
     int marker, num_sections;
-    int version_major, version_minor, vendor, stored_size;
+    int version_major, version_minor, version_revision, vendor, stored_size;
     int do_swap, i, found;
     float zero_shift[3] = {0.0f, 0.0f, 0.0f};
     pulseqlib_cache_section_entry section;
@@ -2259,6 +2464,11 @@ int pulseqlib_load_freq_mod_cache(
         fclose(f);
         return PULSEQLIB_ERR_FILE_READ_FAILED;
     }
+    if (!read4(f, &version_revision, 1))
+    {
+        fclose(f);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
     if (!read4(f, &vendor, 1))
     {
         fclose(f);
@@ -2278,6 +2488,7 @@ int pulseqlib_load_freq_mod_cache(
     {
         swap4(&version_major);
         swap4(&version_minor);
+        swap4(&version_revision);
         swap4(&vendor);
         swap4(&stored_size);
         swap4(&num_sections);
@@ -2288,7 +2499,7 @@ int pulseqlib_load_freq_mod_cache(
         return PULSEQLIB_ERR_FILE_READ_FAILED;
     }
 
-    /* Find section 6 (freq-mod) */
+    /* Find the freq-mod section */
     found = 0;
     memset(&section, 0, sizeof(section));
     for (i = 0; i < num_sections; ++i)

@@ -342,11 +342,12 @@ static int seqdesc__build_adc_anchors_from_canonical(
             if (roles[i] > PULSEQLIB_ADC_ROLE_NON_ACQUIRED && kzero_us[i] >= 0.0f)
             {
                 int raster_idx = (int)(kzero_us[i] / dt);
+                float krss_at_adc;
                 if (raster_idx < 0)
                     raster_idx = 0;
                 if (raster_idx >= n_samples)
                     raster_idx = n_samples - 1;
-                float krss_at_adc = krss_vals[raster_idx];
+                krss_at_adc = krss_vals[raster_idx];
                 n_acq++;
                 if (krss_at_adc < min_krss_overall)
                     min_krss_overall = krss_at_adc;

@@ -701,8 +701,8 @@ class SequenceCollection(pp.Sequence):
     def trajectory_info(self):
         """Return trajectory data from the binary cache, if present.
 
-        Reads section 5 (TRAJECTORY) from the ``.pge`` cache file written
-        alongside the ``.seq`` file by the PSD predownload phase.  Returns
+        Reads the TRAJECTORY section (id 6) from the ``.pge`` cache file
+        written alongside the ``.seq`` file at load time.  Returns
         ``None`` for Cartesian sequences or when no ``.pge`` file is present.
 
         Returns
@@ -728,8 +728,8 @@ class SequenceCollection(pp.Sequence):
     def describe(self, *, do_print: bool = True) -> str:
         """Return a detailed multi-line summary of sequence description and trajectory.
 
-        Combines section 6 (sequence description) and, when available, section 5
-        (trajectory) into a human-readable report.
+        Combines the sequence description (SEQDESC section) and, when available,
+        the trajectory (TRAJECTORY section) into a human-readable report.
 
         Parameters
         ----------
@@ -774,7 +774,7 @@ class SequenceCollection(pp.Sequence):
         # ── Trajectory section ───────────────────────────────
         ti = self.trajectory_info()
         if ti is not None:
-            lines.append('=== Trajectory (section 5) ===')
+            lines.append('=== Trajectory ===')
             lines.append(f'  k-shots:            {len(ti.kshots)}')
             lines.append(f'  Encoding spaces:    {len(ti.encoding_spaces)}')
             lines.append(f'  Table entries:      {len(ti.table)}')
@@ -784,7 +784,7 @@ class SequenceCollection(pp.Sequence):
                 lines.append(f'  ES {ei}: FOV={fov_mm} mm  matrix={mat}')
             lines.append('')
         else:
-            lines.append('=== Trajectory (section 5): not available ===')
+            lines.append('=== Trajectory: not available ===')
             lines.append('')
 
         text = '\n'.join(lines)

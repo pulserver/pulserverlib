@@ -130,10 +130,10 @@ int main(int argc, char** argv)
                         1);  /* num_averages     */
     CHECK(rc, &g_diag);
 
-    /* Re-open from check cache to show stage-specific cache usage. */
+    /* Re-open from the cache to show stage-specific cache usage. */
     pulseqlib_collection_free(coll);
     coll = NULL;
-    rc = pulseqlib_load_check_cache(&coll, seq_path);
+    rc = pulseqlib_load_geninstructions_cache(&coll, seq_path);
     CHECK(rc, &g_diag);
 
     /* ============================================================= */

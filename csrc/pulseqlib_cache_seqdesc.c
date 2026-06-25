@@ -1,10 +1,10 @@
-/* pulseqlib_cache_seqdesc.c -- Section 5 cache writer for sequence description
+/* pulseqlib_cache_seqdesc.c -- SEQDESC (section 7) cache writer for sequence description
  *
  * Implements:
  *   pulseqlib_write_sequence_description_cache()
  *
- * Section 5 serialization format (all values are 4 bytes, little-endian by
- * default — same convention as all other cache sections):
+ * SEQDESC (section 7) serialization format (all values are 4 bytes, little-endian
+ * by default — same convention as all other cache sections):
  *
  * [sequence parameters]
  *   min_te_us, min_tr_us, max_tr_us, max_flip_angle_deg, total_scan_time_us  (float x5)
@@ -116,7 +116,7 @@ static int sd_write_subseq(FILE *f, const pulseqlib_sequence_description *sd)
 /* ================================================================== */
 
 #define SD_CACHE_ENDIAN_MARKER 0x01020304
-#define SD_CACHE_SECTION_SEQDESC 5
+#define SD_CACHE_SECTION_SEQDESC 7
 
 int pulseqlib_write_sequence_description_cache(
     const pulseqlib_collection *coll,
@@ -125,7 +125,7 @@ int pulseqlib_write_sequence_description_cache(
     char *cache_path = NULL;
     FILE *f = NULL;
     int marker, num_sections;
-    int version_major, version_minor, vendor, stored_size;
+    int version_major, version_minor, version_revision, vendor, stored_size;
     int do_swap;
     long entries_pos, data_start, data_end, hdr_ns_pos;
     int i, found_idx;
@@ -175,6 +175,11 @@ int pulseqlib_write_sequence_description_cache(
         ret = PULSEQLIB_ERR_FILE_READ_FAILED;
         goto done;
     }
+    if (!sd_read4(f, &version_revision, 1))
+    {
+        ret = PULSEQLIB_ERR_FILE_READ_FAILED;
+        goto done;
+    }
     if (!sd_read4(f, &vendor, 1))
     {
         ret = PULSEQLIB_ERR_FILE_READ_FAILED;
@@ -200,6 +205,7 @@ int pulseqlib_write_sequence_description_cache(
     {
         sd_swap4(&version_major);
         sd_swap4(&version_minor);
+        sd_swap4(&version_revision);
         sd_swap4(&vendor);
         sd_swap4(&stored_size);
         sd_swap4(&num_sections);
@@ -229,7 +235,7 @@ int pulseqlib_write_sequence_description_cache(
             sd_swap4_array(&entries_buf[i * 3], 3);
     }
 
-    /* Find or allocate slot for section 5 */
+    /* Find or allocate slot for the seqdesc section */
     found_idx = -1;
     for (i = 0; i < num_sections; ++i)
     {

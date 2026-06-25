@@ -105,16 +105,11 @@ MU_TEST(test_cache_stage_loaders_and_clear)
     pulseqlib_collection_free(coll);
     coll = NULL;
 
-    rc = pulseqlib_load_check_cache(&stage_coll, seq_path);
-    mu_assert_int_eq(PULSEQLIB_SUCCESS, rc);
-    rc = pulseqlib_get_collection_info(stage_coll, &info);
-    mu_assert(PULSEQLIB_SUCCEEDED(rc), "get_collection_info failed after check cache load");
-    mu_assert(info.num_subsequences > 0, "check cache must contain at least one subsequence");
-    pulseqlib_collection_free(stage_coll);
-    stage_coll = NULL;
-
     rc = pulseqlib_load_geninstructions_cache(&stage_coll, seq_path);
     mu_assert_int_eq(PULSEQLIB_SUCCESS, rc);
+    rc = pulseqlib_get_collection_info(stage_coll, &info);
+    mu_assert(PULSEQLIB_SUCCEEDED(rc), "get_collection_info failed after geninstructions cache load");
+    mu_assert(info.num_subsequences > 0, "geninstructions cache must contain at least one subsequence");
     pulseqlib_collection_free(stage_coll);
     stage_coll = NULL;
 
@@ -127,8 +122,8 @@ MU_TEST(test_cache_stage_loaders_and_clear)
     mu_assert_int_eq(PULSEQLIB_SUCCESS, rc);
     mu_assert(!cache_file_exists(cache_path), "cache file should be removed by clear_cache");
 
-    rc = pulseqlib_load_check_cache(&stage_coll, seq_path);
-    mu_assert(PULSEQLIB_FAILED(rc), "load_check_cache should fail when cache file is missing");
+    rc = pulseqlib_load_geninstructions_cache(&stage_coll, seq_path);
+    mu_assert(PULSEQLIB_FAILED(rc), "load_geninstructions_cache should fail when cache file is missing");
     mu_assert(stage_coll == NULL, "stage collection should stay NULL on cache load failure");
 }
 

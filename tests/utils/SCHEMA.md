@@ -1,26 +1,29 @@
 # Pulseqlib Cache Binary Wire-Format Specification
 
-**Version**: 1.3  
-**Last Updated**: 2026-04-29
+**Version**: 2.0.0  
+**Last Updated**: 2026-06-25
 
 ## Overview
 
-The pulseqlib cache file (`.bin` companion to `.seq`) is a binary serialization of a `pulseqlib_collection` object. The cache is organized into sections, each containing a different aspect of the sequence data. All integer and floating-point fields are stored as 4-byte values; all endianness is determined by the file header marker.
+The pulseqlib cache file (`.pge` companion to `.seq`) is a binary serialization of a `pulseqlib_collection` object. As of cache format **v2.0.0** the payload is split into **per-consumer sections**, so each PSD phase / consumer deserializes only the data it needs. All integer and floating-point fields are stored as 4-byte values; all endianness is determined by the file header marker.
+
+The whole `.pge` is a pure function of the loaded collection (shift- and rotation-independent). It is produced in one shot at load time by `pulseqlib__write_cache` (see `pulseqlib_cache.c`), which emits the four base sections (COMMON, ROTATIONS, SHAPES, SCANLOOP) and then appends TRAJECTORY, SEQDESC and FREQMOD.
 
 ---
 
 ## File Header
 
-The cache file begins with a fixed header (24 bytes):
+The cache file begins with a fixed header (28 bytes):
 
 | Offset | Field | Type | Count | Size | Description |
 |--------|-------|------|-------|------|-------------|
 | 0x00 | Endian marker | int32 | 1 | 4 | `0x01020304`; if byte-swapped, indicates big-endian file |
-| 0x04 | Version major | int32 | 1 | 4 | `PULSEQLIB_CACHE_VERSION_MAJOR = 1` |
-| 0x08 | Version minor | int32 | 1 | 4 | `PULSEQLIB_CACHE_VERSION_MINOR = 3` (v1.3 adds vendor tag to RF stats) |
-| 0x0C | Vendor | int32 | 1 | 4 | `PULSEQLIB_VENDOR` constant; identifies hardware/vendor context |
-| 0x10 | Source seq file size | int32 | 1 | 4 | Byte count of original `.seq` file; used for cache validity check |
-| 0x14 | Number of sections | int32 | 1 | 4 | Count of section entries in the table-of-contents (typically 3–6) |
+| 0x04 | Version major | int32 | 1 | 4 | `PULSEQLIB_CACHE_VERSION_MAJOR = 2` |
+| 0x08 | Version minor | int32 | 1 | 4 | `PULSEQLIB_CACHE_VERSION_MINOR = 0` |
+| 0x0C | Version revision | int32 | 1 | 4 | `PULSEQLIB_CACHE_VERSION_REVISION = 0` |
+| 0x10 | Vendor | int32 | 1 | 4 | `PULSEQLIB_VENDOR` constant; identifies hardware/vendor context |
+| 0x14 | Source seq file size | int32 | 1 | 4 | Byte count of original `.seq` file; used for cache validity check |
+| 0x18 | Number of sections | int32 | 1 | 4 | Count of section entries in the table-of-contents (up to 7) |
 
 After the header, the file contains:
 - **Section table** (immediate): `num_sections × 12` bytes (3 int32 per entry)
@@ -28,17 +31,18 @@ After the header, the file contains:
 
 ### Version Policy
 
-- **v1.0–v1.2**: Base RF definitions without vendor tag
-- **v1.3** (current): Adds `vendor` field to `pulseqlib_rf_stats` at end of each RF definition.  
-  Readers must:
-  - Check version_minor >= 3 to enable parsing of the vendor field
-  - Fall back gracefully if an older cache is encountered
+The reader hard-fails on any mismatch of **major, minor AND revision** — there is no
+intra-version fallback. Stale caches are regenerated, not partially parsed.
+
+- **v1.x**: legacy monolithic layout (CHECK/GENINSTRUCTIONS/SCANLOOP byte-identical payloads).
+  No longer produced or read.
+- **v2.0.0** (current): per-consumer section split; adds the `version_revision` header word.
 
 ---
 
 ## Section Table of Contents (TOC)
 
-Immediately after the 24-byte file header, a TOC of `num_sections` entries follows. Each entry is 12 bytes:
+Immediately after the 28-byte file header, a TOC of `num_sections` entries follows. Each entry is 12 bytes:
 
 | Offset in entry | Field | Type | Count | Size | Description |
 |---|---|---|---|---|---|
@@ -48,22 +52,31 @@ Immediately after the 24-byte file header, a TOC of `num_sections` entries follo
 
 ### Section IDs
 
-| ID | Name | Purpose | Reader | Notes |
+| ID | Name | Purpose | Reader / Consumer | Notes |
 |---|---|---|---|---|
-| 1 | CHECK | Initial descriptor snapshot | pulseqlib_load_check_cache() | Validates sequence on load |
-| 2 | GENINSTRUCTIONS | Full descriptor + collections | trajectory_cache_reader.cpp (Section 2) | Rotation matrices, RF/gradient/ADC definitions |
-| 3 | SCANLOOP | Complete collection with scan table | pulseqlib_load_scanloop_cache() | Includes acquisition order info |
-| 4 | TRAJECTORY | Trajectory library (kshots, encoding spaces, table) | trajectory_cache_reader.cpp (Section 4) | Non-Cartesian trajectory data |
-| 5 | SEQUENCEDESCRIPTION | Event lists, RF shapes, shims | trajectory_cache_reader.cpp (Section 5, optional) | Per-subsequence details; graceful skip if absent |
-| 6 | FREQMOD | Frequency modulation (off-isocenter shifts) | **NOT parsed by mrdserver** | Applied PSD-side; data at recon already centered |
+| 1 | COMMON | Collection header + per-descriptor structure/scaling/defs (RF/grad/ADC defs, segment defs+anchors, segment table, labels, generic [DEFINITIONS]) | pulseqlib_load_geninstructions_cache() (+SHAPES); pulseqlib_load_scanloop_cache() (+ROTATIONS+SCANLOOP); trajectory_cache_reader.cpp | Must be read first; augment sections attach to the descriptors it allocates. Excludes rotations, raw shapes, scan table |
+| 2 | ROTATIONS | 3×3 rotation-matrix library (per descriptor) | scan (load_scanloop); trajectory_cache_reader.cpp | Augment section |
+| 3 | SHAPES | RF mag/phase/time + gradient compressed shape sample arrays (per descriptor) | pulsegen (load_geninstructions) | Augment section |
+| 4 | SCANLOOP | scan_table (4×len) + variable_grad_flags (per descriptor) | scan (load_scanloop) | Augment section |
+| 5 | FREQMOD | Frequency-modulation **base only** (shift-independent) | scan; **NOT parsed by mrdserver** | Applied PSD-side; data at recon already centered |
+| 6 | TRAJECTORY | Trajectory library (kshots, encoding spaces, table) | trajectory_cache_reader.cpp | Non-Cartesian trajectory data |
+| 7 | SEQDESC | Event lists, RF shapes, shims | trajectory_cache_reader.cpp (optional) | Per-subsequence details; graceful skip if absent |
+
+> **Note (Stage 3, planned):** TRAJECTORY(6) + SEQDESC(7) are slated to merge into a single
+> RECON section (id 6) carrying trajectory + seqdesc + generic [DEFINITIONS] + a rotations copy.
+> Not yet implemented.
 
 ---
 
 ## Section Data: Field-by-Field Layout
 
-All sections contain **collection-level header** followed by **per-subsequence descriptors**. Fields are written via `fwrite()` in the following order:
+The **COMMON** section carries a **collection-level header** followed by **per-subsequence
+descriptors** (the field-by-field layout below, minus the rotations, raw shapes and scan-table
+blocks). The **augment sections** (ROTATIONS, SHAPES, SCANLOOP) carry no collection scalars: they
+write a single `num_subsequences` token (validated against COMMON on read) followed by one
+per-descriptor region each. Fields are written via `fwrite()` in the following order:
 
-### Collection-Level Header (all sections)
+### Collection-Level Header (COMMON section only)
 
 | Field | Type | Count | Bytes | Description |
 |-------|------|-------|-------|---|
@@ -74,7 +87,7 @@ All sections contain **collection-level header** followed by **per-subsequence d
 | total_blocks | int32 | 1 | 4 | Total block count |
 | total_duration_us | int32 | 1 | 4 | Entire sequence duration (microseconds) |
 
-### Per-Subsequence Header (in each section)
+### Per-Subsequence Header (COMMON section)
 
 For each of the `num_subsequences` entries:
 
@@ -186,7 +199,7 @@ For each RF definition:
 | band_freq_offsets_hz[0..7] | float | 8 | 32 | Per-band center frequency offsets (Hz) |
 | band_bandwidth_hz | float | 1 | 4 | Per-band bandwidth (Hz) |
 | total_b1sq_power | float | 1 | 4 | Integral of \|B1(t)\|² (arbitrary units) |
-| vendor | int32 | 1 | 4 | **v1.3 NEW**: Vendor ID for interpretation of above fields |
+| vendor | int32 | 1 | 4 | Vendor ID for interpretation of above fields |
 
 #### RF Table
 
@@ -294,7 +307,10 @@ For each shim definition:
 | magnitudes[0..N_ch-1] | float | N_ch | 4×N_ch | Shim coefficient magnitudes |
 | phases[0..N_ch-1] | float | N_ch | 4×N_ch | Shim coefficient phases (radians) |
 
-#### Rotations (Spatial)
+#### Rotations (Spatial) — ROTATIONS section (id 2)
+
+> Emitted in the standalone **ROTATIONS** augment section, **not** in COMMON. The section is a
+> `num_subsequences` token followed by one of these per-descriptor regions.
 
 | Prefix | Type | Count | Bytes | Description |
 |--------|------|-------|-------|---|
@@ -322,7 +338,10 @@ For each trigger (5 int32 per entry):
 | trigger_type | int32 | 1 | 4 |
 | trigger_channel | int32 | 1 | 4 |
 
-#### Shapes (Waveforms)
+#### Shapes (Waveforms) — SHAPES section (id 3)
+
+> Emitted in the standalone **SHAPES** augment section, **not** in COMMON. The section is a
+> `num_subsequences` token followed by one of these per-descriptor regions.
 
 | Prefix | Type | Count | Bytes | Description |
 |--------|------|-------|-------|---|
@@ -408,7 +427,11 @@ For each definition:
 | value_size | int32 | Number of values |
 | values[0..value_size-1] | length-prefixed string | Value strings (each: int32 length + bytes) |
 
-#### Scan Table
+#### Scan Table — SCANLOOP section (id 4)
+
+> Emitted in the standalone **SCANLOOP** augment section, **not** in COMMON. The section is a
+> `num_subsequences` token followed by one of these per-descriptor regions (scan_table plus the
+> `variable_grad_flags`).
 
 | Field | Type | Count | Bytes | Description |
 |-------|------|-------|-------|---|
@@ -443,10 +466,10 @@ All read/write operations use `fread()/fwrite()` with 4-byte alignment; no paddi
 
 ---
 
-## Section 6 (FREQMOD) — Special Note
+## Section 5 (FREQMOD) — Special Note
 
-**mrdserver's trajectory_cache_reader.cpp intentionally does NOT parse Section 6** (FREQMOD).  
-Off-isocenter frequency shifts are applied **at the PSD level** during sequence execution. By the time data arrives at the recon pipeline, all spatial shifts have already been applied; the recon receives centered k-space data. Section 6 is present for completeness and audit purposes but is not required by the recon chain.
+**mrdserver's trajectory_cache_reader.cpp intentionally does NOT parse Section 5** (FREQMOD).  
+Off-isocenter frequency shifts are applied **at the PSD level** during sequence execution. By the time data arrives at the recon pipeline, all spatial shifts have already been applied; the recon receives centered k-space data. Section 5 stores only the **shift-independent base**; the shift-dependent plan waveforms are recomputed PSD-side at scan time and are not cached.
 
 ---
 
@@ -455,10 +478,12 @@ Off-isocenter frequency shifts are applied **at the PSD level** during sequence 
 Readers should:
 
 1. Always check the endian marker first
-2. Validate version_major and version_minor match expectations (or implement fallback logic)
+2. Validate version_major, version_minor AND version_revision all match expectations
+   (the writer's reader hard-fails on any mismatch; there is no intra-version fallback)
 3. Skip unknown sections gracefully
-4. For v1.3: Parse the vendor field at the end of each RF definition; pre-v1.3 files will have zero bytes there
-5. Treat sequence descriptions (Section 5) as optional; degrade gracefully if absent
+4. Read COMMON (id 1) before any augment section (ROTATIONS/SHAPES/SCANLOOP), which attach to the
+   descriptors COMMON allocates
+5. Treat sequence descriptions (Section 7) as optional; degrade gracefully if absent
 
 
 ---
@@ -502,7 +527,7 @@ averages; the per-average trajectory is tiled `num_averages` times.
 
 ## Other companion files (already produced)
 
-- `<base>.bin`                — pulseqlib cache binary (sections 1–5)
+- `<base>.pge`                — pulseqlib cache binary (v2.0.0 sections 1–7)
                                 produced by the `write_cache` CLI as a
                                 post-pass to `run_generators.m`. Listed
                                 under each entry's `companion_files` in

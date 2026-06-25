@@ -5,7 +5,7 @@ Provides:
   * ``build_sequence_description_info`` — build SequenceDescriptionInfo from
     the pybind ``_get_sequence_parameters`` / ``_get_sequence_description``
     output dicts (always available).
-    * ``read_trajectory_info`` — parse section 4 (TRAJECTORY) from a co-located
+    * ``read_trajectory_info`` — parse the TRAJECTORY section from a co-located
         .pge cache file (present when the PSD predownload phase has been run).
 """
 
@@ -33,7 +33,7 @@ from pathlib import Path
 # ── Constants (mirror pulseqlib C sources) ────────────────────────────
 
 _CACHE_ENDIAN_MARKER = 0x01020304
-_SECTION_TRAJECTORY = 4
+_SECTION_TRAJECTORY = 6
 _SEQ_EVENT_TYPE_WAIT = 0
 _SEQ_EVENT_TYPE_RF = 1
 _SEQ_EVENT_TYPE_ADC = 2
@@ -177,7 +177,7 @@ class SequenceDescriptionInfo:
     subseqs: list[SequenceDescription]
 
 
-# ── Dataclasses — TrajectoryInfo (parsed from .pge section 4) ────────
+# ── Dataclasses — TrajectoryInfo (parsed from .pge TRAJECTORY section) ─
 
 
 @dataclass
@@ -233,7 +233,7 @@ class TrajTableEntry:
 
 @dataclass
 class TrajectoryInfo:
-    """Parsed trajectory data from cache section 4."""
+    """Parsed trajectory data from the cache TRAJECTORY section."""
 
     kshots: list[list[float]]  # [num_shots][num_samples]
     encoding_spaces: list[EncodingSpace]
@@ -303,7 +303,7 @@ def build_sequence_description_info(
     return SequenceDescriptionInfo(seq_params=sp, subseqs=subseqs)
 
 
-# ── Pure-Python .pge reader for section 4 (TRAJECTORY) ───────────────
+# ── Pure-Python .pge reader for the TRAJECTORY section ───────────────
 
 _LL_NAMES = ('slc', 'phs', 'rep', 'avg', 'seg', 'set', 'eco', 'par', 'lin', 'acq')
 
@@ -322,12 +322,13 @@ def _find_section(data: bytes, section_id: int):
         do_swap = True
 
     endian = '>' if do_swap else '<'
-    # offset 4: version_major, version_minor, vendor, stored_size, num_sections (5 x int32)
-    num_sections = struct.unpack_from(f'{endian}5i', data, 4)[4]
+    # offset 4: version_major, version_minor, version_revision, vendor,
+    #           stored_size, num_sections (6 x int32)
+    num_sections = struct.unpack_from(f'{endian}6i', data, 4)[5]
     if not 1 <= num_sections <= 16:
         return None
 
-    hdr_end = 4 + 5 * 4  # 24 bytes
+    hdr_end = 4 + 6 * 4  # 28 bytes
     for i in range(num_sections):
         sid, soff, ssz = struct.unpack_from(f'{endian}3i', data, hdr_end + i * 12)
         if sid == section_id:
@@ -337,9 +338,9 @@ def _find_section(data: bytes, section_id: int):
 
 
 def read_trajectory_info(seq_path: str | Path) -> TrajectoryInfo | None:
-    """Read trajectory data (cache section 4) from a co-located ``.pge`` file.
+    """Read trajectory data (cache TRAJECTORY section) from a co-located ``.pge`` file.
 
-    Returns ``None`` when the ``.pge`` file does not exist or section 4 is
+    Returns ``None`` when the ``.pge`` file does not exist or the TRAJECTORY section is
     absent (e.g. for Cartesian sequences or when the cache was not written
     by the PSD predownload phase).
 

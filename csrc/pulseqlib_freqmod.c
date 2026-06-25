@@ -16,6 +16,7 @@
  */
 
 #include "pulseqlib_internal.h"
+#include "pulseqlib_methods.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -650,7 +651,7 @@ static int build_freq_mod_library(
     int (*base_rows)[FREQ_MOD_BASE_COLS] = NULL;
     int *base_unique = NULL;
     int *base_map = NULL; /* event -> base_idx                      */
-    int num_base;
+    int num_base = 0;
 
     entry_key_t *entry_keys = NULL;
     int *entry_unique = NULL;
@@ -1941,15 +1942,8 @@ static int freq_mod_library_write_cache(
                    (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
             goto write_fail;
 
-        /* Pre-computed plan waveforms (shift-dependent) */
-        {
-            size_t total = (size_t)lib->num_plan_instances * lib->max_samples;
-            if (fwrite(lib->plan_waveform_data, sizeof(float), total, f) != total)
-                goto write_fail;
-        }
-        if (fwrite(lib->plan_phase, sizeof(float),
-                   (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
-            goto write_fail;
+        /* plan_waveform_data / plan_phase are shift-dependent and recomputed
+         * from the base on load (compute_plan_waveforms); they are NOT cached. */
     }
 
     /* Scan-table mapping */
@@ -2085,22 +2079,10 @@ static int freq_mod_library_read_cache(
                   (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
             goto read_fail;
 
-        /* Pre-computed plan waveforms */
-        {
-            size_t total = (size_t)lib->num_plan_instances * lib->max_samples;
-            if (fread(lib->plan_waveform_data, sizeof(float), total, f) != total)
-                goto read_fail;
-        }
-        if (fread(lib->plan_phase, sizeof(float),
-                  (size_t)lib->num_plan_instances, f) != (size_t)lib->num_plan_instances)
-            goto read_fail;
-
-        /* Set up row pointers */
-        {
-            int n;
-            for (n = 0; n < lib->num_plan_instances; ++n)
-                lib->plan_waveforms[n] = lib->plan_waveform_data + (size_t)n * lib->max_samples;
-        }
+        /* plan_waveform_data / plan_phase are NOT cached (shift-dependent).
+         * alloc_plan already set up the plan_waveforms row pointers, and
+         * compute_plan_waveforms (below) fills them from the base for the
+         * current shift. */
     }
 
     /* Scan-table mapping */
@@ -2443,6 +2425,33 @@ int pulseqlib_build_freq_mod(
     }
     return pulseqlib_build_freq_mod_collection(
         &coll->freq_mod, coll, shift_m, fov_rotation);
+}
+
+int pulseqlib_write_freq_mod_cache_from_collection(
+    pulseqlib_collection *coll,
+    const char *seq_path)
+{
+    float zero_shift[3];
+    float identity[9];
+    int rc;
+
+    if (!coll || !seq_path)
+        return PULSEQLIB_ERR_NULL_POINTER;
+
+    zero_shift[0] = 0.0f;
+    zero_shift[1] = 0.0f;
+    zero_shift[2] = 0.0f;
+    identity[0] = 1.0f; identity[1] = 0.0f; identity[2] = 0.0f;
+    identity[3] = 0.0f; identity[4] = 1.0f; identity[5] = 0.0f;
+    identity[6] = 0.0f; identity[7] = 0.0f; identity[8] = 1.0f;
+
+    /* Only the shift-independent base is cached, so build at zero shift /
+     * identity rotation; scan rematerializes the shift-dependent plans. */
+    rc = pulseqlib_build_freq_mod(coll, zero_shift, identity);
+    if (PULSEQLIB_FAILED(rc))
+        return rc;
+
+    return pulseqlib_write_freq_mod_cache(coll, seq_path);
 }
 
 int pulseqlib_update_freq_mod(

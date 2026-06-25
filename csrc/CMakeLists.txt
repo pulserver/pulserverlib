@@ -80,6 +80,12 @@ target_include_directories(pulseqlib
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# When the seqdesc writer is compiled in, let pulseqlib_cache.c emit the
+# SEQDESC section as part of the unified cache dump.
+if(PULSEQLIB_BUILD_SEQDESC AND PULSEQLIB_BUILD_CACHE)
+    target_compile_definitions(pulseqlib PUBLIC PULSEQLIB_HAVE_SEQDESC)
+endif()
+
 # Bridge module (POSIX-only, uses fork/exec/pipe)
 set(BRIDGE_SOURCES
     pulseqlib_bridge.c

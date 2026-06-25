@@ -232,31 +232,21 @@ extern "C"
     /* ================================================================== */
 
     /**
-     * @brief Load check-stage cache for a sequence path.
+     * @brief Load the pulsegen-stage cache for a sequence path.
      *
-     * Uses the cache file derived from @p seq_path (same directory, .pge
-     * extension) and validates the cached source-size against the current
-     * .seq file size.
-     */
-    int pulseqlib_load_check_cache(
-        pulseqlib_collection **out_coll,
-        const char *seq_path);
-
-    /**
-     * @brief Load geninstructions-stage cache for a sequence path.
-     *
-     * Uses the cache file derived from @p seq_path. This stage does not
-     * enforce source-size matching.
+     * Reads the COMMON + SHAPES sections of the cache file derived from
+     * @p seq_path. This stage does not enforce source-size matching.
      */
     int pulseqlib_load_geninstructions_cache(
         pulseqlib_collection **out_coll,
         const char *seq_path);
 
     /**
-     * @brief Load scanloop-stage cache for a sequence path.
+     * @brief Load the scan-stage cache for a sequence path.
      *
-     * Uses the cache file derived from @p seq_path. This stage does not
-     * enforce source-size matching.
+     * Reads the COMMON + ROTATIONS + SCANLOOP sections of the cache file
+     * derived from @p seq_path. This stage does not enforce source-size
+     * matching.
      */
     int pulseqlib_load_scanloop_cache(
         pulseqlib_collection **out_coll,
@@ -1185,7 +1175,7 @@ extern "C"
     /* ================================================================== */
 
     /**
-     * @brief Load freq-mod data from the collection cache (section 6).
+     * @brief Load freq-mod data from the collection cache (FREQMOD section).
      *
      * On success, populates coll->freq_mod.  Returns an error code if the
      * freq-mod section is absent or empty.
@@ -1198,10 +1188,26 @@ extern "C"
      * @brief Append freq-mod data to an existing collection cache.
      *
      * Opens the cache file for the given .seq path, writes freq-mod data
-     * at the end, and updates the section-4 index entry.
+     * at the end, and updates the FREQMOD section index entry.
      */
     int pulseqlib_write_freq_mod_cache(
         const pulseqlib_collection *coll,
+        const char *seq_path);
+
+    /**
+     * @brief Build the shift-independent freq-mod base into @p coll and append
+     *        the FREQMOD section to the collection cache.
+     *
+     * Convenience wrapper used by the unified cache dump. Builds the base with
+     * a zero shift and identity rotation (only the base, which is
+     * shift-independent, is cached), then appends the FREQMOD section.
+     *
+     * @param[in,out] coll      Loaded collection (coll->freq_mod is populated).
+     * @param[in]     seq_path  Path to the .seq file (cache is .seq → .pge).
+     * @return PULSEQLIB_SUCCESS or negative error code.
+     */
+    int pulseqlib_write_freq_mod_cache_from_collection(
+        pulseqlib_collection *coll,
         const char *seq_path);
 
     /* ================================================================== */
@@ -1259,9 +1265,11 @@ extern "C"
      * k-zero centred) and a per-ADC-event table with shot IDs, gradient
      * amplitudes, rotation IDs, and resolved labels.
      *
-     * Must be called AFTER pulseqlib_check_safety() (needs k-zero anchors).
+     * Requires the segment timing anchors (k-zero) that
+     * pulseqlib__calc_segment_timing populates at parse; no safety pass is
+     * required.
      *
-     * @param[in]  coll        Loaded collection (with safety data).
+     * @param[in]  coll        Loaded collection.
      * @param[out] out         Trajectory output (caller-allocated struct).
      * @param[out] diag        Diagnostic (optional, may be NULL).
      * @param[in]  subseq_idx  Subsequence index.
@@ -1293,7 +1301,7 @@ extern "C"
                                    const pulseqlib_trajectory *src);
 
     /**
-     * @brief Append the trajectory as section 4 to the binary cache.
+     * @brief Append the trajectory as the TRAJECTORY section to the binary cache.
      *
      * Opens the existing cache file (written by pulseqlib_read with
      * cache_binary=1), appends the trajectory section, and patches the
@@ -1307,7 +1315,25 @@ extern "C"
                                          const char *seq_path);
 
     /**
-     * @brief Load trajectory from cache section 4.
+     * @brief Compute + merge per-subsequence trajectories and append the
+     *        TRAJECTORY section to the binary cache.
+     *
+     * Convenience wrapper used by the unified cache dump: loops every
+     * subsequence in @p coll, computes its trajectory, merges into an
+     * accumulator and appends the result. No-op (returns success) when the
+     * collection has no subsequences. The kzero anchors it relies on are
+     * populated at parse (calc_segment_timing); no safety pass is required.
+     *
+     * @param[in] coll      Loaded collection.
+     * @param[in] seq_path  Path to the .seq file (cache is .seq → .pge).
+     * @return PULSEQLIB_SUCCESS or negative error code.
+     */
+    int pulseqlib_write_trajectory_cache_from_collection(
+        const pulseqlib_collection *coll,
+        const char *seq_path);
+
+    /**
+     * @brief Load trajectory from the TRAJECTORY cache section.
      *
      * @param[out] out       Trajectory output (caller-allocated struct).
      * @param[in]  seq_path  Path to the .seq file.
@@ -1317,7 +1343,7 @@ extern "C"
                                         const char *seq_path);
 
     /* ================================================================== */
-    /*  Sequence description (Section 5)                                  */
+    /*  Sequence description (SEQDESC section)                            */
     /* ================================================================== */
 
     /**
@@ -1356,7 +1382,7 @@ extern "C"
                                           const pulseqlib_collection *coll);
 
     /**
-     * @brief Append the sequence description as section 5 to the binary cache.
+     * @brief Append the sequence description as the SEQDESC section to the binary cache.
      *
      * Must be called after the collection is loaded and all descriptors computed.
      *

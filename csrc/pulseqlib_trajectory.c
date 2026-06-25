@@ -1483,11 +1483,11 @@ static int traj_read4(FILE *f, void *p, int count)
 }
 
 /* ================================================================== */
-/*  Write trajectory cache (section 4)                                */
+/*  Write trajectory cache (TRAJECTORY section)                       */
 /* ================================================================== */
 
 #define CACHE_ENDIAN_MARKER 0x01020304
-#define CACHE_SECTION_TRAJECTORY 4
+#define CACHE_SECTION_TRAJECTORY 6
 
 int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory *traj,
                                      const char *seq_path)
@@ -1495,7 +1495,7 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory *traj,
     char *cache_path;
     FILE *f;
     int marker, num_sections;
-    int version_major, version_minor, vendor, stored_size;
+    int version_major, version_minor, version_revision, vendor, stored_size;
     int do_swap;
     long entries_pos, data_start, data_end, hdr_ns_pos;
     int i, found_idx;
@@ -1530,6 +1530,8 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory *traj,
         goto tw_fail;
     if (!traj_read4(f, &version_minor, 1))
         goto tw_fail;
+    if (!traj_read4(f, &version_revision, 1))
+        goto tw_fail;
     if (!traj_read4(f, &vendor, 1))
         goto tw_fail;
     if (!traj_read4(f, &stored_size, 1))
@@ -1541,6 +1543,7 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory *traj,
     {
         traj_swap4(&version_major);
         traj_swap4(&version_minor);
+        traj_swap4(&version_revision);
         traj_swap4(&vendor);
         traj_swap4(&stored_size);
         traj_swap4(&num_sections);
@@ -1561,7 +1564,7 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory *traj,
             traj_swap4_array(&entries_buf[i * 3], 3);
     }
 
-    /* Check if section 4 already exists */
+    /* Check if the trajectory section already exists */
     found_idx = -1;
     for (i = 0; i < num_sections; ++i)
     {
@@ -1721,7 +1724,63 @@ tw_fail:
 }
 
 /* ================================================================== */
-/*  Load trajectory from cache (section 4)                            */
+/*  Compute + merge + append trajectory for a whole collection        */
+/* ================================================================== */
+
+int pulseqlib_write_trajectory_cache_from_collection(
+    const pulseqlib_collection *coll,
+    const char *seq_path)
+{
+    pulseqlib_trajectory acc, one;
+    pulseqlib_diagnostic diag;
+    int i, have, rc;
+
+    if (!coll || !seq_path)
+        return PULSEQLIB_ERR_NULL_POINTER;
+
+    have = 0;
+    memset(&acc, 0, sizeof(acc));
+
+    for (i = 0; i < coll->num_subsequences; ++i)
+    {
+        memset(&one, 0, sizeof(one));
+        pulseqlib_diagnostic_init(&diag);
+        rc = pulseqlib_compute_trajectory(coll, &one, &diag, i);
+        if (PULSEQLIB_FAILED(rc))
+        {
+            if (have)
+                pulseqlib_free_trajectory(&acc);
+            return rc;
+        }
+        if (!have)
+        {
+            acc = one;
+            have = 1;
+        }
+        else
+        {
+            rc = pulseqlib_merge_trajectory(&acc, &one);
+            pulseqlib_free_trajectory(&one);
+            if (PULSEQLIB_FAILED(rc))
+            {
+                pulseqlib_free_trajectory(&acc);
+                return rc;
+            }
+        }
+    }
+
+    if (have)
+    {
+        rc = pulseqlib_write_trajectory_cache(&acc, seq_path);
+        pulseqlib_free_trajectory(&acc);
+        return rc;
+    }
+
+    return PULSEQLIB_SUCCESS;
+}
+
+/* ================================================================== */
+/*  Load trajectory from cache (TRAJECTORY section)                   */
 /* ================================================================== */
 
 int pulseqlib_load_trajectory_cache(pulseqlib_trajectory *out,
@@ -1730,7 +1789,7 @@ int pulseqlib_load_trajectory_cache(pulseqlib_trajectory *out,
     char *cache_path;
     FILE *f;
     int marker, num_sections;
-    int version_major, version_minor, vendor, stored_size;
+    int version_major, version_minor, version_revision, vendor, stored_size;
     int do_swap, i, found;
     int section_id, section_offset, section_size;
 
@@ -1774,6 +1833,11 @@ int pulseqlib_load_trajectory_cache(pulseqlib_trajectory *out,
         fclose(f);
         return PULSEQLIB_ERR_FILE_READ_FAILED;
     }
+    if (!traj_read4(f, &version_revision, 1))
+    {
+        fclose(f);
+        return PULSEQLIB_ERR_FILE_READ_FAILED;
+    }
     if (!traj_read4(f, &vendor, 1))
     {
         fclose(f);
@@ -1793,12 +1857,13 @@ int pulseqlib_load_trajectory_cache(pulseqlib_trajectory *out,
     {
         traj_swap4(&version_major);
         traj_swap4(&version_minor);
+        traj_swap4(&version_revision);
         traj_swap4(&vendor);
         traj_swap4(&stored_size);
         traj_swap4(&num_sections);
     }
 
-    /* Find section 4 */
+    /* Find the trajectory section */
     found = 0;
     section_offset = 0;
     section_size = 0;

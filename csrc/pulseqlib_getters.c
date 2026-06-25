@@ -1040,7 +1040,7 @@ float pulseqlib_get_adc_kzero_us(
     if (bdef->adc_id < 0 || bdef->adc_id >= desc->num_unique_adcs)
         return -1.0f;
 
-    /* If the safety pass has already computed a k=0 anchor for this block
+    /* If calc_segment_timing has already computed a k=0 anchor for this block
      * (which handles both Cartesian N/2 and non-Cartesian kRSS-minimum),
      * return its segment-relative kzero_us directly. */
     if (seg->timing.adc_anchors && seg->timing.num_adc_anchors > 0)

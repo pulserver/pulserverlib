@@ -1037,14 +1037,12 @@ int   pulseqlib__get_scan_table_segments(pulseqlib_sequence_descriptor* desc, pu
 int   pulseqlib__build_freq_mod_flags(pulseqlib_sequence_descriptor* desc);
 void  pulseqlib__compute_scan_table_tr_start(pulseqlib_sequence_descriptor* desc);
 int   pulseqlib__build_label_table(pulseqlib_sequence_descriptor* desc, const pulseqlib__seq_file* seq);
+int   pulseqlib__calc_segment_timing(pulseqlib_sequence_descriptor* desc, pulseqlib_diagnostic* diag);
 
 /* --- pulseqlib_core.c (continued) --- */
 int   pulseqlib__get_collection_descriptors(pulseqlib_collection* desc_coll, pulseqlib_diagnostic* diag, const pulseqlib__seq_file_collection* coll, int parse_labels, int num_averages);
 void  pulseqlib_sequence_descriptor_free(pulseqlib_sequence_descriptor* desc);
 void  pulseqlib_segment_table_result_free(pulseqlib_segment_table_result* result);
-
-/* --- pulseqlib_safety.c --- */
-int   pulseqlib__calc_segment_timing(pulseqlib_sequence_descriptor* desc, pulseqlib_diagnostic* diag);
 
 /* --- pulseqlib_waveforms.c --- */
 
@@ -1084,7 +1082,7 @@ int   pulseqlib__find_unique_shot_passes(
 
 /* --- pulseqlib_cache.c --- */
 int   pulseqlib__try_read_cache(pulseqlib_collection* coll, const char* seq_path);
-int   pulseqlib__write_cache(const pulseqlib_collection* seq_coll, const char* seq_path);
+int   pulseqlib__write_cache(pulseqlib_collection* seq_coll, const char* seq_path);
 
 /* --- Helper to locate segment/block in collection --- */
 int pulseqlib__resolve_segment(
