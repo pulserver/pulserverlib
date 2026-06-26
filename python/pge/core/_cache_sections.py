@@ -190,14 +190,17 @@ class LabelLimits:
 
 @dataclass
 class EncodingSpace:
-    """One encoding space (mirrors mrdserver::EncodingSpace)."""
+    """One encoding space (mirrors mrdserver::EncodingSpace).
 
-    fov: tuple[float, float, float]
-    matrix: tuple[float, float, float]
-    nav_fov: tuple[float, float, float]
-    nav_matrix: tuple[float, float, float]
+    Stage 1.5c: fov/matrix/nav_fov/nav_matrix dropped -- geometry is sourced
+    from the DEFINITIONS section (id 0) by subseq_idx, not duplicated here.
+    geometry_tag distinguishes the primary encoding space (0) from a
+    navigator one (1) sharing the same subsequence.
+    """
+
     subseq_idx: int
     nav_subseq_offset: int
+    geometry_tag: int
     label_limits: dict[
         str, LabelLimits
     ]  # keys: slc phs rep avg seg set eco par lin acq
@@ -238,6 +241,9 @@ class TrajectoryInfo:
     kshots: list[list[float]]  # [num_shots][num_samples]
     encoding_spaces: list[EncodingSpace]
     table: list[TrajTableEntry]
+    # Stage 1.5c: rotation-matrix library folded into TRAJECTORY itself;
+    # table[].rotation_id indexes this directly (no ROTATIONS-section read).
+    rotations: list[tuple[float, ...]] = field(default_factory=list)
 
 
 # ── Builder from pybind dicts ─────────────────────────────────────────
@@ -406,12 +412,9 @@ def read_trajectory_info(seq_path: str | Path) -> TrajectoryInfo | None:
         num_es = _ri()
         encoding_spaces: list[EncodingSpace] = []
         for _ in range(num_es):
-            fov = _rf_n(3)
-            matrix = _rf_n(3)
-            nav_fov = _rf_n(3)
-            nav_matrix = _rf_n(3)
             subseq_idx = _ri()
             nav_subseq_offset = _ri()
+            geometry_tag = _ri()
             # 10 x {min, max} ints  =  20 ints
             ll_raw = _ri_n(20)
             label_limits = {
@@ -420,12 +423,9 @@ def read_trajectory_info(seq_path: str | Path) -> TrajectoryInfo | None:
             }
             encoding_spaces.append(
                 EncodingSpace(
-                    fov=fov,
-                    matrix=matrix,
-                    nav_fov=nav_fov,
-                    nav_matrix=nav_matrix,
                     subseq_idx=subseq_idx,
                     nav_subseq_offset=nav_subseq_offset,
+                    geometry_tag=geometry_tag,
                     label_limits=label_limits,
                 )
             )
@@ -476,8 +476,17 @@ def read_trajectory_info(seq_path: str | Path) -> TrajectoryInfo | None:
                 )
             )
 
+        # ── rotation-matrix library (folded in, Stage 1.5c) ────
+        num_rotations = _ri()
+        rotations: list[tuple[float, ...]] = [
+            _rf_n(9) for _ in range(num_rotations)
+        ]
+
         return TrajectoryInfo(
-            kshots=kshots, encoding_spaces=encoding_spaces, table=table
+            kshots=kshots,
+            encoding_spaces=encoding_spaces,
+            table=table,
+            rotations=rotations,
         )
 
     except struct.error:

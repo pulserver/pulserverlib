@@ -779,8 +779,21 @@ class SequenceCollection(pp.Sequence):
             lines.append(f'  Encoding spaces:    {len(ti.encoding_spaces)}')
             lines.append(f'  Table entries:      {len(ti.table)}')
             for ei, es in enumerate(ti.encoding_spaces):
-                fov_mm = tuple(round(v * 1e3, 1) for v in es.fov)
-                mat = tuple(int(v) for v in es.matrix)
+                # Stage 1.5c: FOV/matrix are no longer duplicated on the
+                # encoding space -- read the owning subsequence's own
+                # pypulseq [DEFINITIONS] (FOV/Matrix, or NavFOV/NavMatrix
+                # when geometry_tag == 1). Pulseq FOV is in METERS.
+                fov_mm = mat = None
+                if 0 <= es.subseq_idx < len(self._seqs):
+                    defs = self._seqs[es.subseq_idx].definitions
+                    fov_key = 'NavFOV' if es.geometry_tag == 1 else 'FOV'
+                    mat_key = 'NavMatrix' if es.geometry_tag == 1 else 'Matrix'
+                    fov_raw = defs.get(fov_key)
+                    mat_raw = defs.get(mat_key)
+                    if fov_raw is not None:
+                        fov_mm = tuple(round(float(v) * 1e3, 1) for v in fov_raw)
+                    if mat_raw is not None:
+                        mat = tuple(int(float(v)) for v in mat_raw)
                 lines.append(f'  ES {ei}: FOV={fov_mm} mm  matrix={mat}')
             lines.append('')
         else:

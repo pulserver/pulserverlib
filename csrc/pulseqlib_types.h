@@ -828,15 +828,18 @@ typedef struct pulseqlib_traj_table_entry
     int off;                /**< Pulseq LABELSET OFF flag (1=discard) */
 } pulseqlib_traj_table_entry;
 
-/** @brief Per-subsequence encoding-space descriptor. */
+/** @brief Per-subsequence encoding-space descriptor.
+ *
+ * Stage 1.5c: fov/matrix/nav_fov/nav_matrix dropped -- geometry is sourced
+ * from the DEFINITIONS section (id 0) by subseq_idx, not duplicated here.
+ * geometry_tag distinguishes the primary encoding space from a navigator
+ * one sharing the same subsequence (DEFINITIONS' NavFOV/NavMatrix kv apply
+ * when geometry_tag == 1). */
 typedef struct pulseqlib_encoding_space
 {
-    float fov[3];                        /**< field of view (mm)                    */
-    float matrix[3];                     /**< matrix size (voxels)                  */
-    float nav_fov[3];                    /**< navigator FOV (mm), 0 if none         */
-    float nav_matrix[3];                 /**< navigator matrix size, 0 if none      */
     int subseq_idx;                      /**< owning subsequence index              */
     int nav_subseq_offset;               /**< navigator subseq offset, 0 if none    */
+    int geometry_tag;                    /**< 0 = primary, 1 = navigator            */
     pulseqlib_label_limits label_limits; /**< per-encoding-space label limits */
 } pulseqlib_encoding_space;
 
@@ -848,6 +851,13 @@ typedef struct pulseqlib_trajectory
     pulseqlib_encoding_space *encoding_spaces;
     int num_adc_events;
     pulseqlib_traj_table_entry *table;
+    /* Stage 1.5c: rotation-matrix library folded into TRAJECTORY itself
+     * (copied from the owning descriptor's rotation_matrices[]) so the
+     * recon reader is self-contained and never reads the PSD-internal
+     * ROTATIONS section. table[].rotation_id indexes this array;
+     * pulseqlib_merge_trajectory offsets it like the kshot ids. */
+    int num_rotations;
+    float (*rotation_matrices)[9];
 } pulseqlib_trajectory;
 
 /* ================================================================== */

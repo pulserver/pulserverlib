@@ -1288,10 +1288,11 @@ extern "C"
     /**
      * @brief Merge one trajectory into another (append src into dst).
      *
-     * Appends kshots, encoding spaces, and table entries from @p src into
-     * @p dst.  Kshot IDs and encoding_space_ref values in the appended
-     * table entries are offset so they index correctly into the combined
-     * kshot library and encoding-space array.
+     * Appends kshots, encoding spaces, rotation matrices, and table entries
+     * from @p src into @p dst.  Kshot IDs, encoding_space_ref, and
+     * rotation_id values in the appended table entries are offset so they
+     * index correctly into the combined kshot library, encoding-space
+     * array, and rotation-matrix library (Stage 1.5c).
      *
      * @param[in,out] dst  Destination trajectory (accumulator).
      * @param[in]     src  Source trajectory to merge (unmodified).

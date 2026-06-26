@@ -1049,21 +1049,20 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection *coll,
         memset(out->encoding_spaces, 0,
                (size_t)num_es_local * sizeof(pulseqlib_encoding_space));
 
-        /* ES 0: normal scans */
-        memcpy(out->encoding_spaces[0].fov, desc->fov, sizeof(float) * 3);
-        memcpy(out->encoding_spaces[0].matrix, desc->matrix, sizeof(float) * 3);
-        memcpy(out->encoding_spaces[0].nav_fov, desc->nav_fov, sizeof(float) * 3);
-        memcpy(out->encoding_spaces[0].nav_matrix, desc->nav_matrix, sizeof(float) * 3);
+        /* ES 0: normal scans. Geometry (fov/matrix) is no longer embedded
+         * here -- the recon reads it from DEFINITIONS(0) by subseq_idx
+         * (Stage 1.5c; see pulseqlib_encoding_space doc comment). */
         out->encoding_spaces[0].subseq_idx = subseq_idx;
         out->encoding_spaces[0].nav_subseq_offset = has_nav ? 1 : 0;
+        out->encoding_spaces[0].geometry_tag = 0;
 
-        /* ES 1 (if nav): navigator scans — use nav_fov / nav_matrix */
+        /* ES 1 (if nav): navigator scans -- DEFINITIONS' NavFOV/NavMatrix
+         * apply (geometry_tag == 1). */
         if (has_nav)
         {
-            memcpy(out->encoding_spaces[1].fov, desc->nav_fov, sizeof(float) * 3);
-            memcpy(out->encoding_spaces[1].matrix, desc->nav_matrix, sizeof(float) * 3);
             out->encoding_spaces[1].subseq_idx = subseq_idx;
             out->encoding_spaces[1].nav_subseq_offset = 0;
+            out->encoding_spaces[1].geometry_tag = 1;
         }
 
         /* Compute per-encoding-space label_limits from table entries */
@@ -1113,6 +1112,21 @@ int pulseqlib_compute_trajectory(const pulseqlib_collection *coll,
                 }
             }
         }
+    }
+
+    /* Stage 1.5c: copy this subsequence's rotation-matrix library onto the
+     * trajectory itself (table[].rotation_id already indexes it directly --
+     * no offsetting needed here; pulseqlib_merge_trajectory offsets it when
+     * appending a second subsequence's trajectory). */
+    if (desc->num_rotations > 0 && desc->rotation_matrices)
+    {
+        out->rotation_matrices = (float (*)[9])PULSEQLIB_ALLOC(
+            (size_t)desc->num_rotations * sizeof(float[9]));
+        if (!out->rotation_matrices)
+            goto compute_fail;
+        memcpy(out->rotation_matrices, desc->rotation_matrices,
+               (size_t)desc->num_rotations * sizeof(float[9]));
+        out->num_rotations = desc->num_rotations;
     }
 
     PULSEQLIB_FREE(kx_buf);
@@ -1168,6 +1182,10 @@ void pulseqlib_free_trajectory(pulseqlib_trajectory *traj)
     PULSEQLIB_FREE(traj->table);
     traj->table = NULL;
     traj->num_adc_events = 0;
+
+    PULSEQLIB_FREE(traj->rotation_matrices);
+    traj->rotation_matrices = NULL;
+    traj->num_rotations = 0;
 }
 
 /* ================================================================== */
@@ -1177,13 +1195,28 @@ void pulseqlib_free_trajectory(pulseqlib_trajectory *traj)
 int pulseqlib_merge_trajectory(pulseqlib_trajectory *dst,
                                const pulseqlib_trajectory *src)
 {
-    int kshot_offset, es_offset, i;
+    int kshot_offset, es_offset, rotation_offset, i;
 
     if (!dst || !src)
         return PULSEQLIB_ERR_NULL_POINTER;
 
     kshot_offset = dst->kshots.num_shots;
     es_offset = dst->num_encoding_spaces;
+    rotation_offset = dst->num_rotations;
+
+    /* ---- Append rotation-matrix library ---- */
+    if (src->num_rotations > 0)
+    {
+        int new_count = rotation_offset + src->num_rotations;
+        float (*new_rot)[9] = (float (*)[9])realloc(
+            dst->rotation_matrices, (size_t)new_count * sizeof(float[9]));
+        if (!new_rot)
+            return PULSEQLIB_ERR_ALLOC_FAILED;
+        memcpy(new_rot[rotation_offset], src->rotation_matrices,
+               (size_t)src->num_rotations * sizeof(float[9]));
+        dst->rotation_matrices = new_rot;
+        dst->num_rotations = new_count;
+    }
 
     /* ---- Append kshots ---- */
     if (src->kshots.num_shots > 0)
@@ -1244,6 +1277,8 @@ int pulseqlib_merge_trajectory(pulseqlib_trajectory *dst,
             if (e->kz_shot_id >= 0)
                 e->kz_shot_id += kshot_offset;
             e->encoding_space_ref += es_offset;
+            if (e->rotation_id >= 0)
+                e->rotation_id += rotation_offset;
         }
         dst->num_adc_events = new_count;
     }
@@ -1410,17 +1445,11 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory *traj,
     for (i = 0; i < traj->num_encoding_spaces; ++i)
     {
         const pulseqlib_encoding_space *es = &traj->encoding_spaces[i];
-        if (!traj_write4(f, es->fov, 3))
-            goto tw_fail;
-        if (!traj_write4(f, es->matrix, 3))
-            goto tw_fail;
-        if (!traj_write4(f, es->nav_fov, 3))
-            goto tw_fail;
-        if (!traj_write4(f, es->nav_matrix, 3))
-            goto tw_fail;
         if (!traj_write4(f, &es->subseq_idx, 1))
             goto tw_fail;
         if (!traj_write4(f, &es->nav_subseq_offset, 1))
+            goto tw_fail;
+        if (!traj_write4(f, &es->geometry_tag, 1))
             goto tw_fail;
         if (!traj_write4(f, &es->label_limits, sizeof(pulseqlib_label_limits) / sizeof(int)))
             goto tw_fail;
@@ -1490,6 +1519,16 @@ int pulseqlib_write_trajectory_cache(const pulseqlib_trajectory *traj,
         if (!traj_write4(f, &e->encoding_space_ref, 1))
             goto tw_fail;
         if (!traj_write4(f, &e->off, 1))
+            goto tw_fail;
+    }
+
+    /* Stage 1.5c: rotation-matrix library, folded in so the recon reader
+     * is self-contained (no separate ROTATIONS-section read). */
+    if (!traj_write4(f, &traj->num_rotations, 1))
+        goto tw_fail;
+    if (traj->num_rotations > 0)
+    {
+        if (!traj_write4(f, traj->rotation_matrices, traj->num_rotations * 9))
             goto tw_fail;
     }
 
@@ -1765,23 +1804,17 @@ int pulseqlib_load_trajectory_cache(pulseqlib_trajectory *out,
         for (i = 0; i < out->num_encoding_spaces; ++i)
         {
             pulseqlib_encoding_space *es = &out->encoding_spaces[i];
-            if (!traj_read4(f, es->fov, 3))
-                goto lr_fail;
-            if (!traj_read4(f, es->matrix, 3))
-                goto lr_fail;
-            if (!traj_read4(f, es->nav_fov, 3))
-                goto lr_fail;
-            if (!traj_read4(f, es->nav_matrix, 3))
-                goto lr_fail;
             if (!traj_read4(f, &es->subseq_idx, 1))
                 goto lr_fail;
             if (!traj_read4(f, &es->nav_subseq_offset, 1))
                 goto lr_fail;
+            if (!traj_read4(f, &es->geometry_tag, 1))
+                goto lr_fail;
             if (!traj_read4(f, &es->label_limits, sizeof(pulseqlib_label_limits) / sizeof(int)))
                 goto lr_fail;
-            /* swap all fields: 3+3+3+3 floats + 2 ints + 20 ints (label_limits) = 34 words */
+            /* swap all fields: 3 ints + 20 ints (label_limits) = 23 words */
             if (do_swap)
-                traj_swap4_array(es->fov, 34);
+                traj_swap4_array(&es->subseq_idx, 23);
         }
     }
 
@@ -1866,6 +1899,23 @@ int pulseqlib_load_trajectory_cache(pulseqlib_trajectory *out,
             if (do_swap)
                 traj_swap4_array(&e->center_sample, 4);
         }
+    }
+
+    /* Stage 1.5c: folded-in rotation-matrix library. */
+    if (!traj_read4(f, &out->num_rotations, 1))
+        goto lr_fail;
+    if (do_swap)
+        traj_swap4(&out->num_rotations);
+    if (out->num_rotations > 0)
+    {
+        out->rotation_matrices = (float (*)[9])PULSEQLIB_ALLOC(
+            (size_t)out->num_rotations * sizeof(float[9]));
+        if (!out->rotation_matrices)
+            goto lr_fail;
+        if (!traj_read4(f, out->rotation_matrices, out->num_rotations * 9))
+            goto lr_fail;
+        if (do_swap)
+            traj_swap4_array(out->rotation_matrices, out->num_rotations * 9);
     }
 
     fclose(f);
