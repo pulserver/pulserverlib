@@ -455,6 +455,60 @@ static int expand_block_axis_grad(
  *
  * Returns per-axis k-space arrays of length adc_num_samples.
  */
+/* Sum block durations desc->block_table[num_prep .. block_table_idx-1]
+ * (us) -- the time offset of block_table_idx from the start of the main
+ * TR window, on the same raster the canonical k-space arrays were built
+ * on (pulseqlib__calc_segment_timing, pulseqlib_structure.c). */
+static float traj_block_time_offset_in_tr_us(
+    const pulseqlib_sequence_descriptor *desc, int num_prep, int block_table_idx)
+{
+    float t = 0.0f;
+    int i;
+    for (i = num_prep; i < block_table_idx; ++i)
+    {
+        const pulseqlib_block_table_element *b = &desc->block_table[i];
+        t += (b->duration_us >= 0)
+                 ? (float)b->duration_us
+                 : (float)desc->block_definitions[b->id].duration_us;
+    }
+    return t;
+}
+
+/* Slice + linearly resample one axis of the retained full-TR canonical
+ * (ZERO_VAR) k-space array onto the ADC sample centres. NO re-centering:
+ * k=0 is physically set by the excitation reset baked into the canonical
+ * array (pulseqlib__calc_segment_timing); per-line/per-shot offsets are
+ * applied recon-side from the table's gradient-amplitude metadata. */
+static void traj_slice_canonical_axis(
+    const float *canonical_k, int n_samples, float dt_us,
+    float block_time_offset_us, int adc_delay_us, float adc_dwell_us,
+    int adc_num_samples, float *out_k)
+{
+    int i, lo, hi;
+    float t_us, fi, frac;
+
+    for (i = 0; i < adc_num_samples; ++i)
+    {
+        t_us = block_time_offset_us + (float)adc_delay_us +
+               ((float)i + 0.5f) * adc_dwell_us;
+        fi = t_us / dt_us;
+        if (fi <= 0.0f)
+        {
+            out_k[i] = canonical_k[0];
+            continue;
+        }
+        lo = (int)fi;
+        if (lo >= n_samples - 1)
+        {
+            out_k[i] = canonical_k[n_samples - 1];
+            continue;
+        }
+        hi = lo + 1;
+        frac = fi - (float)lo;
+        out_k[i] = canonical_k[lo] * (1.0f - frac) + canonical_k[hi] * frac;
+    }
+}
+
 static int compute_block_kspace(
     const pulseqlib_sequence_descriptor *desc,
     int block_table_idx,
@@ -473,14 +527,11 @@ static int compute_block_kspace(
     int adc_num_samples, adc_delay_us;
     float adc_dwell_us;
     float grad_raster_us;
-    int block_dur_us;
-    float dt_s;
-    float *kx_full, *ky_full, *kz_full;
+    int num_prep, tr_size, pos_in_tr;
     int i;
 
-    kx_full = NULL;
-    ky_full = NULL;
-    kz_full = NULL;
+    (void)kzero_index; /* no longer used -- canonical array carries its own k=0 */
+
     bte = &desc->block_table[block_table_idx];
     /* block_table[].adc_id holds the RAW seq ADC index (per-instance);
      * the deduped index into desc->adc_definitions[] lives in
@@ -500,51 +551,20 @@ static int compute_block_kspace(
     adc_delay_us = adc_def->delay;
 
     grad_raster_us = desc->grad_raster_us;
-    /* Per-instance duration_us is -1 when the block uses the deduped
-     * definition's duration; fall back to block_definitions[bte->id]. */
-    block_dur_us = (bte->duration_us >= 0)
-                       ? bte->duration_us
-                       : desc->block_definitions[bte->id].duration_us;
 
-    /* Build a piecewise-linear-EXACT integration grid.
-     *
-     * g(t) on each axis is piecewise linear: every breakpoint comes
-     * from one of three places (matching the truth integrator in
-     * TruthBuilder.exportTrajectory):
-     *
-     *   - TRAP edges: delay, delay+rise, delay+rise+flat,
-     *                 delay+rise+flat+fall (samples on raster EDGES).
-     *   - ARB uniform (shape only):       delay + (i + 0.5) * raster
-     *                                     (samples on raster CENTRES;
-     *                                      mr.makeArbitraryGrad puts
-     *                                      tt = ((1:N) - 0.5) * raster).
-     *   - Extended trap (shape + time):   delay + decompressed_tt[i]
-     *                                     (samples on raster EDGES,
-     *                                      from the time shape).
-     *
-     * Trapezoidal integration on a grid that contains every breakpoint
-     * is analytically exact for piecewise-linear g(t).  A coarse uniform
-     * raster snaps off-raster edges to the wrong sample and biases k.
-     *
-     * decompress_block_arb already returns the correct (xp_us, fp_hzm)
-     * pairs for both ARB modes; for TRAPs we synthesize the four edge
-     * times here.  Output k_full[] is indexed by the merged grid. */
-    dt_s = grad_raster_us * 1e-6f; /* (kept for potential future use) */
-    (void)dt_s;
+    /* ---- Classify each axis: constant g(t) during the ADC window? ----
+     * Sampled analytically (TRAP exact, ARB via decompressed shape) --
+     * matches the truth integrator's criterion. Used by the caller as the
+     * cartesian-shot (-1) classifier; unrelated to the k VALUE computation
+     * below (which now slices the retained canonical array). */
     {
-        float *t_grid = NULL;
-        float *gx_full = NULL, *gy_full = NULL, *gz_full = NULL;
-        int n_steps = 0;
-
-        /* Per-axis breakpoint sources. */
+        /* Per-axis breakpoint sources (ARB only; TRAP is analytic). */
         float *bp_x = NULL, *fpx = NULL;
         int nx = 0;
         float *bp_y = NULL, *fpy = NULL;
         int ny = 0;
         float *bp_z = NULL, *fpz = NULL;
         int nz = 0;
-        float trap_bp_x[4], trap_bp_y[4], trap_bp_z[4];
-        int n_trap_x = 0, n_trap_y = 0, n_trap_z = 0;
 
         int rx = decompress_block_arb(desc, bte->gx_id, grad_raster_us, &bp_x, &fpx, &nx);
         int ry = decompress_block_arb(desc, bte->gy_id, grad_raster_us, &bp_y, &fpy, &ny);
@@ -552,173 +572,6 @@ static int compute_block_kspace(
         (void)rx;
         (void)ry;
         (void)rz;
-
-        /* TRAP breakpoints (only when axis is TRAP, not ARB and not idle). */
-        {
-            int gid[3];
-            int t = 0;
-            int *ntr[3];
-            float (*bp_arr[3])[4];
-            gid[0] = bte->gx_id;
-            gid[1] = bte->gy_id;
-            gid[2] = bte->gz_id;
-            ntr[0] = &n_trap_x;
-            ntr[1] = &n_trap_y;
-            ntr[2] = &n_trap_z;
-            bp_arr[0] = &trap_bp_x;
-            bp_arr[1] = &trap_bp_y;
-            bp_arr[2] = &trap_bp_z;
-            for (t = 0; t < 3; ++t)
-            {
-                const pulseqlib_grad_definition *gd2;
-                if (gid[t] < 0 || gid[t] >= desc->grad_table_size)
-                    continue;
-                gd2 = &desc->grad_definitions[desc->grad_table[gid[t]].id];
-                if (gd2->type != 0)
-                    continue; /* ARB; handled by decompress_block_arb */
-                {
-                    float d = (float)gd2->delay;
-                    float r = (float)gd2->rise_time_or_unused;
-                    float fl = (float)gd2->flat_time_or_unused;
-                    float fa = (float)gd2->fall_time_or_num_uncompressed_samples;
-                    (*bp_arr[t])[0] = d;
-                    (*bp_arr[t])[1] = d + r;
-                    (*bp_arr[t])[2] = d + r + fl;
-                    (*bp_arr[t])[3] = d + r + fl + fa;
-                    *ntr[t] = 4;
-                }
-            }
-        }
-
-        /* Build merged time grid: 0, blk_dur, raster ticks, all
-         * per-axis breakpoints, and ADC sample centres (so resampling
-         * lands on grid points). */
-        {
-            int cap, idx;
-            int n_raster, j;
-            float t_us;
-            float *tmp;
-            int fp_int = 0;
-            (void)fp_int;
-            n_raster = (int)((float)block_dur_us / grad_raster_us) + 1;
-            if (n_raster < 2)
-                n_raster = 2;
-            cap = 2 + n_raster + nx + ny + nz + n_trap_x + n_trap_y + n_trap_z + adc_num_samples;
-            tmp = (float *)PULSEQLIB_ALLOC((size_t)cap * sizeof(float));
-            if (!tmp)
-                goto bp_alloc_fail;
-            idx = 0;
-            tmp[idx++] = 0.0f;
-            tmp[idx++] = (float)block_dur_us;
-            for (j = 0; j < n_raster; ++j)
-                tmp[idx++] = (float)j * grad_raster_us;
-            for (j = 0; j < nx; ++j)
-                tmp[idx++] = bp_x[j];
-            for (j = 0; j < ny; ++j)
-                tmp[idx++] = bp_y[j];
-            for (j = 0; j < nz; ++j)
-                tmp[idx++] = bp_z[j];
-            for (j = 0; j < n_trap_x; ++j)
-                tmp[idx++] = trap_bp_x[j];
-            for (j = 0; j < n_trap_y; ++j)
-                tmp[idx++] = trap_bp_y[j];
-            for (j = 0; j < n_trap_z; ++j)
-                tmp[idx++] = trap_bp_z[j];
-            for (j = 0; j < adc_num_samples; ++j)
-            {
-                t_us = (float)adc_delay_us + ((float)j + 0.5f) * adc_dwell_us;
-                tmp[idx++] = t_us;
-            }
-            /* Clamp to [0, blk_dur] and sort/unique (insertion sort is fine
-             * — block-level grids are small, O(few hundred). */
-            for (j = 0; j < idx; ++j)
-            {
-                if (tmp[j] < 0.0f)
-                    tmp[j] = 0.0f;
-                if (tmp[j] > (float)block_dur_us)
-                    tmp[j] = (float)block_dur_us;
-            }
-            {
-                int a;
-                for (a = 1; a < idx; ++a)
-                {
-                    float key = tmp[a];
-                    int b2 = a - 1;
-                    while (b2 >= 0 && tmp[b2] > key)
-                    {
-                        tmp[b2 + 1] = tmp[b2];
-                        --b2;
-                    }
-                    tmp[b2 + 1] = key;
-                }
-            }
-            {
-                int a, w = 0;
-                const float eps_us = 1e-4f; /* 0.1 ns */
-                for (a = 0; a < idx; ++a)
-                {
-                    if (w == 0 || tmp[a] - tmp[w - 1] > eps_us)
-                        tmp[w++] = tmp[a];
-                }
-                idx = w;
-            }
-            n_steps = idx;
-            t_grid = tmp;
-        }
-
-        if (n_steps < 2)
-        {
-            PULSEQLIB_FREE(t_grid);
-            goto bp_alloc_fail;
-        }
-
-        gx_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        gy_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        gz_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        kx_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        ky_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        kz_full = (float *)PULSEQLIB_ALLOC((size_t)n_steps * sizeof(float));
-        if (!gx_full || !gy_full || !gz_full || !kx_full || !ky_full || !kz_full)
-        {
-            PULSEQLIB_FREE(t_grid);
-            PULSEQLIB_FREE(gx_full);
-            PULSEQLIB_FREE(gy_full);
-            PULSEQLIB_FREE(gz_full);
-            if (bp_x)
-                PULSEQLIB_FREE(bp_x);
-            if (fpx)
-                PULSEQLIB_FREE(fpx);
-            if (bp_y)
-                PULSEQLIB_FREE(bp_y);
-            if (fpy)
-                PULSEQLIB_FREE(fpy);
-            if (bp_z)
-                PULSEQLIB_FREE(bp_z);
-            if (fpz)
-                PULSEQLIB_FREE(fpz);
-            goto alloc_fail;
-        }
-        /* Sample g analytically at every breakpoint (sample_grad_axis_at
-         * is exact for both TRAP and ARB; matches truth's
-         * sampleGradAtTimes). */
-        for (i = 0; i < n_steps; ++i)
-        {
-            gx_full[i] = sample_grad_axis_at(desc, bte->gx_id, bp_x, fpx, nx, t_grid[i]);
-            gy_full[i] = sample_grad_axis_at(desc, bte->gy_id, bp_y, fpy, ny, t_grid[i]);
-            gz_full[i] = sample_grad_axis_at(desc, bte->gz_id, bp_z, fpz, nz, t_grid[i]);
-        }
-
-        /* Trapezoidal cumsum (analytically exact on this grid). */
-        kx_full[0] = 0.0f;
-        ky_full[0] = 0.0f;
-        kz_full[0] = 0.0f;
-        for (i = 1; i < n_steps; ++i)
-        {
-            float dt_seg = (t_grid[i] - t_grid[i - 1]) * 1e-6f;
-            kx_full[i] = kx_full[i - 1] + 0.5f * (gx_full[i - 1] + gx_full[i]) * dt_seg;
-            ky_full[i] = ky_full[i - 1] + 0.5f * (gy_full[i - 1] + gy_full[i]) * dt_seg;
-            kz_full[i] = kz_full[i - 1] + 0.5f * (gz_full[i - 1] + gz_full[i]) * dt_seg;
-        }
 
         /* Per-axis cartesian classifier: g(t) constant across the
          * ACTIVE ADC window?  Sample g ANALYTICALLY at t = adc.delay +
@@ -762,6 +615,19 @@ static int compute_block_kspace(
             gxc = (xs < 1e-9f) ? 1 : ((xmax - xmin) / xs < 1e-3f);
             gyc = (ys < 1e-9f) ? 1 : ((ymax - ymin) / ys < 1e-3f);
             gzc = (zs < 1e-9f) ? 1 : ((zmax - zmin) / zs < 1e-3f);
+            /* Stage 1.5c point 4 (radial classifier): when this block has a
+             * rotation, never collapse an active axis to cartesian (-1) --
+             * the rotated frame needs the real shot. Inactive (absent)
+             * axes stay cartesian regardless (g(t) is identically zero). */
+            if (bte->rotation_id >= 0)
+            {
+                if (bte->gx_id >= 0)
+                    gxc = 0;
+                if (bte->gy_id >= 0)
+                    gyc = 0;
+                if (bte->gz_id >= 0)
+                    gzc = 0;
+            }
             if (getenv("PULSEQLIB_TRAJ_DEBUG"))
             {
                 fprintf(stderr, "  cls blk=%d xmin=%.1f xmax=%.1f xs=%.1f gxc=%d  ymin=%.1f ymax=%.1f gyc=%d\n",
@@ -775,59 +641,6 @@ static int compute_block_kspace(
                 *out_gz_const = gzc;
         }
 
-        /* Resample to ADC sample centres via linear interp on the
-         * breakpoint grid (k is bit-exact at every breakpoint). */
-        {
-            float t_us;
-            int lo, hi, mid;
-            float frac;
-            for (i = 0; i < adc_num_samples; ++i)
-            {
-                t_us = (float)adc_delay_us + ((float)i + 0.5f) * adc_dwell_us;
-                if (t_us <= t_grid[0])
-                {
-                    out_kx[i] = kx_full[0];
-                    out_ky[i] = ky_full[0];
-                    out_kz[i] = kz_full[0];
-                    continue;
-                }
-                if (t_us >= t_grid[n_steps - 1])
-                {
-                    out_kx[i] = kx_full[n_steps - 1];
-                    out_ky[i] = ky_full[n_steps - 1];
-                    out_kz[i] = kz_full[n_steps - 1];
-                    continue;
-                }
-                lo = 0;
-                hi = n_steps - 1;
-                while (hi - lo > 1)
-                {
-                    mid = (lo + hi) >> 1;
-                    if (t_grid[mid] <= t_us)
-                        lo = mid;
-                    else
-                        hi = mid;
-                }
-                if (t_grid[hi] == t_grid[lo])
-                {
-                    out_kx[i] = kx_full[lo];
-                    out_ky[i] = ky_full[lo];
-                    out_kz[i] = kz_full[lo];
-                }
-                else
-                {
-                    frac = (t_us - t_grid[lo]) / (t_grid[hi] - t_grid[lo]);
-                    out_kx[i] = kx_full[lo] * (1.0f - frac) + kx_full[hi] * frac;
-                    out_ky[i] = ky_full[lo] * (1.0f - frac) + ky_full[hi] * frac;
-                    out_kz[i] = kz_full[lo] * (1.0f - frac) + kz_full[hi] * frac;
-                }
-            }
-        }
-
-        PULSEQLIB_FREE(t_grid);
-        PULSEQLIB_FREE(gx_full);
-        PULSEQLIB_FREE(gy_full);
-        PULSEQLIB_FREE(gz_full);
         if (bp_x)
             PULSEQLIB_FREE(bp_x);
         if (fpx)
@@ -840,60 +653,49 @@ static int compute_block_kspace(
             PULSEQLIB_FREE(bp_z);
         if (fpz)
             PULSEQLIB_FREE(fpz);
-        goto post_resample;
-
-    bp_alloc_fail:
-        if (bp_x)
-            PULSEQLIB_FREE(bp_x);
-        if (fpx)
-            PULSEQLIB_FREE(fpx);
-        if (bp_y)
-            PULSEQLIB_FREE(bp_y);
-        if (fpy)
-            PULSEQLIB_FREE(fpy);
-        if (bp_z)
-            PULSEQLIB_FREE(bp_z);
-        if (fpz)
-            PULSEQLIB_FREE(fpz);
-        goto alloc_fail;
     }
 
-post_resample:
+    /* ---- k VALUE computation: slice the retained full-TR canonical
+     * (ZERO_VAR) array instead of re-integrating this block's actual
+     * gradient waveform (Stage 1.5c). NO re-centering -- k=0 is already
+     * physically set by the excitation reset baked into the canonical
+     * array by pulseqlib__calc_segment_timing. ----
+     * Only valid for blocks inside the main TR window (num_prep ..
+     * num_prep+tr_size); prep/cooldown blocks fall back to all-zero,
+     * mirroring the pre-existing seg_time_offset=0 degradation for
+     * out-of-window segments in calc_segment_timing. */
+    num_prep = desc->tr_descriptor.num_prep_blocks;
+    tr_size = desc->tr_descriptor.tr_size;
+    pos_in_tr = block_table_idx - num_prep;
 
-    /* Anchor each axis so k = 0 at the kzero ADC sample.  This is what
-     * the recon expects: every readout's k-space coordinate is reported
-     * relative to its own k-space centre.  Caller passes the segment-
-     * timing-derived kzero index. */
+    if (desc->has_canonical_kspace && pos_in_tr >= 0 && pos_in_tr < tr_size)
     {
-        int kz = kzero_index;
-        float ax, ay, az;
-        if (kz < 0)
-            kz = 0;
-        if (kz >= adc_num_samples)
-            kz = adc_num_samples - 1;
-        ax = out_kx[kz];
-        ay = out_ky[kz];
-        az = out_kz[kz];
+        float block_time_offset_us =
+            traj_block_time_offset_in_tr_us(desc, num_prep, block_table_idx);
+
+        traj_slice_canonical_axis(desc->canonical_kx, desc->canonical_kspace_num_samples,
+                                  desc->canonical_kspace_dt_us, block_time_offset_us,
+                                  adc_delay_us, adc_dwell_us, adc_num_samples, out_kx);
+        traj_slice_canonical_axis(desc->canonical_ky, desc->canonical_kspace_num_samples,
+                                  desc->canonical_kspace_dt_us, block_time_offset_us,
+                                  adc_delay_us, adc_dwell_us, adc_num_samples, out_ky);
+        traj_slice_canonical_axis(desc->canonical_kz, desc->canonical_kspace_num_samples,
+                                  desc->canonical_kspace_dt_us, block_time_offset_us,
+                                  adc_delay_us, adc_dwell_us, adc_num_samples, out_kz);
+    }
+    else
+    {
         for (i = 0; i < adc_num_samples; ++i)
         {
-            out_kx[i] -= ax;
-            out_ky[i] -= ay;
-            out_kz[i] -= az;
+            out_kx[i] = 0.0f;
+            out_ky[i] = 0.0f;
+            out_kz[i] = 0.0f;
         }
     }
 
     *out_num_samples = adc_num_samples;
 
-    PULSEQLIB_FREE(kx_full);
-    PULSEQLIB_FREE(ky_full);
-    PULSEQLIB_FREE(kz_full);
     return PULSEQLIB_SUCCESS;
-
-alloc_fail:
-    PULSEQLIB_FREE(kx_full);
-    PULSEQLIB_FREE(ky_full);
-    PULSEQLIB_FREE(kz_full);
-    return PULSEQLIB_ERR_ALLOC_FAILED;
 }
 
 /* ================================================================== */

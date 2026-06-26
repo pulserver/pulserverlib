@@ -122,6 +122,13 @@ void pulseqlib_sequence_descriptor_free(pulseqlib_sequence_descriptor* d)
         d->definitions = NULL;
     }
     d->num_definitions = 0;
+
+    if (d->canonical_kx) { PULSEQLIB_FREE(d->canonical_kx); d->canonical_kx = NULL; }
+    if (d->canonical_ky) { PULSEQLIB_FREE(d->canonical_ky); d->canonical_ky = NULL; }
+    if (d->canonical_kz) { PULSEQLIB_FREE(d->canonical_kz); d->canonical_kz = NULL; }
+    d->has_canonical_kspace = 0;
+    d->canonical_kspace_num_samples = 0;
+    d->canonical_kspace_dt_us = 0.0f;
 }
 
 void pulseqlib_collection_free(

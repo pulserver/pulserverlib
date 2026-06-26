@@ -2657,6 +2657,23 @@ int pulseqlib__calc_segment_timing(
         }
     }
 
+    /* Transfer ownership of the full-TR canonical (ZERO_VAR) k-space arrays
+     * to the descriptor for Stage 1.5c TRAJECTORY base-shot slicing. Local
+     * kx/ky/kz are nulled so the cleanup paths below become no-ops for them
+     * (krss/kzero_indices/refocus/excite stay locally owned and freed). */
+    if (has_kspace)
+    {
+        desc->has_canonical_kspace = 1;
+        desc->canonical_kspace_num_samples = n_samples;
+        desc->canonical_kspace_dt_us = dt_us;
+        desc->canonical_kx = kx;
+        desc->canonical_ky = ky;
+        desc->canonical_kz = kz;
+        kx = NULL;
+        ky = NULL;
+        kz = NULL;
+    }
+
     /* ---- Step B: for each segment, collect RF and ADC anchors ---- */
     for (seg_idx = 0; seg_idx < desc->num_unique_segments; ++seg_idx)
     {

@@ -21,6 +21,7 @@
  * COMMON establishes the collection + descriptor framing; ROTATIONS, SHAPES
  * and SCANLOOP augment the descriptors already allocated by COMMON, so COMMON
  * must always be read first. */
+#define PULSEQLIB_CACHE_SECTION_DEFINITIONS 0
 #define PULSEQLIB_CACHE_SECTION_COMMON 1
 #define PULSEQLIB_CACHE_SECTION_ROTATIONS 2
 #define PULSEQLIB_CACHE_SECTION_SHAPES 3
@@ -546,7 +547,29 @@ static int write_common(FILE *f, const pulseqlib_sequence_descriptor *d)
     }
     fwrite(&d->label_limits, sizeof(pulseqlib_label_limits), 1, f);
 
-    /* generic definitions */
+    /* generic [DEFINITIONS] kv: emitted in the DEFINITIONS section
+     * (write_definitions). COMMON keeps only the structured fov/matrix scalars
+     * above for PSD-internal use. */
+
+    /* scan_table + variable_grad_flags: emitted in the SCANLOOP section
+     * (write_scanloop) */
+
+    return 1;
+}
+
+/* ------ Serialize the DEFINITIONS region of a descriptor ------ */
+/* Per-subsequence [DEFINITIONS]: the generic length-prefixed name->values kv,
+ * copied verbatim from the source .seq file's [DEFINITIONS] block (recon's
+ * authoritative ISMRMRD-header override + per-ES seq params). FOV/Matrix/
+ * NavFOV/NavMatrix are already present in this kv as the original pulseq
+ * string entries (parsing them into d->fov/matrix/nav_fov/nav_matrix for
+ * PSD-internal use does not remove them here) — no separate geometry block
+ * needed; COMMON's structured floats stay PSD-internal only. */
+
+static int write_definitions(FILE *f, const pulseqlib_sequence_descriptor *d)
+{
+    int i;
+
     fwrite(&d->num_definitions, sizeof(int), 1, f);
     for (i = 0; i < d->num_definitions; ++i)
     {
@@ -564,9 +587,6 @@ static int write_common(FILE *f, const pulseqlib_sequence_descriptor *d)
             }
         }
     }
-
-    /* scan_table + variable_grad_flags: emitted in the SCANLOOP section
-     * (write_scanloop) */
 
     return 1;
 }
@@ -1253,10 +1273,31 @@ static int read_common(FILE *f, pulseqlib_sequence_descriptor *d, int do_swap)
     if (do_swap)
         swap4_array(&d->label_limits, (int)(sizeof(pulseqlib_label_limits) / 4));
 
-    /* generic definitions */
+    /* generic [DEFINITIONS] kv: read from the DEFINITIONS section
+     * (read_definitions). Initialised empty here; COMMON no longer carries them. */
     d->num_definitions = 0;
     d->definitions = NULL;
-    if (fread(&d->num_definitions, sizeof(int), 1, f) == 1 && do_swap)
+
+    /* scan_table + variable_grad_flags: read from the SCANLOOP section
+     * (read_scanloop) */
+
+    return 1;
+}
+
+/* ------ Deserialize the DEFINITIONS region into an existing descriptor ------ */
+/* Mirrors write_definitions: generic kv into d->definitions, verbatim. The
+ * recon C++ reader sources FOV/Matrix/NavFOV/NavMatrix directly from these
+ * kv entries (no separate geometry block — see write_definitions). */
+
+static int read_definitions(FILE *f, pulseqlib_sequence_descriptor *d, int do_swap)
+{
+    int i;
+
+    d->num_definitions = 0;
+    d->definitions = NULL;
+    if (fread(&d->num_definitions, sizeof(int), 1, f) != 1)
+        return 0;
+    if (do_swap)
         swap4(&d->num_definitions);
     if (d->num_definitions > 0)
     {
@@ -1312,9 +1353,6 @@ static int read_common(FILE *f, pulseqlib_sequence_descriptor *d, int do_swap)
             }
         }
     }
-
-    /* scan_table + variable_grad_flags: read from the SCANLOOP section
-     * (read_scanloop) */
 
     return 1;
 }
@@ -1544,6 +1582,11 @@ static int write_augment_payload(FILE *f,
     return 1;
 }
 
+static int write_definitions_payload(FILE *f, const pulseqlib_collection *coll)
+{
+    return write_augment_payload(f, coll, write_definitions);
+}
+
 static int write_rotations_payload(FILE *f, const pulseqlib_collection *coll)
 {
     return write_augment_payload(f, coll, write_rotations);
@@ -1572,17 +1615,19 @@ static int write_cache(const char *cache_path,
     int version_major, version_minor, version_revision;
     int num_sections, i;
     long entries_pos, end_pos;
-    pulseqlib_cache_section_entry entries[4];
-    static const int section_ids[4] = {
+    pulseqlib_cache_section_entry entries[5];
+    static const int section_ids[5] = {
         PULSEQLIB_CACHE_SECTION_COMMON,
         PULSEQLIB_CACHE_SECTION_ROTATIONS,
         PULSEQLIB_CACHE_SECTION_SHAPES,
-        PULSEQLIB_CACHE_SECTION_SCANLOOP};
-    static const payload_writer_fn writers[4] = {
+        PULSEQLIB_CACHE_SECTION_SCANLOOP,
+        PULSEQLIB_CACHE_SECTION_DEFINITIONS};
+    static const payload_writer_fn writers[5] = {
         write_common_payload,
         write_rotations_payload,
         write_shapes_payload,
-        write_scanloop_payload};
+        write_scanloop_payload,
+        write_definitions_payload};
 
     f = fopen(cache_path, "wb");
     if (!f)
@@ -1593,7 +1638,7 @@ static int write_cache(const char *cache_path,
     version_major = PULSEQLIB_CACHE_VERSION_MAJOR;
     version_minor = PULSEQLIB_CACHE_VERSION_MINOR;
     version_revision = PULSEQLIB_CACHE_VERSION_REVISION;
-    num_sections = 4;
+    num_sections = 5;
 
     if (!write4(f, &marker, 1))
     {
@@ -1837,6 +1882,11 @@ static int read_augment_payload(FILE *f, pulseqlib_collection *coll,
     return 1;
 }
 
+static int read_definitions_payload(FILE *f, pulseqlib_collection *coll, int do_swap)
+{
+    return read_augment_payload(f, coll, do_swap, read_definitions);
+}
+
 static int read_rotations_payload(FILE *f, pulseqlib_collection *coll, int do_swap)
 {
     return read_augment_payload(f, coll, do_swap, read_rotations);
@@ -2029,18 +2079,20 @@ static int read_full_cache(const char *cache_path,
                            int expected_seq_file_size,
                            int enforce_source_size)
 {
-    static const int ids[4] = {
+    static const int ids[5] = {
         PULSEQLIB_CACHE_SECTION_COMMON,
         PULSEQLIB_CACHE_SECTION_ROTATIONS,
         PULSEQLIB_CACHE_SECTION_SHAPES,
-        PULSEQLIB_CACHE_SECTION_SCANLOOP};
-    static const payload_reader_fn readers[4] = {
+        PULSEQLIB_CACHE_SECTION_SCANLOOP,
+        PULSEQLIB_CACHE_SECTION_DEFINITIONS};
+    static const payload_reader_fn readers[5] = {
         read_common_payload,
         read_rotations_payload,
         read_shapes_payload,
-        read_scanloop_payload};
+        read_scanloop_payload,
+        read_definitions_payload};
     return read_sections(cache_path, coll, expected_seq_file_size,
-                         enforce_source_size, ids, readers, 4);
+                         enforce_source_size, ids, readers, 5);
 }
 
 /* ================================================================== */

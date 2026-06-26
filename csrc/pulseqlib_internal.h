@@ -533,6 +533,20 @@ typedef struct pulseqlib_sequence_descriptor {
     /* generic [DEFINITIONS] key-value pairs (all keys, not just reserved) */
     int num_definitions;
     pulseqlib__definition* definitions;
+
+    /* Full-TR canonical (PULSEQLIB_AMP_ZERO_VAR) k-space trajectory,
+     * retained by pulseqlib__calc_segment_timing (pulseqlib_structure.c)
+     * over the whole main TR (num_prep..num_prep+tr_size) with excitation-
+     * reset + refocus-negation already applied. TRAJECTORY (section 6)
+     * base shots are SLICED from this array (Stage 1.5c) instead of being
+     * re-integrated + re-centered per block. NULL/0 if has_canonical_kspace
+     * is 0 (e.g. zero-length TR). */
+    int has_canonical_kspace;
+    int canonical_kspace_num_samples;
+    float canonical_kspace_dt_us; /* raster period of kx/ky/kz below (us) */
+    float* canonical_kx;
+    float* canonical_ky;
+    float* canonical_kz;
 } pulseqlib_sequence_descriptor;
 
 #define PULSEQLIB_SEQUENCE_DESCRIPTOR_INIT { \
@@ -549,7 +563,8 @@ typedef struct pulseqlib_sequence_descriptor {
     0, NULL, NULL, NULL, NULL, NULL, \
     NULL, \
     0, 0, NULL, {{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}}, NULL, \
-    0, NULL \
+    0, NULL, \
+    0, 0, 0.0f, NULL, NULL, NULL \
 }
 
 /* ================================================================== */

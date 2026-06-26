@@ -18,11 +18,28 @@
  *   [rows, for r = 0 .. num_rows-1]
  *     type              (int)     — PULSEQLIB_SEQ_EVENT_{OTHER,RF,ADC}
  *     timestamp_us      (float)   — pass-relative anchor time (us)
- *     params[6]         (float x6) — type-specific payload (zero-padded)
+ *     params[7]         (float x7) — type-specific payload (zero-padded)
  *       RF:    params[0]=rf_def_id, [1]=rf_use, [2]=act_amplitude_hz,
- *              [3]=phase_offset_rad, [4]=freq_offset_hz, [5]=rf_shim_id
- *       ADC:   params[0]=adc_role, [1]=phase_offset_rad, [2..5]=0
- *       OTHER: params[0..5]=0
+ *              [3]=phase_offset_rad, [4]=freq_offset_hz, [5]=rf_shim_id,
+ *              [6]=ss_grad_amp_hz_per_m
+ *       ADC:   params[0]=adc_role, [1]=phase_offset_rad, [2..6]=0
+ *       OTHER: params[0..6]=0
+ *
+ * [per-subsequence RF-def library, appended after the row table]
+ *   num_rf_defs                                                               (int)
+ *   [per rf_def, rf_def_id = array index = rows[].params[0] for RF rows]
+ *     rf_def_id           (int)
+ *     bandwidth_hz        (float)
+ *     num_bands           (int)
+ *     band_freq_offsets_hz[PULSEQLIB_MAX_BANDS]                               (float x8)
+ *     band_bandwidth_hz   (float)
+ *     total_b1sq          (float)
+ *     mag  shape: num_uncompressed (int), num_samples (int), samples[]        (float xN) -- COMPRESSED
+ *     has_phase (int); if 1: phase shape (same triplet as mag)                -- COMPRESSED
+ *     has_time  (int); if 1: time  shape (same triplet as mag)                -- COMPRESSED
+ *   Shapes are copied verbatim (still compressed) from the descriptor's
+ *   shapes[] table via rf_definitions[].{mag,phase,time}_shape_id — the
+ *   recon reader decompresses, SEQDESC never does.
  */
 
 #include <string.h>
@@ -83,9 +100,86 @@ static char *sd_make_cache_path(const char *seq_path)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Write one (still-compressed) RF shape triplet, copied verbatim     */
+/*  from desc->shapes[shape_id - 1]. shape_id == 0 means absent.       */
+/* ------------------------------------------------------------------ */
+static int sd_write_rf_shape(FILE *f, const pulseqlib_sequence_descriptor *desc, int shape_id)
+{
+    const pulseqlib_shape_arbitrary *shape;
+    int n;
+
+    if (shape_id <= 0 || shape_id > desc->num_shapes)
+    {
+        int zero = 0;
+        return sd_write4(f, &zero, 1) && sd_write4(f, &zero, 1);
+    }
+
+    shape = &desc->shapes[shape_id - 1];
+    if (!sd_write4(f, &shape->num_uncompressed_samples, 1))
+        return 0;
+    if (!sd_write4(f, &shape->num_samples, 1))
+        return 0;
+    n = shape->num_samples;
+    if (n > 0 && shape->samples)
+        if (!sd_write4(f, shape->samples, n))
+            return 0;
+
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Write the per-subsequence RF-def library (rf_def_id == array       */
+/*  index, matching rows[].params[0] for RF rows).                     */
+/* ------------------------------------------------------------------ */
+static int sd_write_rf_def_library(FILE *f, const pulseqlib_sequence_descriptor *desc)
+{
+    int i;
+
+    if (!sd_write4(f, &desc->num_unique_rfs, 1))
+        return 0;
+    for (i = 0; i < desc->num_unique_rfs; ++i)
+    {
+        const pulseqlib_rf_definition *rdef = &desc->rf_definitions[i];
+        const pulseqlib_rf_stats *stats = &rdef->stats;
+        int has_phase, has_time;
+
+        if (!sd_write4(f, &i, 1))
+            return 0;
+        if (!sd_write4(f, &stats->bandwidth_hz, 1))
+            return 0;
+        if (!sd_write4(f, &stats->num_bands, 1))
+            return 0;
+        if (!sd_write4(f, stats->band_freq_offsets_hz, PULSEQLIB_MAX_BANDS))
+            return 0;
+        if (!sd_write4(f, &stats->band_bandwidth_hz, 1))
+            return 0;
+        if (!sd_write4(f, &stats->total_b1sq_power, 1))
+            return 0;
+
+        if (!sd_write_rf_shape(f, desc, rdef->mag_shape_id))
+            return 0;
+
+        has_phase = rdef->phase_shape_id > 0 && rdef->phase_shape_id <= desc->num_shapes;
+        if (!sd_write4(f, &has_phase, 1))
+            return 0;
+        if (has_phase && !sd_write_rf_shape(f, desc, rdef->phase_shape_id))
+            return 0;
+
+        has_time = rdef->time_shape_id > 0 && rdef->time_shape_id <= desc->num_shapes;
+        if (!sd_write4(f, &has_time, 1))
+            return 0;
+        if (has_time && !sd_write_rf_shape(f, desc, rdef->time_shape_id))
+            return 0;
+    }
+
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Write one subsequence's sequence description block                 */
 /* ------------------------------------------------------------------ */
-static int sd_write_subseq(FILE *f, const pulseqlib_sequence_description *sd)
+static int sd_write_subseq(FILE *f, const pulseqlib_sequence_description *sd,
+                            const pulseqlib_sequence_descriptor *desc)
 {
     int i;
 
@@ -108,7 +202,7 @@ static int sd_write_subseq(FILE *f, const pulseqlib_sequence_description *sd)
             return 0;
     }
 
-    return 1;
+    return sd_write_rf_def_library(f, desc);
 }
 
 /* ================================================================== */
@@ -292,7 +386,7 @@ int pulseqlib_write_sequence_description_cache(
             pulseqlib_free_sequence_description(&sd);
             goto done;
         }
-        if (!sd_write_subseq(f, &sd))
+        if (!sd_write_subseq(f, &sd, &coll->descriptors[i]))
         {
             pulseqlib_free_sequence_description(&sd);
             ret = PULSEQLIB_ERR_FILE_READ_FAILED;
