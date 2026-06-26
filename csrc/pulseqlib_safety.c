@@ -2867,6 +2867,23 @@ static void compute_slew_rate(
         slew_out[i] = ((waveform[i + 1] - waveform[i]) * inv_g) / dt_s;
 }
 
+/* Returns 1 if every sample of waveform[0..num_samples) is exactly zero.
+ * Used to skip per-axis convolution work (PNS) for an axis that carries
+ * no gradient (e.g. Gx/Gy on a slice-select-only readout). */
+static int pulseqlib__waveform_is_zero(const float *waveform, int num_samples)
+{
+    int i;
+
+    if (!waveform)
+        return 1;
+    for (i = 0; i < num_samples; ++i)
+    {
+        if (waveform[i] != 0.0f)
+            return 0;
+    }
+    return 1;
+}
+
 /* FIX: outputs then in-out then scratch then inputs */
 static int process_pns_axis_circular(
     float *pns_axis, float *pns_total,
@@ -3022,38 +3039,49 @@ static int calc_pns_from_uniform(
         pns_z[i] = 0.0f;
     }
 
-    /* X */
-    rc = process_pns_axis_circular(axis, pns_tot,
-                                   pns_x,
-                                   padded, slew, conv,
-                                   waveforms->gx, waveforms->num_samples,
-                                   kernel, kernel_len,
-                                   waveforms->raster_us, gamma_hz_per_tesla,
-                                   full_output_len);
-    if (PULSEQLIB_FAILED(rc))
-        goto fail;
+    /* X -- skip the FFT convolution entirely for a silent axis; pns_x/
+     * pns_tot stay at their zero-initialized value, which is the correct
+     * result for a channel with no gradient. */
+    if (!pulseqlib__waveform_is_zero(waveforms->gx, waveforms->num_samples))
+    {
+        rc = process_pns_axis_circular(axis, pns_tot,
+                                       pns_x,
+                                       padded, slew, conv,
+                                       waveforms->gx, waveforms->num_samples,
+                                       kernel, kernel_len,
+                                       waveforms->raster_us, gamma_hz_per_tesla,
+                                       full_output_len);
+        if (PULSEQLIB_FAILED(rc))
+            goto fail;
+    }
 
     /* Y */
-    rc = process_pns_axis_circular(axis, pns_tot,
-                                   pns_y,
-                                   padded, slew, conv,
-                                   waveforms->gy, waveforms->num_samples,
-                                   kernel, kernel_len,
-                                   waveforms->raster_us, gamma_hz_per_tesla,
-                                   full_output_len);
-    if (PULSEQLIB_FAILED(rc))
-        goto fail;
+    if (!pulseqlib__waveform_is_zero(waveforms->gy, waveforms->num_samples))
+    {
+        rc = process_pns_axis_circular(axis, pns_tot,
+                                       pns_y,
+                                       padded, slew, conv,
+                                       waveforms->gy, waveforms->num_samples,
+                                       kernel, kernel_len,
+                                       waveforms->raster_us, gamma_hz_per_tesla,
+                                       full_output_len);
+        if (PULSEQLIB_FAILED(rc))
+            goto fail;
+    }
 
     /* Z */
-    rc = process_pns_axis_circular(axis, pns_tot,
-                                   pns_z,
-                                   padded, slew, conv,
-                                   waveforms->gz, waveforms->num_samples,
-                                   kernel, kernel_len,
-                                   waveforms->raster_us, gamma_hz_per_tesla,
-                                   full_output_len);
-    if (PULSEQLIB_FAILED(rc))
-        goto fail;
+    if (!pulseqlib__waveform_is_zero(waveforms->gz, waveforms->num_samples))
+    {
+        rc = process_pns_axis_circular(axis, pns_tot,
+                                       pns_z,
+                                       padded, slew, conv,
+                                       waveforms->gz, waveforms->num_samples,
+                                       kernel, kernel_len,
+                                       waveforms->raster_us, gamma_hz_per_tesla,
+                                       full_output_len);
+        if (PULSEQLIB_FAILED(rc))
+            goto fail;
+    }
 
     for (i = 0; i < full_output_len; ++i)
     {
@@ -3646,6 +3674,46 @@ int check_max_slew(
 }
 
 /* ================================================================== */
+/*  Gradient presence (skip gate for gradient-only safety checks)     */
+/* ================================================================== */
+
+/* Returns 1 if any block in the collection has a nonzero gx/gy/gz
+ * amplitude, 0 if every gradient channel is silent throughout (e.g. an
+ * RF-only or pure-delay sequence). Mirrors the block_table walk in
+ * check_max_grad() but stops at the first nonzero sample. */
+static int pulseqlib__collection_has_gradient(const pulseqlib_collection *coll)
+{
+    int s, b, raw_id;
+    const pulseqlib_sequence_descriptor *desc;
+    const pulseqlib_block_table_element *bte;
+
+    for (s = 0; s < coll->num_subsequences; ++s)
+    {
+        desc = &coll->descriptors[s];
+        for (b = 0; b < desc->num_blocks; ++b)
+        {
+            bte = &desc->block_table[b];
+
+            raw_id = bte->gx_id;
+            if (raw_id >= 0 && raw_id < desc->grad_table_size &&
+                desc->grad_table[raw_id].amplitude != 0.0f)
+                return 1;
+
+            raw_id = bte->gy_id;
+            if (raw_id >= 0 && raw_id < desc->grad_table_size &&
+                desc->grad_table[raw_id].amplitude != 0.0f)
+                return 1;
+
+            raw_id = bte->gz_id;
+            if (raw_id >= 0 && raw_id < desc->grad_table_size &&
+                desc->grad_table[raw_id].amplitude != 0.0f)
+                return 1;
+        }
+    }
+    return 0;
+}
+
+/* ================================================================== */
 /*  Safety check                                                      */
 /* ================================================================== */
 int pulseqlib_check_safety(
@@ -3686,6 +3754,15 @@ int pulseqlib_check_safety(
     }
     if (diag)
         pulseqlib_diagnostic_init(diag);
+
+    /* No gradient event anywhere in the collection (e.g. an RF-only or
+     * pure-delay sequence): every check below operates on gx/gy/gz, so
+     * there is nothing to validate. Skip continuity/slew/mech-resonance/
+     * PNS entirely rather than running them over a silent waveform that
+     * may span the full sequence duration (RF/SAR safety is evaluated
+     * separately and is unaffected by this skip). */
+    if (!pulseqlib__collection_has_gradient(coll))
+        return PULSEQLIB_SUCCESS;
 
     /* ---- 1. max gradient amplitude ---- */
     rc = check_max_grad(coll, diag, opts);

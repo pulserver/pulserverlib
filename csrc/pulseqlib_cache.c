@@ -30,6 +30,15 @@
 #define PULSEQLIB_CACHE_SECTION_TRAJECTORY 6
 #define PULSEQLIB_CACHE_SECTION_SEQDESC 7
 
+/* Total number of defined section IDs (0..7 above). write_cache() reserves
+ * a section-entry table sized for this many slots up front -- even though
+ * it only writes the 5 base sections itself -- so that the later append
+ * passes (pulseqlib_write_trajectory_cache, pulseqlib_write_freq_mod_cache,
+ * the optional SEQDESC writer) can insert their own entries into the same
+ * table without growing past its reserved size and overflowing into the
+ * COMMON payload that immediately follows it on disk. */
+#define PULSEQLIB_CACHE_MAX_SECTIONS 8
+
 typedef struct pulseqlib_cache_section_entry
 {
     int section_id;
@@ -651,7 +660,8 @@ static int write_scanloop(FILE *f, const pulseqlib_sequence_descriptor *d)
     /* variable grad flags */
     {
         int vgf_len = (d->variable_grad_flags && d->tr_descriptor.tr_size > 0)
-                      ? d->tr_descriptor.tr_size * 3 : 0;
+                          ? d->tr_descriptor.tr_size * 3
+                          : 0;
         if (!write4(f, &vgf_len, 1))
             return 0;
         if (vgf_len > 0)
@@ -1289,7 +1299,7 @@ static int read_common(FILE *f, pulseqlib_sequence_descriptor *d, int do_swap)
  * recon C++ reader sources FOV/Matrix/NavFOV/NavMatrix directly from these
  * kv entries (no separate geometry block — see write_definitions). */
 
-static int read_definitions(FILE *f, pulseqlib_sequence_descriptor *d, int do_swap)
+static int read_definitions_cache(FILE *f, pulseqlib_sequence_descriptor *d, int do_swap)
 {
     int i;
 
@@ -1683,7 +1693,12 @@ static int write_cache(const char *cache_path,
         return 0;
     }
 
-    for (i = 0; i < num_sections * 3; ++i)
+    /* Reserve slots for the maximum possible section count, not just the
+     * num_sections (5) written by this function -- the trajectory/freqmod/
+     * seqdesc append passes insert their own entries into this same table
+     * afterward and must not overflow into the COMMON payload that follows
+     * it (see PULSEQLIB_CACHE_MAX_SECTIONS). */
+    for (i = 0; i < PULSEQLIB_CACHE_MAX_SECTIONS * 3; ++i)
     {
         int zero = 0;
         if (!write4(f, &zero, 1))
@@ -1884,7 +1899,7 @@ static int read_augment_payload(FILE *f, pulseqlib_collection *coll,
 
 static int read_definitions_payload(FILE *f, pulseqlib_collection *coll, int do_swap)
 {
-    return read_augment_payload(f, coll, do_swap, read_definitions);
+    return read_augment_payload(f, coll, do_swap, read_definitions_cache);
 }
 
 static int read_rotations_payload(FILE *f, pulseqlib_collection *coll, int do_swap)
@@ -2099,8 +2114,7 @@ static int read_full_cache(const char *cache_path,
 /*  Public wrappers (called from pulseqlib_core.c)                    */
 /* ================================================================== */
 
-int pulseqlib__write_cache(pulseqlib_collection *coll,
-                           const char *seq_path)
+int pulseqlib__write_cache(pulseqlib_collection *coll, const char *seq_path)
 {
     char *cache_path;
     long sz;
