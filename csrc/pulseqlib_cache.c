@@ -2271,18 +2271,29 @@ static int load_cache_from_seq_path(
     return PULSEQLIB_SUCCESS;
 }
 
-/* Pulsegen: COMMON + SHAPES (no rotations, no scan loop). */
+/* Pulsegen: COMMON + SHAPES + SCANLOOP (no rotations). SCANLOOP is required for
+ * the max-energy scan-instance gradient resolution (see body). */
 int pulseqlib_load_geninstructions_cache(
     pulseqlib_collection **out_coll,
     const char *seq_path)
 {
-    static const int ids[2] = {
+    /* SCANLOOP is required in addition to COMMON+SHAPES: the host pulsegen
+     * modeling pass resolves each block's gradients through the max-energy
+     * scan instance (resolve_block_table_via_max_energy), which dereferences
+     * desc->scan_table[]. That table lives in the SCANLOOP section; without it
+     * scan_table_len==0, the resolver returns NULL, has_grad becomes 0/0/0 for
+     * every axis, and pulsegen builds grad tables inconsistent with the actual
+     * waveforms — corrupting the AllocNode pool and crashing pg_cleanup on the
+     * next pulsegen pass. (Regression from the per-section cache split.) */
+    static const int ids[3] = {
         PULSEQLIB_CACHE_SECTION_COMMON,
-        PULSEQLIB_CACHE_SECTION_SHAPES};
-    static const payload_reader_fn readers[2] = {
+        PULSEQLIB_CACHE_SECTION_SHAPES,
+        PULSEQLIB_CACHE_SECTION_SCANLOOP};
+    static const payload_reader_fn readers[3] = {
         read_common_payload,
-        read_shapes_payload};
-    return load_cache_from_seq_path(out_coll, seq_path, ids, readers, 2, 0);
+        read_shapes_payload,
+        read_scanloop_payload};
+    return load_cache_from_seq_path(out_coll, seq_path, ids, readers, 3, 0);
 }
 
 /* Scan: COMMON + ROTATIONS + SCANLOOP (no shapes). */
